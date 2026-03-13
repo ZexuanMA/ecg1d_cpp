@@ -25,6 +25,7 @@ add_executable(ecg1d
     pair_cache.cpp
     interaction_kernels.cpp
     hamiltonian.cpp
+    derivatives.cpp
 )
 
 target_link_libraries(ecg1d PRIVATE Eigen3::Eigen)
