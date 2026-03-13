@@ -26,6 +26,9 @@ add_executable(ecg1d
     interaction_kernels.cpp
     hamiltonian.cpp
     derivatives.cpp
+    observable_derivatives.cpp
+    hamiltonian_gradient.cpp
+    tdvp_solver.cpp
 )
 
 target_link_libraries(ecg1d PRIVATE Eigen3::Eigen)

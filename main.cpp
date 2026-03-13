@@ -1,6 +1,8 @@
 #include "basis_params.hpp"
 #include "hamiltonian.hpp"
 #include "derivatives.hpp"
+#include "hamiltonian_gradient.hpp"
+#include "tdvp_solver.hpp"
 #include <iostream>
 #include <iomanip>
 #include <fstream>
@@ -156,6 +158,88 @@ static void run_phase2(const std::vector<BasisParams>& basis, int N) {
     print_complex("C(4," + std::to_string(name0) + ",0,0,2," + std::to_string(name0) + ",0,0)", v);
 }
 
+static void run_phase3_gradient(const std::vector<BasisParams>& basis, int N) {
+    std::cout << "\n=== Phase 3: Hamiltonian Gradients ===" << std::endl;
+
+    int name0 = basis[0].name;
+
+    Cd v;
+    for (int a1 : {2, 3}) {
+        for (bool real_flag : {true, false}) {
+            Cd gT = calculate_Hamiltonian_kinetic_partial(a1, name0, 0, 0, real_flag, basis);
+            Cd gW = calculate_Hamiltonian_harmonic_partial(a1, name0, 0, 0, real_flag, basis);
+            std::string rl = real_flag ? "Real" : "Imag";
+            print_complex("a1=" + std::to_string(a1) + " " + rl + " gT", gT);
+            print_complex("a1=" + std::to_string(a1) + " " + rl + " gW", gW);
+            print_complex("a1=" + std::to_string(a1) + " " + rl + " total", gT + gW);
+        }
+    }
+
+    if (N >= 2) {
+        v = calculate_Hamiltonian_delta_partial(2, name0, 0, 0, true, basis);
+        print_complex("dD/dB(0,0) Real", v);
+        v = calculate_Hamiltonian_gaussian_partial(2, name0, 0, 0, true, basis);
+        print_complex("dG/dB(0,0) Real", v);
+    }
+    v = calculate_Hamiltonian_kicking_partial(2, name0, 0, 0, true, basis);
+    print_complex("dK/dB(0,0) Real", v);
+}
+
+static void run_phase3_tdvp() {
+    std::cout << "\n=== Phase 3: TDVP Evolution (1-particle harmonic) ===" << std::endl;
+
+    // Same initial conditions as Python Verification_One_Particle_Harmonic_1.py
+    int N = 1;
+    std::vector<BasisParams> basis;
+    basis.push_back(BasisParams::from_arrays(
+        Cd(1.0, 0.0),
+        (MatrixXcd(1,1) << Cd(0.1, 0.1)).finished(),
+        (MatrixXcd(1,1) << Cd(0.3, 0.1)).finished(),
+        (VectorXcd(1) << Cd(0.2, 0.1)).finished(),
+        0
+    ));
+
+    int basis_n = static_cast<int>(basis.size());
+
+    // Build alpha_z_list matching Python
+    std::vector<AlphaIndex> alpha_z_list;
+    // u parameters (a1=1)
+    for (int i = 0; i < basis_n; i++)
+        alpha_z_list.push_back({1, i, 0, 0});
+    // B parameters (a1=2)
+    for (int i = 0; i < basis_n; i++)
+        for (int j = 0; j < N; j++)
+            alpha_z_list.push_back({2, i, j, 0});
+    // R parameters (a1=3)
+    for (int i = 0; i < basis_n; i++)
+        for (int j = 0; j < N; j++)
+            alpha_z_list.push_back({3, i, j, 0});
+
+    auto terms = HamiltonianTerms::kinetic_harmonic();
+
+    // Compare gradients with Python
+    std::cout << "--- Gradient comparison (1-particle, kinetic+harmonic) ---" << std::endl;
+    for (int a1 : {2, 3}) {
+        for (bool rf : {true, false}) {
+            Cd gT = calculate_Hamiltonian_kinetic_partial(a1, 0, 0, 0, rf, basis);
+            Cd gW = calculate_Hamiltonian_harmonic_partial(a1, 0, 0, 0, rf, basis);
+            std::string rl = rf ? "Real" : "Imag";
+            std::cout << "a1=" << a1 << " " << rl
+                      << ": gT=" << gT << ", gW=" << gW << ", total=" << (gT+gW) << std::endl;
+        }
+    }
+
+    Cd E0 = compute_total_energy(basis, terms);
+    std::cout << "Initial E = " << E0.real() << std::endl;
+    std::cout << "Expected ground state E = 0.5 (hbar*omega/2)" << std::endl;
+
+    evolution(alpha_z_list, basis, 1e-3, 500, 1e-12, terms);
+
+    Cd E_final = compute_total_energy(basis, terms);
+    std::cout << "Final E = " << std::setprecision(10) << E_final.real() << std::endl;
+    std::cout << "Error from 0.5 = " << std::scientific << (E_final.real() - 0.5) << std::endl;
+}
+
 int main(int argc, char* argv[]) {
     std::cout << std::setprecision(18);
 
@@ -180,6 +264,19 @@ int main(int argc, char* argv[]) {
 
     if (basis_n >= 2) {
         run_phase2(basis, N);
+    }
+
+    run_phase3_gradient(basis, N);
+
+    // If invoked with --tdvp flag, run TDVP evolution
+    bool run_tdvp = false;
+    bool tdvp_only = false;
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--tdvp") run_tdvp = true;
+        if (std::string(argv[i]) == "--tdvp-only") tdvp_only = true;
+    }
+    if (run_tdvp || tdvp_only) {
+        run_phase3_tdvp();
     }
 
     return 0;
