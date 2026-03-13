@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Validate Phase 3 (Hamiltonian gradients + TDVP) against Python reference."""
 import sys, os, subprocess, tempfile
+from pathlib import Path
 import numpy as np
 
-# Add Python ECG directory to path
-sys.path.insert(0, os.path.expanduser('~/zexuan/ecg1d'))
+# Add sibling Python ECG directory to path (robust to custom HOME settings)
+ecg_py_dir = Path(__file__).resolve().parent.parent / 'ecg1d'
+sys.path.insert(0, str(ecg_py_dir))
 
 from Parameters_z import BasisParams
 from Calculate_Hamiltonian_Kinetic_partial import calculate_Hamiltonian_Kinetic_partial
