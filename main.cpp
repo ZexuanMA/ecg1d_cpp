@@ -245,6 +245,7 @@ static void run_phase3_tdvp_delta() {
 
     int N = 2;
     std::vector<BasisParams> basis;
+    // K=5 basis functions with varied widths for better convergence
     basis.push_back(BasisParams::from_arrays(
         Cd(1.0, 0.0),
         (MatrixXcd(2,2) << Cd(0.5, 0.1), Cd(0.0, 0.0),
@@ -253,6 +254,42 @@ static void run_phase3_tdvp_delta() {
                            Cd(0.0, 0.0), Cd(0.3, 0.1)).finished(),
         (VectorXcd(2) << Cd(0.2, 0.1), Cd(-0.2, 0.1)).finished(),
         0
+    ));
+    basis.push_back(BasisParams::from_arrays(
+        Cd(0.8, 0.0),
+        (MatrixXcd(2,2) << Cd(1.0, 0.05), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(1.0, 0.05)).finished(),
+        (MatrixXcd(2,2) << Cd(0.6, 0.05), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(0.6, 0.05)).finished(),
+        (VectorXcd(2) << Cd(0.1, 0.05), Cd(-0.1, 0.05)).finished(),
+        1
+    ));
+    basis.push_back(BasisParams::from_arrays(
+        Cd(0.6, 0.0),
+        (MatrixXcd(2,2) << Cd(0.2, 0.05), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(0.2, 0.05)).finished(),
+        (MatrixXcd(2,2) << Cd(0.15, 0.05), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(0.15, 0.05)).finished(),
+        (VectorXcd(2) << Cd(0.3, 0.05), Cd(-0.3, 0.05)).finished(),
+        2
+    ));
+    basis.push_back(BasisParams::from_arrays(
+        Cd(0.5, 0.0),
+        (MatrixXcd(2,2) << Cd(2.0, 0.1), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(2.0, 0.1)).finished(),
+        (MatrixXcd(2,2) << Cd(1.0, 0.1), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(1.0, 0.1)).finished(),
+        (VectorXcd(2) << Cd(0.05, 0.02), Cd(-0.05, 0.02)).finished(),
+        3
+    ));
+    basis.push_back(BasisParams::from_arrays(
+        Cd(0.4, 0.0),
+        (MatrixXcd(2,2) << Cd(0.8, 0.08), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(0.8, 0.08)).finished(),
+        (MatrixXcd(2,2) << Cd(0.5, 0.08), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(0.5, 0.08)).finished(),
+        (VectorXcd(2) << Cd(-0.1, 0.08), Cd(0.1, 0.08)).finished(),
+        4
     ));
 
     int basis_n = static_cast<int>(basis.size());
@@ -281,7 +318,7 @@ static void run_phase3_tdvp_delta() {
     Cd E0 = compute_total_energy(basis, terms);
     std::cout << "Initial E = " << std::setprecision(10) << E0.real() << std::endl;
 
-    evolution(alpha_z_list, basis, 1e-3, 500, 1e-12, terms);
+    evolution(alpha_z_list, basis, 1e-3, 10000, 1e-12, terms);
 
     Cd E_final = compute_total_energy(basis, terms);
     std::cout << "Final E = " << std::setprecision(10) << E_final.real() << std::endl;
