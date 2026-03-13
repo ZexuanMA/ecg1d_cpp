@@ -233,11 +233,58 @@ static void run_phase3_tdvp() {
     std::cout << "Initial E = " << E0.real() << std::endl;
     std::cout << "Expected ground state E = 0.5 (hbar*omega/2)" << std::endl;
 
-    evolution(alpha_z_list, basis, 1e-3, 500, 1e-12, terms);
+    evolution(alpha_z_list, basis, 1e-3, 5000, 1e-12, terms);
 
     Cd E_final = compute_total_energy(basis, terms);
     std::cout << "Final E = " << std::setprecision(10) << E_final.real() << std::endl;
     std::cout << "Error from 0.5 = " << std::scientific << (E_final.real() - 0.5) << std::endl;
+}
+
+static void run_phase3_tdvp_delta() {
+    std::cout << "\n=== Phase 3: TDVP Evolution (2-particle delta contact) ===" << std::endl;
+
+    int N = 2;
+    std::vector<BasisParams> basis;
+    basis.push_back(BasisParams::from_arrays(
+        Cd(1.0, 0.0),
+        (MatrixXcd(2,2) << Cd(0.5, 0.1), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(0.5, 0.1)).finished(),
+        (MatrixXcd(2,2) << Cd(0.3, 0.1), Cd(0.0, 0.0),
+                           Cd(0.0, 0.0), Cd(0.3, 0.1)).finished(),
+        (VectorXcd(2) << Cd(0.2, 0.1), Cd(-0.2, 0.1)).finished(),
+        0
+    ));
+
+    int basis_n = static_cast<int>(basis.size());
+
+    // Build alpha_z_list: u (a1=1), B diagonal (a1=2), R (a1=3)
+    std::vector<AlphaIndex> alpha_z_list;
+    // u parameters (a1=1)
+    for (int i = 0; i < basis_n; i++)
+        alpha_z_list.push_back({1, i, 0, 0});
+    // B parameters (a1=2)
+    for (int i = 0; i < basis_n; i++)
+        for (int j = 0; j < N; j++)
+            alpha_z_list.push_back({2, i, j, 0});
+    // R parameters (a1=3)
+    for (int i = 0; i < basis_n; i++)
+        for (int j = 0; j < N; j++)
+            alpha_z_list.push_back({3, i, j, 0});
+
+    HamiltonianTerms terms;
+    terms.kinetic  = true;
+    terms.harmonic = true;
+    terms.delta    = true;
+    terms.gaussian = false;
+    terms.kicking  = false;
+
+    Cd E0 = compute_total_energy(basis, terms);
+    std::cout << "Initial E = " << std::setprecision(10) << E0.real() << std::endl;
+
+    evolution(alpha_z_list, basis, 1e-3, 500, 1e-12, terms);
+
+    Cd E_final = compute_total_energy(basis, terms);
+    std::cout << "Final E = " << std::setprecision(10) << E_final.real() << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -271,12 +318,17 @@ int main(int argc, char* argv[]) {
     // If invoked with --tdvp flag, run TDVP evolution
     bool run_tdvp = false;
     bool tdvp_only = false;
+    bool run_delta = false;
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--tdvp") run_tdvp = true;
         if (std::string(argv[i]) == "--tdvp-only") tdvp_only = true;
+        if (std::string(argv[i]) == "--delta") run_delta = true;
     }
     if (run_tdvp || tdvp_only) {
         run_phase3_tdvp();
+    }
+    if (run_delta) {
+        run_phase3_tdvp_delta();
     }
 
     return 0;
