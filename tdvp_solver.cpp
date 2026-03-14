@@ -75,8 +75,13 @@ void update_basis_function(std::vector<BasisParams>& basis,
             basis[idx.a2].B(idx.a3, idx.a3) += dz(dz_idx) * dtao;
         } else if (idx.a1 == 3) {
             basis[idx.a2].R(idx.a3) += dz(dz_idx) * dtao;
+        } else if (idx.a1 == 4) {
+            Cd val = basis[idx.a2].A(idx.a3, idx.a4) + dz(dz_idx) * dtao;
+            basis[idx.a2].A(idx.a3, idx.a4) = val;
+            if (idx.a3 != idx.a4) {
+                basis[idx.a2].A(idx.a4, idx.a3) = val;
+            }
         }
-        // a1==4 (A) update disabled, matching Python
     }
 }
 

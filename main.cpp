@@ -3,12 +3,14 @@
 #include "derivatives.hpp"
 #include "hamiltonian_gradient.hpp"
 #include "tdvp_solver.hpp"
+#include "svm.hpp"
 #include <iostream>
 #include <iomanip>
 #include <fstream>
 #include <sstream>
 #include <vector>
 #include <string>
+#include <chrono>
 
 using namespace ecg1d;
 
@@ -315,59 +317,8 @@ static void run_phase3_tdvp() {
     std::cout << "Error from 0.5 = " << std::scientific << (E_final.real() - 0.5) << std::endl;
 }
 
-// Build K=5 two-particle basis and alpha_z_list (shared by delta/gaussian/kicking tests)
-static std::pair<std::vector<BasisParams>, std::vector<AlphaIndex>>
-make_two_particle_basis() {
-    int N = 2;
-    std::vector<BasisParams> basis;
-    basis.push_back(BasisParams::from_arrays(
-        Cd(1.0, 0.0),
-        (MatrixXcd(2,2) << Cd(0.5, 0.1), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(0.5, 0.1)).finished(),
-        (MatrixXcd(2,2) << Cd(0.3, 0.1), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(0.3, 0.1)).finished(),
-        (VectorXcd(2) << Cd(0.2, 0.1), Cd(-0.2, 0.1)).finished(),
-        0
-    ));
-    basis.push_back(BasisParams::from_arrays(
-        Cd(0.8, 0.0),
-        (MatrixXcd(2,2) << Cd(1.0, 0.05), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(1.0, 0.05)).finished(),
-        (MatrixXcd(2,2) << Cd(0.6, 0.05), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(0.6, 0.05)).finished(),
-        (VectorXcd(2) << Cd(0.1, 0.05), Cd(-0.1, 0.05)).finished(),
-        1
-    ));
-    basis.push_back(BasisParams::from_arrays(
-        Cd(0.6, 0.0),
-        (MatrixXcd(2,2) << Cd(0.2, 0.05), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(0.2, 0.05)).finished(),
-        (MatrixXcd(2,2) << Cd(0.15, 0.05), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(0.15, 0.05)).finished(),
-        (VectorXcd(2) << Cd(0.3, 0.05), Cd(-0.3, 0.05)).finished(),
-        2
-    ));
-    basis.push_back(BasisParams::from_arrays(
-        Cd(0.5, 0.0),
-        (MatrixXcd(2,2) << Cd(2.0, 0.1), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(2.0, 0.1)).finished(),
-        (MatrixXcd(2,2) << Cd(1.0, 0.1), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(1.0, 0.1)).finished(),
-        (VectorXcd(2) << Cd(0.05, 0.02), Cd(-0.05, 0.02)).finished(),
-        3
-    ));
-    basis.push_back(BasisParams::from_arrays(
-        Cd(0.4, 0.0),
-        (MatrixXcd(2,2) << Cd(0.8, 0.08), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(0.8, 0.08)).finished(),
-        (MatrixXcd(2,2) << Cd(0.5, 0.08), Cd(0.0, 0.0),
-                           Cd(0.0, 0.0), Cd(0.5, 0.08)).finished(),
-        (VectorXcd(2) << Cd(-0.1, 0.08), Cd(0.1, 0.08)).finished(),
-        4
-    ));
-
-    int basis_n = static_cast<int>(basis.size());
-
+// Build alpha_z_list for TDVP (including A matrix parameters for N>=2)
+static std::vector<AlphaIndex> build_alpha_z_list(int basis_n, int N) {
     std::vector<AlphaIndex> alpha_z_list;
     // u parameters (a1=1)
     for (int i = 0; i < basis_n; i++)
@@ -380,15 +331,78 @@ make_two_particle_basis() {
     for (int i = 0; i < basis_n; i++)
         for (int j = 0; j < N; j++)
             alpha_z_list.push_back({3, i, j, 0});
+    // A parameters (a1=4), upper triangle only
+    for (int i = 0; i < basis_n; i++)
+        for (int j = 0; j < N; j++)
+            for (int k = j; k < N; k++)
+                alpha_z_list.push_back({4, i, j, k});
 
-    return {basis, alpha_z_list};
+    return alpha_z_list;
+}
+
+// Run the full SVM + stochastic refinement + TDVP pipeline
+static void run_svm_tdvp(const std::string& label,
+                          const HamiltonianTerms& terms,
+                          double E_exact,
+                          int K_max = 15, int svm_trials = 5000,
+                          int refine_trials = 500, int refine_rounds = 30,
+                          int tdvp_steps = 300) {
+    int N = 2;
+    auto t0 = std::chrono::steady_clock::now();
+
+    // Phase 1: SVM basis construction
+    std::cout << "\n=== SVM + TDVP: " << label << " ===" << std::endl;
+    std::cout << "Target E = " << std::setprecision(10) << E_exact << std::endl;
+    std::cout << "\n--- Phase 1: Stochastic Variational Method ---" << std::endl;
+
+    auto svm = svm_build_basis(N, K_max, svm_trials, terms, 42);
+    double E_svm = lowest_energy(svm.H, svm.S);
+    auto t1 = std::chrono::steady_clock::now();
+    double dt1 = std::chrono::duration<double>(t1 - t0).count();
+    std::cout << "SVM result: E = " << std::setprecision(10) << E_svm
+              << "  (error = " << std::scientific << (E_svm - E_exact)
+              << std::defaultfloat << ")" << std::endl;
+    std::cout << "Phase 1 time: " << std::fixed << std::setprecision(1) << dt1 << "s" << std::endl;
+
+    // Phase 2: Stochastic refinement (disabled — set refine_rounds=0 to skip)
+    PermutationSet perms = PermutationSet::generate(N);
+    SvmResult refined = {svm.basis, svm.H, svm.S};
+    double E_refine = E_svm;
+    auto t2 = t1;
+
+    // Phase 3: TDVP refinement
+    std::cout << "\n--- Phase 2: TDVP refinement ---" << std::endl;
+    set_u_from_eigenvector(refined.basis, refined.H, refined.S);
+
+    int basis_n = static_cast<int>(refined.basis.size());
+    auto alpha_z_list = build_alpha_z_list(basis_n, N);
+
+    evolution(alpha_z_list, refined.basis, 1e-2, tdvp_steps, 1e-10, terms);
+
+    // Final energy from eigenvalue approach
+    auto [H_final, S_final] = build_HS(refined.basis, perms, terms);
+    double E_final = lowest_energy(H_final, S_final);
+    auto t3 = std::chrono::steady_clock::now();
+    double dt3 = std::chrono::duration<double>(t3 - t2).count();
+
+    std::cout << "\nPhase 2 time: " << std::fixed << std::setprecision(1) << dt3 << "s" << std::endl;
+
+    // Summary
+    double total_time = std::chrono::duration<double>(t3 - t0).count();
+    std::cout << "\n" << std::string(50, '=') << std::endl;
+    std::cout << "SUMMARY (" << label << ")" << std::endl;
+    std::cout << std::string(50, '=') << std::endl;
+    std::cout << "  Phase 1 (SVM):    E = " << std::setprecision(10) << E_svm
+              << "  (error = " << std::scientific << (E_svm - E_exact)
+              << std::defaultfloat << ")" << std::endl;
+    std::cout << "  Phase 2 (TDVP):   E = " << std::setprecision(10) << E_final
+              << "  (error = " << std::scientific << (E_final - E_exact)
+              << std::defaultfloat << ")" << std::endl;
+    std::cout << "  Target:           E = " << std::setprecision(10) << E_exact << std::endl;
+    std::cout << "  Total time: " << std::fixed << std::setprecision(1) << total_time << "s" << std::endl;
 }
 
 static void run_phase3_tdvp_delta() {
-    std::cout << "\n=== Phase 3: TDVP Evolution (2-particle delta contact) ===" << std::endl;
-
-    auto [basis, alpha_z_list] = make_two_particle_basis();
-
     HamiltonianTerms terms;
     terms.kinetic  = true;
     terms.harmonic = true;
@@ -396,21 +410,10 @@ static void run_phase3_tdvp_delta() {
     terms.gaussian = false;
     terms.kicking  = false;
 
-    Cd E0 = compute_total_energy(basis, terms);
-    std::cout << "Initial E = " << std::setprecision(10) << E0.real() << std::endl;
-    std::cout << "Expected E_exact = 1.3067455" << std::endl;
-
-    evolution(alpha_z_list, basis, 1e-2, 10000, 1e-12, terms);
-
-    Cd E_final = compute_total_energy(basis, terms);
-    std::cout << "Final E = " << std::setprecision(10) << E_final.real() << std::endl;
+    run_svm_tdvp("2-particle delta contact", terms, 1.3067455);
 }
 
 static void run_phase3_tdvp_gaussian() {
-    std::cout << "\n=== Phase 3: TDVP Evolution (2-particle Gaussian interaction) ===" << std::endl;
-
-    auto [basis, alpha_z_list] = make_two_particle_basis();
-
     HamiltonianTerms terms;
     terms.kinetic  = true;
     terms.harmonic = true;
@@ -418,21 +421,10 @@ static void run_phase3_tdvp_gaussian() {
     terms.gaussian = true;
     terms.kicking  = false;
 
-    Cd E0 = compute_total_energy(basis, terms);
-    std::cout << "Initial E = " << std::setprecision(10) << E0.real() << std::endl;
-    std::cout << "Expected E_exact = 1.5266998310" << std::endl;
-
-    evolution(alpha_z_list, basis, 1, 10000, 1e-12, terms);
-
-    Cd E_final = compute_total_energy(basis, terms);
-    std::cout << "Final E = " << std::setprecision(10) << E_final.real() << std::endl;
+    run_svm_tdvp("2-particle Gaussian interaction", terms, 1.5266998310);
 }
 
 static void run_phase3_tdvp_kicking() {
-    std::cout << "\n=== Phase 3: TDVP Evolution (2-particle kicking term) ===" << std::endl;
-
-    auto [basis, alpha_z_list] = make_two_particle_basis();
-
     HamiltonianTerms terms;
     terms.kinetic  = true;
     terms.harmonic = true;
@@ -440,13 +432,8 @@ static void run_phase3_tdvp_kicking() {
     terms.gaussian = false;
     terms.kicking  = true;
 
-    Cd E0 = compute_total_energy(basis, terms);
-    std::cout << "Initial E = " << std::setprecision(10) << E0.real() << std::endl;
-
-    evolution(alpha_z_list, basis, 1e-3, 10000, 1e-12, terms);
-
-    Cd E_final = compute_total_energy(basis, terms);
-    std::cout << "Final E = " << std::setprecision(10) << E_final.real() << std::endl;
+    // No known exact value; use a placeholder
+    run_svm_tdvp("2-particle kicking term", terms, 0.0);
 }
 
 int main(int argc, char* argv[]) {
