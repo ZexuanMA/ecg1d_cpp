@@ -162,27 +162,102 @@ static void run_phase3_gradient(const std::vector<BasisParams>& basis, int N) {
     std::cout << "\n=== Phase 3: Hamiltonian Gradients ===" << std::endl;
 
     int name0 = basis[0].name;
+    int name1 = (basis.size() > 1) ? basis[1].name : name0;
+    std::string sn0 = std::to_string(name0);
+    std::string sn1 = std::to_string(name1);
 
-    Cd v;
-    for (int a1 : {2, 3}) {
+    auto rf_str = [](bool r) { return r ? "T" : "F"; };
+
+    // Test all Hamiltonian gradient terms for a1={1,2,3}, Real={T,F}
+    for (int a1 : {1, 2, 3}) {
+        int a2 = name0;
         for (bool real_flag : {true, false}) {
-            Cd gT = calculate_Hamiltonian_kinetic_partial(a1, name0, 0, 0, real_flag, basis);
-            Cd gW = calculate_Hamiltonian_harmonic_partial(a1, name0, 0, 0, real_flag, basis);
-            std::string rl = real_flag ? "Real" : "Imag";
-            print_complex("a1=" + std::to_string(a1) + " " + rl + " gT", gT);
-            print_complex("a1=" + std::to_string(a1) + " " + rl + " gW", gW);
-            print_complex("a1=" + std::to_string(a1) + " " + rl + " total", gT + gW);
+            std::string tag = "(" + std::to_string(a1) + "," + rf_str(real_flag) + "," + sn0 + ",0,0)";
+
+            Cd gT = calculate_Hamiltonian_kinetic_partial(a1, a2, 0, 0, real_flag, basis);
+            print_complex("gKinetic" + tag, gT);
+
+            Cd gW = calculate_Hamiltonian_harmonic_partial(a1, a2, 0, 0, real_flag, basis);
+            print_complex("gHarmonic" + tag, gW);
+
+            if (N >= 2) {
+                Cd gD = calculate_Hamiltonian_delta_partial(a1, a2, 0, 0, real_flag, basis);
+                print_complex("gDelta" + tag, gD);
+
+                Cd gG = calculate_Hamiltonian_gaussian_partial(a1, a2, 0, 0, real_flag, basis);
+                print_complex("gGaussian" + tag, gG);
+            }
+
+            Cd gK = calculate_Hamiltonian_kicking_partial(a1, a2, 0, 0, real_flag, basis);
+            print_complex("gKicking" + tag, gK);
         }
     }
 
-    if (N >= 2) {
-        v = calculate_Hamiltonian_delta_partial(2, name0, 0, 0, true, basis);
-        print_complex("dD/dB(0,0) Real", v);
-        v = calculate_Hamiltonian_gaussian_partial(2, name0, 0, 0, true, basis);
-        print_complex("dG/dB(0,0) Real", v);
+    // Also test with a different basis index (name1) for a1=2,3
+    if (basis.size() > 1) {
+        for (int a1 : {2, 3}) {
+            for (bool real_flag : {true, false}) {
+                std::string tag = "(" + std::to_string(a1) + "," + rf_str(real_flag) + "," + sn1 + ",0,0)";
+
+                Cd gT = calculate_Hamiltonian_kinetic_partial(a1, name1, 0, 0, real_flag, basis);
+                print_complex("gKinetic" + tag, gT);
+
+                Cd gW = calculate_Hamiltonian_harmonic_partial(a1, name1, 0, 0, real_flag, basis);
+                print_complex("gHarmonic" + tag, gW);
+
+                if (N >= 2) {
+                    Cd gD = calculate_Hamiltonian_delta_partial(a1, name1, 0, 0, real_flag, basis);
+                    print_complex("gDelta" + tag, gD);
+
+                    Cd gG = calculate_Hamiltonian_gaussian_partial(a1, name1, 0, 0, real_flag, basis);
+                    print_complex("gGaussian" + tag, gG);
+                }
+
+                Cd gK = calculate_Hamiltonian_kicking_partial(a1, name1, 0, 0, real_flag, basis);
+                print_complex("gKicking" + tag, gK);
+            }
+        }
     }
-    v = calculate_Hamiltonian_kicking_partial(2, name0, 0, 0, true, basis);
-    print_complex("dK/dB(0,0) Real", v);
+
+    // Test a1=4 (A matrix derivative) if N >= 2
+    if (N >= 2) {
+        for (bool real_flag : {true, false}) {
+            std::string tag = "(4," + std::string(rf_str(real_flag)) + "," + sn0 + ",0,0)";
+
+            Cd gT = calculate_Hamiltonian_kinetic_partial(4, name0, 0, 0, real_flag, basis);
+            print_complex("gKinetic" + tag, gT);
+
+            Cd gW = calculate_Hamiltonian_harmonic_partial(4, name0, 0, 0, real_flag, basis);
+            print_complex("gHarmonic" + tag, gW);
+
+            Cd gD = calculate_Hamiltonian_delta_partial(4, name0, 0, 0, real_flag, basis);
+            print_complex("gDelta" + tag, gD);
+
+            Cd gG = calculate_Hamiltonian_gaussian_partial(4, name0, 0, 0, real_flag, basis);
+            print_complex("gGaussian" + tag, gG);
+
+            Cd gK = calculate_Hamiltonian_kicking_partial(4, name0, 0, 0, real_flag, basis);
+            print_complex("gKicking" + tag, gK);
+
+            // Also test (0,1) for off-diagonal
+            std::string tag2 = "(4," + std::string(rf_str(real_flag)) + "," + sn0 + ",0,1)";
+
+            gT = calculate_Hamiltonian_kinetic_partial(4, name0, 0, 1, real_flag, basis);
+            print_complex("gKinetic" + tag2, gT);
+
+            gW = calculate_Hamiltonian_harmonic_partial(4, name0, 0, 1, real_flag, basis);
+            print_complex("gHarmonic" + tag2, gW);
+
+            gD = calculate_Hamiltonian_delta_partial(4, name0, 0, 1, real_flag, basis);
+            print_complex("gDelta" + tag2, gD);
+
+            gG = calculate_Hamiltonian_gaussian_partial(4, name0, 0, 1, real_flag, basis);
+            print_complex("gGaussian" + tag2, gG);
+
+            gK = calculate_Hamiltonian_kicking_partial(4, name0, 0, 1, real_flag, basis);
+            print_complex("gKicking" + tag2, gK);
+        }
+    }
 }
 
 static void run_phase3_tdvp() {
@@ -325,7 +400,7 @@ static void run_phase3_tdvp_delta() {
     std::cout << "Initial E = " << std::setprecision(10) << E0.real() << std::endl;
     std::cout << "Expected E_exact = 1.3067455" << std::endl;
 
-    evolution(alpha_z_list, basis, 1e-3, 10000, 1e-12, terms);
+    evolution(alpha_z_list, basis, 1e-2, 10000, 1e-12, terms);
 
     Cd E_final = compute_total_energy(basis, terms);
     std::cout << "Final E = " << std::setprecision(10) << E_final.real() << std::endl;
@@ -347,7 +422,7 @@ static void run_phase3_tdvp_gaussian() {
     std::cout << "Initial E = " << std::setprecision(10) << E0.real() << std::endl;
     std::cout << "Expected E_exact = 1.5266998310" << std::endl;
 
-    evolution(alpha_z_list, basis, 1e-3, 10000, 1e-12, terms);
+    evolution(alpha_z_list, basis, 1, 10000, 1e-12, terms);
 
     Cd E_final = compute_total_energy(basis, terms);
     std::cout << "Final E = " << std::setprecision(10) << E_final.real() << std::endl;
