@@ -344,7 +344,7 @@ static std::vector<AlphaIndex> build_alpha_z_list(int basis_n, int N) {
 static void run_svm_tdvp(const std::string& label,
                           const HamiltonianTerms& terms,
                           double E_exact,
-                          int K_max = 15, int svm_trials = 5000,
+                          int K_max = 5, int svm_trials = 5000,
                           int refine_trials = 500, int refine_rounds = 30,
                           int tdvp_steps = 300) {
     int N = 2;
@@ -377,7 +377,7 @@ static void run_svm_tdvp(const std::string& label,
     int basis_n = static_cast<int>(refined.basis.size());
     auto alpha_z_list = build_alpha_z_list(basis_n, N);
 
-    evolution(alpha_z_list, refined.basis, 1e-2, tdvp_steps, 1e-10, terms);
+    evolution(alpha_z_list, refined.basis, 1, tdvp_steps, 1e-10, terms);
 
     // Final energy from eigenvalue approach
     auto [H_final, S_final] = build_HS(refined.basis, perms, terms);

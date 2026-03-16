@@ -20,17 +20,18 @@ FetchContent_MakeAvailable(eigen)
 # Main executable with all source files
 add_executable(ecg1d
     main.cpp
-    basis_params.cpp
-    permutation.cpp
-    pair_cache.cpp
-    interaction_kernels.cpp
-    hamiltonian.cpp
-    derivatives.cpp
-    observable_derivatives.cpp
-    hamiltonian_gradient.cpp
-    tdvp_solver.cpp
-    svm.cpp
+    src/basis_params.cpp
+    src/permutation.cpp
+    src/pair_cache.cpp
+    src/interaction_kernels.cpp
+    src/hamiltonian.cpp
+    src/derivatives.cpp
+    src/observable_derivatives.cpp
+    src/hamiltonian_gradient.cpp
+    src/tdvp_solver.cpp
+    src/svm.cpp
 )
 
+target_include_directories(ecg1d PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(ecg1d PRIVATE Eigen3::Eigen)
 target_compile_options(ecg1d PRIVATE -O2 -march=native)
