@@ -30,6 +30,8 @@ add_executable(ecg1d
     src/hamiltonian_gradient.cpp
     src/tdvp_solver.cpp
     src/svm.cpp
+    src/kicked_evolution.cpp
+    src/observables.cpp
 )
 
 target_include_directories(ecg1d PRIVATE ${CMAKE_SOURCE_DIR}/src)

@@ -4,6 +4,8 @@
 #include "hamiltonian_gradient.hpp"
 #include "tdvp_solver.hpp"
 #include "svm.hpp"
+#include "kicked_evolution.hpp"
+#include "observables.hpp"
 #include <iostream>
 #include <iomanip>
 #include <fstream>
@@ -345,7 +347,7 @@ static void run_svm_tdvp(const std::string& label,
                           const HamiltonianTerms& terms,
                           double E_exact,
                           int K_max = 5, int svm_trials = 5000,
-                          int refine_trials = 500, int refine_rounds = 30,
+                          int refine_trials = 500, int refine_rounds = 10,
                           int tdvp_steps = 300) {
     int N = 2;
     auto t0 = std::chrono::steady_clock::now();
@@ -364,20 +366,60 @@ static void run_svm_tdvp(const std::string& label,
               << std::defaultfloat << ")" << std::endl;
     std::cout << "Phase 1 time: " << std::fixed << std::setprecision(1) << dt1 << "s" << std::endl;
 
-    // Phase 2: Stochastic refinement (disabled — set refine_rounds=0 to skip)
+    // Phase 1.5: Stochastic refinement (A3: re-enabled)
     PermutationSet perms = PermutationSet::generate(N);
-    SvmResult refined = {svm.basis, svm.H, svm.S};
+    SvmResult refined = svm;
     double E_refine = E_svm;
     auto t2 = t1;
 
-    // Phase 3: TDVP refinement
+    if (refine_rounds > 0) {
+        std::cout << "\n--- Phase 1.5: Stochastic Refinement ---" << std::endl;
+        refined = stochastic_refine(svm.basis, svm.H, svm.S,
+                                     perms, N, terms,
+                                     refine_trials, refine_rounds, 123);
+        E_refine = lowest_energy(refined.H, refined.S);
+        t2 = std::chrono::steady_clock::now();
+        double dt15 = std::chrono::duration<double>(t2 - t1).count();
+        std::cout << "Refine result: E = " << std::setprecision(10) << E_refine
+                  << "  (error = " << std::scientific << (E_refine - E_exact)
+                  << std::defaultfloat << ")" << std::endl;
+        std::cout << "Phase 1.5 time: " << std::fixed << std::setprecision(1) << dt15 << "s" << std::endl;
+    }
+
+    // Phase 2: TDVP refinement (with SolverConfig)
     std::cout << "\n--- Phase 2: TDVP refinement ---" << std::endl;
     set_u_from_eigenvector(refined.basis, refined.H, refined.S);
 
     int basis_n = static_cast<int>(refined.basis.size());
     auto alpha_z_list = build_alpha_z_list(basis_n, N);
 
-    evolution(alpha_z_list, refined.basis, 1, tdvp_steps, 1e-10, terms);
+    SolverConfig config;
+    config.lambda_C          = 1e-8;
+    config.rcond             = 1e-4;
+    config.resolve_u         = true;
+    config.dtao_grow         = 1.5;
+    config.dtao_max          = 10.0;
+    config.energy_tol        = 1e-12;
+    config.stagnation_window = 50;
+    config.adaptive_lambda   = true;
+    config.lambda_max        = 1e-4;
+
+    std::cout << "TDVP config: dtao_max=" << config.dtao_max
+              << ", energy_tol=" << std::scientific << config.energy_tol
+              << ", stagnation_window=" << config.stagnation_window
+              << ", adaptive_lambda=" << config.adaptive_lambda
+              << std::defaultfloat << std::endl;
+
+    evolution(alpha_z_list, refined.basis, 1, tdvp_steps, 1e-10, terms, config, &perms);
+
+    // Print energy error at phase transition
+    {
+        auto [H_post, S_post] = build_HS(refined.basis, perms, terms);
+        double E_post = lowest_energy(H_post, S_post);
+        std::cout << "Post-TDVP eigenvalue E = " << std::setprecision(10) << E_post
+                  << "  (error = " << std::scientific << (E_post - E_exact)
+                  << std::defaultfloat << ")" << std::endl;
+    }
 
     // Final energy from eigenvalue approach
     auto [H_final, S_final] = build_HS(refined.basis, perms, terms);
@@ -395,6 +437,11 @@ static void run_svm_tdvp(const std::string& label,
     std::cout << "  Phase 1 (SVM):    E = " << std::setprecision(10) << E_svm
               << "  (error = " << std::scientific << (E_svm - E_exact)
               << std::defaultfloat << ")" << std::endl;
+    if (refine_rounds > 0) {
+        std::cout << "  Phase 1.5 (Ref):  E = " << std::setprecision(10) << E_refine
+                  << "  (error = " << std::scientific << (E_refine - E_exact)
+                  << std::defaultfloat << ")" << std::endl;
+    }
     std::cout << "  Phase 2 (TDVP):   E = " << std::setprecision(10) << E_final
               << "  (error = " << std::scientific << (E_final - E_exact)
               << std::defaultfloat << ")" << std::endl;
@@ -410,7 +457,10 @@ static void run_phase3_tdvp_delta() {
     terms.gaussian = false;
     terms.kicking  = false;
 
-    run_svm_tdvp("2-particle delta contact", terms, 1.3067455);
+    run_svm_tdvp("2-particle delta contact", terms, 1.3067455,
+                 /*K_max=*/5, /*svm_trials=*/5000,
+                 /*refine_trials=*/500, /*refine_rounds=*/0,
+                 /*tdvp_steps=*/1000);
 }
 
 static void run_phase3_tdvp_gaussian() {
@@ -421,7 +471,10 @@ static void run_phase3_tdvp_gaussian() {
     terms.gaussian = true;
     terms.kicking  = false;
 
-    run_svm_tdvp("2-particle Gaussian interaction", terms, 1.5266998310);
+    run_svm_tdvp("2-particle Gaussian interaction", terms, 1.5266998310,
+                 /*K_max=*/5, /*svm_trials=*/5000,
+                 /*refine_trials=*/500, /*refine_rounds=*/0,
+                 /*tdvp_steps=*/1000);
 }
 
 static void run_phase3_tdvp_kicking() {
@@ -434,6 +487,90 @@ static void run_phase3_tdvp_kicking() {
 
     // No known exact value; use a placeholder
     run_svm_tdvp("2-particle kicking term", terms, 0.0);
+}
+
+static void run_kicked_evolution_test() {
+    std::cout << "\n=== Kicked Real-Time Evolution (N=2, delta interaction) ===" << std::endl;
+
+    int N = 2;
+    int K_max = 5;
+
+    // Build basis via SVM with kinetic + harmonic + delta
+    HamiltonianTerms terms_free;
+    terms_free.kinetic  = true;
+    terms_free.harmonic = true;
+    terms_free.delta    = true;
+    terms_free.gaussian = false;
+    terms_free.kicking  = false;
+
+    std::cout << "--- Building basis with SVM ---" << std::endl;
+    auto svm = svm_build_basis(N, K_max, 5000, terms_free, 42);
+    double E_svm = lowest_energy(svm.H, svm.S);
+    std::cout << "SVM ground state E = " << std::setprecision(10) << E_svm << std::endl;
+
+    // Refine basis
+    PermutationSet perms = PermutationSet::generate(N);
+    auto refined = stochastic_refine(svm.basis, svm.H, svm.S,
+                                      perms, N, terms_free, 500, 10, 123);
+    double E_ref = lowest_energy(refined.H, refined.S);
+    std::cout << "Refined ground state E = " << std::setprecision(10) << E_ref << std::endl;
+
+    // Set u from eigenvector
+    set_u_from_eigenvector(refined.basis, refined.H, refined.S);
+
+    // TDVP imaginary-time polish
+    int basis_n = static_cast<int>(refined.basis.size());
+    auto alpha_z_list = build_alpha_z_list(basis_n, N);
+
+    SolverConfig config;
+    config.lambda_C  = 1e-8;
+    config.rcond     = 1e-4;
+    config.resolve_u = true;
+    config.dtao_grow = 1.5;
+
+    std::cout << "\n--- Imaginary-time TDVP polish ---" << std::endl;
+    evolution(alpha_z_list, refined.basis, 1, 100, 1e-10, terms_free, config, &perms);
+
+    // Now do kicked real-time evolution
+    HamiltonianTerms terms_kick = terms_free;
+    terms_kick.kicking = true;
+
+    KickParams kick_params;
+    kick_params.T_period   = 1.0;
+    kick_params.T_pulse    = 0.0;   // ideal delta kick
+    kick_params.kappa_kick = 1.0;
+    kick_params.k_L_kick   = 0.5;
+    kick_params.n_kicks    = 10;
+
+    SolverConfig rt_config;
+    rt_config.lambda_C  = 1e-8;
+    rt_config.rcond     = 1e-4;
+    rt_config.resolve_u = true;
+
+    double dt_step = 0.01;
+
+    std::cout << "\n--- Real-time kicked evolution ---" << std::endl;
+    std::cout << "T_period=" << kick_params.T_period
+              << ", n_kicks=" << kick_params.n_kicks
+              << ", dt=" << dt_step << std::endl;
+
+    auto obs = kicked_evolution(refined.basis, alpha_z_list, kick_params,
+                                 dt_step, terms_free, terms_kick,
+                                 rt_config, &perms);
+
+    // Summary
+    std::cout << "\n--- Observable summary ---" << std::endl;
+    std::cout << std::setw(6) << "kick" << std::setw(12) << "time"
+              << std::setw(16) << "energy" << std::setw(16) << "kinetic"
+              << std::setw(12) << "overlap" << std::endl;
+    for (size_t i = 0; i < obs.size(); i++) {
+        std::cout << std::setw(6) << i
+                  << std::setw(12) << std::setprecision(4) << obs[i].time
+                  << std::setw(16) << std::setprecision(8) << obs[i].energy
+                  << std::setw(16) << std::setprecision(8) << obs[i].kinetic_energy
+                  << std::setw(12) << std::setprecision(6) << obs[i].overlap_norm
+                  << std::endl;
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -470,12 +607,14 @@ int main(int argc, char* argv[]) {
     bool run_delta = false;
     bool run_gaussian = false;
     bool run_kicking = false;
+    bool run_kicked = false;
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--tdvp") run_tdvp = true;
         if (std::string(argv[i]) == "--tdvp-only") tdvp_only = true;
         if (std::string(argv[i]) == "--delta") run_delta = true;
         if (std::string(argv[i]) == "--gaussian") run_gaussian = true;
         if (std::string(argv[i]) == "--kicking") run_kicking = true;
+        if (std::string(argv[i]) == "--kicked") run_kicked = true;
     }
     if (run_tdvp || tdvp_only) {
         run_phase3_tdvp();
@@ -488,6 +627,9 @@ int main(int argc, char* argv[]) {
     }
     if (run_kicking) {
         run_phase3_tdvp_kicking();
+    }
+    if (run_kicked) {
+        run_kicked_evolution_test();
     }
 
     return 0;

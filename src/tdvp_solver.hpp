@@ -1,6 +1,7 @@
 #pragma once
 #include "types.hpp"
 #include "basis_params.hpp"
+#include "permutation.hpp"
 #include <vector>
 #include <tuple>
 
@@ -22,6 +23,34 @@ struct HamiltonianTerms {
 
     static HamiltonianTerms all() { return {true, true, true, true, true}; }
     static HamiltonianTerms kinetic_harmonic() { return {true, true, false, false, false}; }
+};
+
+// Solver configuration
+struct SolverConfig {
+    double lambda_C   = 1e-8;    // Tikhonov regularization for C matrix
+    double rcond      = 1e-4;    // SVD truncation threshold
+    bool   resolve_u  = false;   // Re-solve u via eigenvalue after each step
+    double dtao_grow  = 1.5;     // Step size growth factor after successful step
+    double dtao_max   = 0.0;     // Max step size (0 = 100*initial dtao)
+
+    // Energy-based convergence
+    double energy_tol        = 1e-12;  // Stop when |dE| < energy_tol for consecutive steps
+    int    stagnation_window = 50;     // Steps without improvement before recovery attempt
+
+    // Adaptive regularization
+    bool   adaptive_lambda = false;    // Auto-increase lambda_C when condition number too high
+    double lambda_max      = 1e-4;    // Upper bound for adaptive regularization
+
+    static SolverConfig defaults() { return {}; }
+};
+
+// Diagnostics from a TDVP step
+struct TdvpDiagnostics {
+    double cond_C       = 0.0;   // Condition number of C (max_sv / min_sv)
+    int    effective_rank = 0;    // Number of singular values above threshold
+    double min_sv_S     = 0.0;   // Smallest singular value of overlap matrix S
+    double max_sv_C     = 0.0;   // Largest singular value of C_bar_update
+    double min_sv_C     = 0.0;   // Smallest singular value of C_bar_update
 };
 
 // Assemble the full C metric tensor matrix
@@ -55,12 +84,15 @@ struct TdvpStepResult {
     Cd E_new, E_pre;
     double norm_dz;
     double used_dtao;
+    TdvpDiagnostics diag;
 };
 
 TdvpStepResult tdvp_step(const std::vector<AlphaIndex>& alpha_z_list,
                           const std::vector<BasisParams>& basis,
                           double dtao,
-                          const HamiltonianTerms& terms = HamiltonianTerms::all());
+                          const HamiltonianTerms& terms = HamiltonianTerms::all(),
+                          const SolverConfig& config = SolverConfig::defaults(),
+                          const PermutationSet* perms = nullptr);
 
 // Main evolution loop
 void evolution(const std::vector<AlphaIndex>& alpha_z_list,
@@ -68,6 +100,8 @@ void evolution(const std::vector<AlphaIndex>& alpha_z_list,
                double dtao = 1e-3,
                int max_steps = 10000,
                double tol = 1e-12,
-               const HamiltonianTerms& terms = HamiltonianTerms::all());
+               const HamiltonianTerms& terms = HamiltonianTerms::all(),
+               const SolverConfig& config = SolverConfig::defaults(),
+               const PermutationSet* perms = nullptr);
 
 } // namespace ecg1d
