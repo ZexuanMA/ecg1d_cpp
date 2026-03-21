@@ -75,40 +75,113 @@ std::pair<MatrixXcd, MatrixXcd> build_HS(const std::vector<BasisParams>& basis,
     return {H, S};
 }
 
-double lowest_energy(const MatrixXcd& H, const MatrixXcd& S) {
+// Check if column k of overlap matrix S has excessive overlap with any other column.
+// Returns true if max |S(i,k)| / sqrt(|S(i,i)*S(k,k)|) > threshold.
+bool has_excessive_overlap(const MatrixXcd& S, int k, double threshold) {
+    int n = S.rows();
+    double s_kk = std::abs(S(k, k).real());
+    if (s_kk < 1e-15) return true;  // degenerate basis function
+
+    for (int i = 0; i < n; i++) {
+        if (i == k) continue;
+        double s_ii = std::abs(S(i, i).real());
+        if (s_ii < 1e-15) continue;
+        double overlap_norm = std::abs(S(i, k)) / std::sqrt(s_ii * s_kk);
+        if (overlap_norm > threshold) return true;
+    }
+    return false;
+}
+
+// Core eigenvalue solver with truncation. Returns full result with variance.
+EigenResult lowest_energy_full(const MatrixXcd& H, const MatrixXcd& S,
+                                double max_cond, double E_lower_bound,
+                                double rcond_trunc) {
+    const double INF = std::numeric_limits<double>::infinity();
+    EigenResult bad;
+    bad.energy = INF;
+
     int n = H.rows();
 
     // Symmetrize and take real parts
     Eigen::MatrixXd Hs = (0.5 * (H + H.adjoint())).real();
     Eigen::MatrixXd Ss = (0.5 * (S + S.adjoint())).real();
 
-    // Eigendecompose Ss
+    // Eigendecompose S
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Ss);
-    if (es.info() != Eigen::Success) return std::numeric_limits<double>::infinity();
+    if (es.info() != Eigen::Success) return bad;
 
     Eigen::VectorXd w = es.eigenvalues();
-    double w_min = w(0);
+    Eigen::MatrixXd v = es.eigenvectors();
     double w_max = w(n - 1);
 
-    if (w_min < 1e-10 || w_max / w_min > 1e12)
-        return std::numeric_limits<double>::infinity();
+    // S must have at least some positive eigenvalues
+    if (w_max < 1e-15) return bad;
 
-    // S^{-1/2} = v * diag(1/sqrt(w)) * v^T
-    Eigen::MatrixXd v = es.eigenvectors();
-    Eigen::VectorXd w_inv_sqrt = w.array().rsqrt();
-    Eigen::MatrixXd S_inv_half = v * w_inv_sqrt.asDiagonal() * v.transpose();
+    // Truncation: keep only eigenvectors with w_i > w_max * rcond_trunc
+    double w_cutoff = w_max * rcond_trunc;
+    int n_keep = 0;
+    for (int i = 0; i < n; i++) {
+        if (w(i) > w_cutoff) n_keep++;
+    }
+    if (n_keep == 0) return bad;
 
-    // H_tilde = S^{-1/2} * Hs * S^{-1/2}
+    // Check condition number of kept subspace
+    int i_start = n - n_keep;  // eigenvalues are sorted ascending
+    double w_min_kept = w(i_start);
+    if (w_max / w_min_kept > max_cond) return bad;
+
+    // Build S^{-1/2} in the truncated subspace
+    // V_keep: n x n_keep matrix of kept eigenvectors
+    Eigen::MatrixXd V_keep = v.rightCols(n_keep);
+    Eigen::VectorXd w_keep = w.tail(n_keep);
+    Eigen::VectorXd w_inv_sqrt = w_keep.array().rsqrt();
+    Eigen::MatrixXd S_inv_half = V_keep * w_inv_sqrt.asDiagonal() * V_keep.transpose();
+
+    // H_tilde = S^{-1/2} H S^{-1/2} in truncated space
     Eigen::MatrixXd H_tilde = S_inv_half * Hs * S_inv_half;
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eh(H_tilde);
-    if (eh.info() != Eigen::Success) return std::numeric_limits<double>::infinity();
+    if (eh.info() != Eigen::Success) return bad;
 
-    return eh.eigenvalues()(0);
+    double E0 = eh.eigenvalues()(0);
+
+    // Reject unphysical energies
+    if (E0 < E_lower_bound) return bad;
+
+    // Cross-validation: back-transform eigenvector and check Rayleigh quotient
+    Eigen::VectorXd c_tilde = eh.eigenvectors().col(0);
+    Eigen::VectorXd c = S_inv_half * c_tilde;
+    double num = c.transpose() * Hs * c;
+    double den = c.transpose() * Ss * c;
+    if (den < 1e-15) return bad;
+    double E_check = num / den;
+
+    // If eigenvalue and Rayleigh quotient disagree, untrustworthy
+    if (std::abs(E_check - E0) > 1e-6 * std::abs(E0) + 1e-12)
+        return bad;
+
+    // Compute energy variance: σ² = c^T H_tilde^2 c - E0^2
+    // (c_tilde is normalized in the transformed space)
+    Eigen::VectorXd Hc = H_tilde * c_tilde;
+    double H2_expect = Hc.squaredNorm();
+    double variance = H2_expect - E0 * E0;
+
+    EigenResult result;
+    result.energy = E0;
+    result.variance = variance;
+    result.n_kept = n_keep;
+    return result;
+}
+
+double lowest_energy(const MatrixXcd& H, const MatrixXcd& S,
+                     double max_cond, double E_lower_bound,
+                     double rcond_trunc) {
+    return lowest_energy_full(H, S, max_cond, E_lower_bound, rcond_trunc).energy;
 }
 
 void set_u_from_eigenvector(std::vector<BasisParams>& basis,
-                            const MatrixXcd& H, const MatrixXcd& S) {
+                            const MatrixXcd& H, const MatrixXcd& S,
+                            double max_cond, double rcond_trunc) {
     int n = H.rows();
 
     Eigen::MatrixXd Hs = (0.5 * (H + H.adjoint())).real();
@@ -117,9 +190,25 @@ void set_u_from_eigenvector(std::vector<BasisParams>& basis,
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Ss);
     Eigen::VectorXd w = es.eigenvalues();
     Eigen::MatrixXd v = es.eigenvectors();
+    double w_max = w(n - 1);
+    if (w_max < 1e-15) return;
 
-    Eigen::VectorXd w_inv_sqrt = w.array().rsqrt();
-    Eigen::MatrixXd S_inv_half = v * w_inv_sqrt.asDiagonal() * v.transpose();
+    // Truncation: keep eigenvectors with w_i > w_max * rcond_trunc
+    double w_cutoff = w_max * rcond_trunc;
+    int n_keep = 0;
+    for (int i = 0; i < n; i++) {
+        if (w(i) > w_cutoff) n_keep++;
+    }
+    if (n_keep == 0) return;
+
+    int i_start = n - n_keep;
+    double w_min_kept = w(i_start);
+    if (w_max / w_min_kept > max_cond) return;
+
+    Eigen::MatrixXd V_keep = v.rightCols(n_keep);
+    Eigen::VectorXd w_keep = w.tail(n_keep);
+    Eigen::VectorXd w_inv_sqrt = w_keep.array().rsqrt();
+    Eigen::MatrixXd S_inv_half = V_keep * w_inv_sqrt.asDiagonal() * V_keep.transpose();
 
     Eigen::MatrixXd H_tilde = S_inv_half * Hs * S_inv_half;
 
@@ -128,7 +217,7 @@ void set_u_from_eigenvector(std::vector<BasisParams>& basis,
 
     // Normalize so max |c_i| = 1
     double max_c = c.array().abs().maxCoeff();
-    c /= max_c;
+    if (max_c > 0) c /= max_c;
 
     for (int i = 0; i < n; i++) {
         basis[i].u = Cd(c(i), 0.0);
@@ -245,9 +334,12 @@ BasisParams perturb_basis(const BasisParams& base, std::mt19937_64& rng,
 
 SvmResult svm_build_basis(int N, int K_max, int n_trials,
                            const HamiltonianTerms& terms,
-                           int seed) {
+                           int seed,
+                           double E_lower_bound) {
     std::mt19937_64 rng(seed);
     PermutationSet perms = PermutationSet::generate(N);
+
+    double E_lower = E_lower_bound;
 
     // Initial basis: harmonic oscillator ground state
     MatrixXcd A0 = MatrixXcd::Zero(N, N);
@@ -259,8 +351,10 @@ SvmResult svm_build_basis(int N, int K_max, int n_trials,
     std::vector<BasisParams> basis = {b0};
 
     auto [H, S] = build_HS(basis, perms, terms);
-    double E = lowest_energy(H, S);
-    std::cout << "  K= 1: E = " << std::setprecision(10) << E << std::endl;
+    auto res0 = lowest_energy_full(H, S, 1e8, E_lower);
+    std::cout << "  K= 1: E = " << std::setprecision(10) << res0.energy
+              << "  sigma=" << std::scientific << std::sqrt(std::max(0.0, res0.variance))
+              << std::defaultfloat << std::endl;
 
     for (int k = 1; k < K_max; k++) {
         double best_E = std::numeric_limits<double>::infinity();
@@ -287,7 +381,10 @@ SvmResult svm_build_basis(int N, int K_max, int n_trials,
             H_ext(n, n) = h_nn;
             S_ext(n, n) = s_nn;
 
-            double E_trial = lowest_energy(H_ext, S_ext);
+            // Overlap screening: reject trial if too similar to existing basis
+            if (has_excessive_overlap(S_ext, n, 0.99)) continue;
+
+            double E_trial = lowest_energy(H_ext, S_ext, 1e8, E_lower);
 
             if (E_trial < best_E) {
                 best_E = E_trial;
@@ -297,15 +394,22 @@ SvmResult svm_build_basis(int N, int K_max, int n_trials,
             }
         }
 
+        if (best_E == std::numeric_limits<double>::infinity()) {
+            std::cout << "  K=" << std::setw(2) << (k + 1)
+                      << ": no valid trial found, stopping." << std::endl;
+            break;
+        }
+
         basis.push_back(best_basis);
         H = best_H;
         S = best_S;
 
+        auto res = lowest_energy_full(H, S, 1e8, E_lower);
         std::cout << "  K=" << std::setw(2) << (k + 1)
                   << ": E = " << std::setprecision(10) << best_E
-                  << std::endl;
-
-        E = best_E;
+                  << "  sigma=" << std::scientific << std::sqrt(std::max(0.0, res.variance))
+                  << "  n_kept=" << res.n_kept
+                  << std::defaultfloat << std::endl;
     }
 
     return {basis, H, S};
@@ -316,15 +420,33 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
                              const PermutationSet& perms,
                              int N, const HamiltonianTerms& terms,
                              int n_trials, int max_rounds,
-                             int seed) {
+                             int seed,
+                             double E_lower_bound) {
     std::mt19937_64 rng(seed);
     int n = static_cast<int>(basis.size());
-    double E_current = lowest_energy(H, S);
+
+    double E_current = lowest_energy(H, S, 1e8, E_lower_bound);
     double scale0 = 0.5;
+
+    // Max total energy drop allowed per round (across all K replacements).
+    // Anchored at start of round to prevent cascading drift.
+    // Legitimate total improvement per round is typically 1e-5 to 1e-7.
+    // Setting tight to prevent ghost states from sneaking through.
+    double max_round_drop = 1e-4;
+
+    std::cout << "  Refine: K=" << n << ", initial E=" << std::setprecision(10)
+              << E_current << ", E_lower_bound=" << E_lower_bound
+              << ", max_round_drop=" << max_round_drop << std::endl;
 
     for (int round_idx = 0; round_idx < max_rounds; round_idx++) {
         bool improved = false;
         double scale = scale0 / (1.0 + round_idx * 0.1);
+        int n_replaced = 0;
+
+        // Anchor: energy at start of this round. No replacement in this round
+        // can push energy below E_round_start - max_round_drop.
+        double E_round_start = E_current;
+        double E_floor = std::max(E_lower_bound, E_round_start - max_round_drop);
 
         for (int k = 0; k < n; k++) {
             double best_E = E_current;
@@ -355,7 +477,11 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
                     }
                 }
 
-                double E_trial = lowest_energy(H_new, S_new);
+                // Overlap screening: reject if trial too similar to existing basis
+                if (has_excessive_overlap(S_new, k, 0.95)) continue;
+
+                // Stricter eigenvalue truncation for refinement (rcond=1e-8)
+                double E_trial = lowest_energy(H_new, S_new, 1e8, E_floor, 1e-8);
 
                 if (E_trial < best_E) {
                     best_E = E_trial;
@@ -367,18 +493,21 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
             }
 
             if (found) {
-                double dE = best_E - E_current;
                 basis[k] = best_basis_k;
                 H = best_H;
                 S = best_S;
                 improved = true;
                 E_current = best_E;
-                std::cout << "  Round " << (round_idx + 1) << ", k=" << k
-                          << ": E = " << std::setprecision(10) << E_current
-                          << "  dE = " << std::scientific << dE
-                          << std::defaultfloat << std::endl;
+                n_replaced++;
             }
         }
+
+        auto res = lowest_energy_full(H, S, 1e8, E_lower_bound);
+        std::cout << "  Round " << (round_idx + 1) << " done: E = "
+                  << std::setprecision(10) << E_current
+                  << "  sigma=" << std::scientific << std::sqrt(std::max(0.0, res.variance))
+                  << "  replaced=" << n_replaced
+                  << std::defaultfloat << std::endl;
 
         if (!improved) {
             std::cout << "  No improvement in round " << (round_idx + 1)

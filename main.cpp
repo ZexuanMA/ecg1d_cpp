@@ -348,7 +348,8 @@ static void run_svm_tdvp(const std::string& label,
                           double E_exact,
                           int K_max = 5, int svm_trials = 5000,
                           int refine_trials = 500, int refine_rounds = 10,
-                          int tdvp_steps = 300) {
+                          int tdvp_steps = 300,
+                          double E_lower_bound = 0.0) {
     int N = 2;
     auto t0 = std::chrono::steady_clock::now();
 
@@ -357,7 +358,7 @@ static void run_svm_tdvp(const std::string& label,
     std::cout << "Target E = " << std::setprecision(10) << E_exact << std::endl;
     std::cout << "\n--- Phase 1: Stochastic Variational Method ---" << std::endl;
 
-    auto svm = svm_build_basis(N, K_max, svm_trials, terms, 42);
+    auto svm = svm_build_basis(N, K_max, svm_trials, terms, 42, E_lower_bound);
     double E_svm = lowest_energy(svm.H, svm.S);
     auto t1 = std::chrono::steady_clock::now();
     double dt1 = std::chrono::duration<double>(t1 - t0).count();
@@ -376,7 +377,8 @@ static void run_svm_tdvp(const std::string& label,
         std::cout << "\n--- Phase 1.5: Stochastic Refinement ---" << std::endl;
         refined = stochastic_refine(svm.basis, svm.H, svm.S,
                                      perms, N, terms,
-                                     refine_trials, refine_rounds, 123);
+                                     refine_trials, refine_rounds, 123,
+                                     E_lower_bound);
         E_refine = lowest_energy(refined.H, refined.S);
         t2 = std::chrono::steady_clock::now();
         double dt15 = std::chrono::duration<double>(t2 - t1).count();
@@ -421,13 +423,20 @@ static void run_svm_tdvp(const std::string& label,
                   << std::defaultfloat << ")" << std::endl;
     }
 
-    // Final energy from eigenvalue approach
+    // Final energy from eigenvalue approach (with variance diagnostic)
     auto [H_final, S_final] = build_HS(refined.basis, perms, terms);
-    double E_final = lowest_energy(H_final, S_final);
+    auto final_res = lowest_energy_full(H_final, S_final);
+    double E_final = final_res.energy;
     auto t3 = std::chrono::steady_clock::now();
     double dt3 = std::chrono::duration<double>(t3 - t2).count();
 
     std::cout << "\nPhase 2 time: " << std::fixed << std::setprecision(1) << dt3 << "s" << std::endl;
+    if (final_res.variance >= 0) {
+        double sigma = std::sqrt(std::max(0.0, final_res.variance));
+        std::cout << "Energy variance sigma = " << std::scientific << sigma
+                  << "  (sigma^2 = " << final_res.variance << ")"
+                  << std::defaultfloat << std::endl;
+    }
 
     // Summary
     double total_time = std::chrono::duration<double>(t3 - t0).count();
@@ -458,9 +467,10 @@ static void run_phase3_tdvp_delta() {
     terms.kicking  = false;
 
     run_svm_tdvp("2-particle delta contact", terms, 1.3067455,
-                 /*K_max=*/5, /*svm_trials=*/5000,
+                 /*K_max=*/15, /*svm_trials=*/5000,
                  /*refine_trials=*/500, /*refine_rounds=*/0,
-                 /*tdvp_steps=*/1000);
+                 /*tdvp_steps=*/1000,
+                 /*E_lower_bound=*/1.0);
 }
 
 static void run_phase3_tdvp_gaussian() {
@@ -472,9 +482,10 @@ static void run_phase3_tdvp_gaussian() {
     terms.kicking  = false;
 
     run_svm_tdvp("2-particle Gaussian interaction", terms, 1.5266998310,
-                 /*K_max=*/5, /*svm_trials=*/5000,
+                 /*K_max=*/20, /*svm_trials=*/5000,
                  /*refine_trials=*/500, /*refine_rounds=*/0,
-                 /*tdvp_steps=*/1000);
+                 /*tdvp_steps=*/1000,
+                 /*E_lower_bound=*/1.0);
 }
 
 static void run_phase3_tdvp_kicking() {
@@ -493,7 +504,7 @@ static void run_kicked_evolution_test() {
     std::cout << "\n=== Kicked Real-Time Evolution (N=2, delta interaction) ===" << std::endl;
 
     int N = 2;
-    int K_max = 5;
+    int K_max = 15;
 
     // Build basis via SVM with kinetic + harmonic + delta
     HamiltonianTerms terms_free;
@@ -504,14 +515,16 @@ static void run_kicked_evolution_test() {
     terms_free.kicking  = false;
 
     std::cout << "--- Building basis with SVM ---" << std::endl;
-    auto svm = svm_build_basis(N, K_max, 5000, terms_free, 42);
+    double E_lower_kicked = N * 0.5;  // harmonic trap lower bound
+    auto svm = svm_build_basis(N, K_max, 5000, terms_free, 42, E_lower_kicked);
     double E_svm = lowest_energy(svm.H, svm.S);
     std::cout << "SVM ground state E = " << std::setprecision(10) << E_svm << std::endl;
 
     // Refine basis
     PermutationSet perms = PermutationSet::generate(N);
     auto refined = stochastic_refine(svm.basis, svm.H, svm.S,
-                                      perms, N, terms_free, 500, 10, 123);
+                                      perms, N, terms_free, 500, 10, 123,
+                                      E_lower_kicked);
     double E_ref = lowest_energy(refined.H, refined.S);
     std::cout << "Refined ground state E = " << std::setprecision(10) << E_ref << std::endl;
 
