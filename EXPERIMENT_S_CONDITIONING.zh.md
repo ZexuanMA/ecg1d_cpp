@@ -217,7 +217,56 @@ A 矩阵不对称（源头待查）
 | C: incremental H/S 更新 bug | **已修复** | 改为全量重建 |
 | D: H 矩阵元不 Hermitian | **确认** | A 矩阵不对称是根本原因 |
 
-## 下一步
+---
 
-- [ ] 追查 A 在哪里丢失对称性（SVM growth? TDVP? 其他？）
-- [ ] 修复：确保 A 始终对称
+## 假设 E（最终确认）：Eigen aliasing bug 导致 A 矩阵不对称
+
+### 定位过程
+
+1. SVM 结束后 A 完全对称（||A-A^T|| = 0）
+2. Refine 接受的 trial A 不对称（||A-A^T|| ~ 0.2）
+3. `random_basis_2particle` 无 BUG 报告
+4. **`perturb_basis` 大量产出不对称 A**
+
+### 根本原因
+
+`perturb_basis` 第 320 行：
+
+```cpp
+A_new = 0.5 * (A_new + A_new.transpose());  // 意图对称化
+```
+
+**Eigen 的惰性求值（lazy evaluation）导致 aliasing**：`A_new` 在表达式右侧通过 `.transpose()` 被读取的同时，左侧的 `A_new =` 正在写入。Eigen 不会自动检测这种自赋值 aliasing，导致结果不对称。
+
+### 修复
+
+```cpp
+A_new = (0.5 * (A_new + A_new.transpose())).eval();  // .eval() 强制先算完右侧
+```
+
+### 验证结果
+
+```
+修复前（ghost state）:
+  SVM:     E = 1.526702503
+  Round 1: E = 1.000007499  ← 跳到无相互作用极限
+
+修复后（正常工作）:
+  SVM:     E = 1.526702503
+  Round 1: E = 1.526702494  ← 稳步下降 9e-9
+  Round 4: E = 1.526702348  ← 累计改善 1.5e-7
+```
+
+**变分原理恢复，stochastic refine 正常工作。**
+
+---
+
+## 最终排除清单
+
+| 假设 | 结果 | 证据 |
+|------|------|------|
+| A: S 近奇异 → 噪声放大 | **排除** | w_min=6.7e-5，噪声仅 2e-12 |
+| B: `.real()` 丢虚部 | **排除** | 去掉后行为完全相同 |
+| C: incremental H/S 更新 bug | **已修复** | 改为全量重建（独立于根本原因） |
+| D: H 矩阵元不 Hermitian | **确认为症状** | A 不对称 → K 不对称 → kernel 不对称 |
+| **E: Eigen aliasing in perturb_basis** | **根本原因** | `.eval()` 一行修复一切 |
