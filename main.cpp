@@ -4,6 +4,8 @@
 #include "hamiltonian_gradient.hpp"
 #include "tdvp_solver.hpp"
 #include "svm.hpp"
+#include "interaction_kernels.hpp"
+#include "pair_cache.hpp"
 #include "kicked_evolution.hpp"
 #include "observables.hpp"
 #include <iostream>
@@ -453,23 +455,61 @@ static void run_svm_tdvp(const std::string& label,
             }
             std::cout << "    max |Im| in basis params = " << std::scientific << max_imag << std::defaultfloat << std::endl;
 
-            // Hermitian symmetry test: compare compute_HS_ij(a,b) vs conj(compute_HS_ij(b,a))
-            // for gaussian-only terms
-            std::cout << "    Hermitian symmetry test (gaussian interaction):" << std::endl;
-            for (int ii = 0; ii < std::min(3, nb); ii++) {
-                for (int jj = ii+1; jj < std::min(5, nb); jj++) {
-                    auto [h_ab, s_ab] = compute_HS_ij(refined.basis[ii], refined.basis[jj], perms, g_only);
-                    auto [h_ba, s_ba] = compute_HS_ij(refined.basis[jj], refined.basis[ii], perms, g_only);
-                    double h_diff = std::abs(h_ab - std::conj(h_ba));
-                    double s_diff = std::abs(s_ab - std::conj(s_ba));
-                    if (h_diff > 1e-14 || s_diff > 1e-14) {
-                        std::cout << "      (" << ii << "," << jj << ")"
-                                  << " |h(a,b)-conj(h(b,a))|=" << std::scientific << h_diff
-                                  << " |s(a,b)-conj(s(b,a))|=" << s_diff
-                                  << " h(a,b)=" << std::setprecision(10) << h_ab.real() << "+" << h_ab.imag() << "i"
-                                  << " h(b,a)=" << h_ba.real() << "+" << h_ba.imag() << "i"
-                                  << std::defaultfloat << std::endl;
-                    }
+            // Per-permutation Hermitian symmetry test for pair (0,1)
+            std::cout << "    Per-permutation test (pair 0,1), gaussian only:" << std::endl;
+            for (int p = 0; p < perms.SN; p++) {
+                PairCache c_ab = PairCache::build(refined.basis[0], refined.basis[1], perms.matrices[p]);
+                PairCache c_ba = PairCache::build(refined.basis[1], refined.basis[0], perms.matrices[p]);
+
+                Cd mg_ab = c_ab.M_G, mg_ba = c_ba.M_G;
+                Cd gk_ab = compute_H_Mijab(c_ab, 0, 1);
+                Cd gk_ba = compute_H_Mijab(c_ba, 0, 1);
+
+                std::cout << "      P=" << p
+                          << "  M_G: " << std::setprecision(10) << mg_ab.real()
+                          << " vs " << mg_ba.real()
+                          << "  diff=" << std::scientific << std::abs(mg_ab - mg_ba)
+                          << std::endl;
+                std::cout << "        kernel: " << std::setprecision(10) << std::defaultfloat << gk_ab.real()
+                          << " vs " << gk_ba.real()
+                          << "  diff=" << std::scientific << std::abs(gk_ab - gk_ba)
+                          << std::endl;
+                std::cout << "        M_G*k:  " << std::defaultfloat << std::setprecision(10) << (mg_ab*gk_ab).real()
+                          << " vs " << (mg_ba*gk_ba).real()
+                          << "  diff=" << std::scientific << std::abs(mg_ab*gk_ab - mg_ba*gk_ba)
+                          << std::defaultfloat << std::endl;
+
+                // Detailed: K_inv, mu, h, p for this permutation
+                Cd h_ab_val = c_ab.K_inv(0,0) + c_ab.K_inv(1,1) - 2.0*c_ab.K_inv(0,1);
+                Cd h_ba_val = c_ba.K_inv(0,0) + c_ba.K_inv(1,1) - 2.0*c_ba.K_inv(0,1);
+                Cd p_ab_val = c_ab.mu(0) - c_ab.mu(1);
+                Cd p_ba_val = c_ba.mu(0) - c_ba.mu(1);
+                std::cout << "        h:  " << std::setprecision(10) << h_ab_val.real()
+                          << " vs " << h_ba_val.real() << std::endl;
+                std::cout << "        p:  " << p_ab_val.real()
+                          << " vs " << p_ba_val.real() << std::endl;
+                std::cout << "        K_inv(0,0): " << c_ab.K_inv(0,0).real() << " vs " << c_ba.K_inv(0,0).real() << std::endl;
+                std::cout << "        K_inv(1,1): " << c_ab.K_inv(1,1).real() << " vs " << c_ba.K_inv(1,1).real() << std::endl;
+                std::cout << "        K_inv(0,1): " << c_ab.K_inv(0,1).real() << " vs " << c_ba.K_inv(0,1).real() << std::endl;
+                std::cout << "        mu(0): " << c_ab.mu(0).real() << " vs " << c_ba.mu(0).real() << std::endl;
+                std::cout << "        mu(1): " << c_ab.mu(1).real() << " vs " << c_ba.mu(1).real() << std::endl;
+                std::cout << "        K(0,0): " << c_ab.K(0,0).real() << " vs " << c_ba.K(0,0).real() << std::endl;
+                std::cout << "        K(1,1): " << c_ab.K(1,1).real() << " vs " << c_ba.K(1,1).real() << std::endl;
+                std::cout << "        K(0,1): " << c_ab.K(0,1).real() << " vs " << c_ba.K(0,1).real() << std::endl;
+                std::cout << "        K(1,0): " << c_ab.K(1,0).real() << " vs " << c_ba.K(1,0).real() << std::endl;
+                if (p == 0) {
+                    // Print A matrices of basis[0] and basis[1]
+                    auto& b0 = refined.basis[0]; auto& b1 = refined.basis[1];
+                    std::cout << "        basis[0].A: [[" << b0.A(0,0).real() << "," << b0.A(0,1).real()
+                              << "],[" << b0.A(1,0).real() << "," << b0.A(1,1).real() << "]]" << std::endl;
+                    std::cout << "        basis[1].A: [[" << b1.A(0,0).real() << "," << b1.A(0,1).real()
+                              << "],[" << b1.A(1,0).real() << "," << b1.A(1,1).real() << "]]" << std::endl;
+                    std::cout << "        basis[0].B diag: " << b0.B(0,0).real() << "," << b0.B(1,1).real() << std::endl;
+                    std::cout << "        basis[1].B diag: " << b1.B(0,0).real() << "," << b1.B(1,1).real() << std::endl;
+                    double asym0 = std::abs(b0.A(0,1).real() - b0.A(1,0).real());
+                    double asym1 = std::abs(b1.A(0,1).real() - b1.A(1,0).real());
+                    std::cout << "        |A(0,1)-A(1,0)|: basis0=" << std::scientific << asym0
+                              << " basis1=" << asym1 << std::defaultfloat << std::endl;
                 }
             }
         }
