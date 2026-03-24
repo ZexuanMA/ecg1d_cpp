@@ -457,6 +457,17 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
               << E_current << ", w_min=" << std::scientific << w_min_init
               << std::defaultfloat << std::endl;
 
+    // Sanity check: does the passed-in H/S match basis?
+    {
+        auto [H_chk, S_chk] = build_HS(basis, perms, terms);
+        double E_passed = lowest_energy(H, S, 1e8, E_lower_bound);
+        double E_rebuilt = lowest_energy(H_chk, S_chk, 1e8, E_lower_bound);
+        std::cout << "  Sanity: E_passed=" << std::setprecision(10) << E_passed
+                  << " E_rebuilt=" << E_rebuilt
+                  << " diff=" << std::scientific << (E_passed - E_rebuilt)
+                  << std::defaultfloat << std::endl;
+    }
+
     for (int round_idx = 0; round_idx < max_rounds; round_idx++) {
         bool improved = false;
         double scale = scale0 / (1.0 + round_idx * 0.1);
@@ -477,6 +488,7 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
                     : perturb_basis(basis[k], rng, scale, N);
 
                 // Rebuild row/col k
+                // IMPORTANT: match build_HS convention — smaller index first
                 MatrixXcd H_new = H;
                 MatrixXcd S_new = S;
                 for (int i = 0; i < n; i++) {
@@ -484,10 +496,14 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
                         auto [h, s] = compute_HS_ij(tb, tb, perms, terms);
                         H_new(k, k) = h;
                         S_new(k, k) = s;
-                    } else {
+                    } else if (i < k) {
                         auto [h, s] = compute_HS_ij(basis[i], tb, perms, terms);
                         H_new(i, k) = h;  H_new(k, i) = std::conj(h);
                         S_new(i, k) = s;  S_new(k, i) = std::conj(s);
+                    } else {  // i > k
+                        auto [h, s] = compute_HS_ij(tb, basis[i], perms, terms);
+                        H_new(k, i) = h;  H_new(i, k) = std::conj(h);
+                        S_new(k, i) = s;  S_new(i, k) = std::conj(s);
                     }
                 }
 
@@ -512,6 +528,30 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
                 improved = true;
                 E_current = best_E;
                 n_replaced++;
+
+                // Diagnostic: rebuild H/S from scratch, compare with incremental
+                auto [H_chk, S_chk] = build_HS(basis, perms, terms);
+                double H_diff = (H - H_chk).norm();
+                double S_diff = (S - S_chk).norm();
+                if (H_diff > 1e-10 || S_diff > 1e-10) {
+                    std::cout << "  *** MATRIX MISMATCH at k=" << k
+                              << ": ||H_inc-H_reb||=" << std::scientific << H_diff
+                              << " ||S_inc-S_reb||=" << S_diff
+                              << std::defaultfloat << std::endl;
+                    // Show which elements differ most
+                    for (int ii = 0; ii < n; ii++) {
+                        for (int jj = ii; jj < n; jj++) {
+                            double hd = std::abs(H(ii,jj) - H_chk(ii,jj));
+                            double sd = std::abs(S(ii,jj) - S_chk(ii,jj));
+                            if (hd > 1e-10 || sd > 1e-10) {
+                                std::cout << "    (" << ii << "," << jj << ")"
+                                          << " H_diff=" << std::scientific << hd
+                                          << " S_diff=" << sd
+                                          << std::defaultfloat << std::endl;
+                            }
+                        }
+                    }
+                }
             }
         }
 

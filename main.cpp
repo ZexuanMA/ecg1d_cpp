@@ -382,9 +382,26 @@ static void run_svm_tdvp(const std::string& label,
         E_refine = lowest_energy(refined.H, refined.S);
         t2 = std::chrono::steady_clock::now();
         double dt15 = std::chrono::duration<double>(t2 - t1).count();
-        std::cout << "Refine result: E = " << std::setprecision(10) << E_refine
+        std::cout << "Refine result (stored H/S): E = " << std::setprecision(10) << E_refine
                   << "  (error = " << std::scientific << (E_refine - E_exact)
                   << std::defaultfloat << ")" << std::endl;
+
+        // Diagnostic: rebuild H/S from scratch and compare
+        auto [H_rebuilt, S_rebuilt] = build_HS(refined.basis, perms, terms);
+        double E_rebuilt = lowest_energy(H_rebuilt, S_rebuilt);
+        std::cout << "Refine result (rebuilt H/S): E = " << std::setprecision(10) << E_rebuilt
+                  << "  (error = " << std::scientific << (E_rebuilt - E_exact)
+                  << std::defaultfloat << ")" << std::endl;
+        if (std::abs(E_refine - E_rebuilt) > 1e-8) {
+            std::cout << "  *** MISMATCH: stored vs rebuilt differ by "
+                      << std::scientific << (E_refine - E_rebuilt)
+                      << " — incremental H/S update has a bug! ***"
+                      << std::defaultfloat << std::endl;
+            // Use rebuilt matrices going forward
+            refined.H = H_rebuilt;
+            refined.S = S_rebuilt;
+        }
+
         std::cout << "Phase 1.5 time: " << std::fixed << std::setprecision(1) << dt15 << "s" << std::endl;
     }
 

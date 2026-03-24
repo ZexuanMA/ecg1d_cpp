@@ -5,47 +5,34 @@
 
 ---
 
-## 假设
+## 假设 A：S 近奇异是 Ghost State 的根本原因
 
-Ghost state 的机制是：S 近奇异 → S^{-1/2} 放大数值误差 → H̃ 本征值有噪声 → 贪心接受的棘轮效应累积噪声 → 能量系统性下漂。
+Ghost state 的假设机制：S 近奇异 → S^{-1/2} 放大数值误差 → H̃ 本征值有噪声 → 贪心接受的棘轮效应累积噪声 → 能量系统性下漂。
 
 如果在 SVM growth 和 stochastic refine 中，**拒绝所有会让 S 条件数超标的 trial**，就能从源头防止 ghost state。
 
-## 实现
+### 实现
 
-### 新增函数 `s_well_conditioned()`
+#### 新增函数 `s_well_conditioned()`
 
 ```cpp
 bool s_well_conditioned(const MatrixXcd& S, double max_cond = 1e6, double* w_min_out = nullptr);
 ```
 
-- 对 S 做实部对称化后特征分解
+- 对 S 做 Hermitian 对称化后特征分解
 - 检查 κ(S) = w_max / w_min < max_cond
 - max_cond 默认 1e6
 
-### 修改 `svm_build_basis()`
+#### 修改 `svm_build_basis()` 和 `stochastic_refine()`
 
 ```diff
 - if (has_excessive_overlap(S_ext, n, 0.99)) continue;
 + if (!s_well_conditioned(S_ext)) continue;
 ```
 
-### 修改 `stochastic_refine()`
+同时移除了 `max_round_drop` / `E_floor` 机制，启用 refine_rounds=10。
 
-```diff
-- if (has_excessive_overlap(S_new, k, 0.95)) continue;
-- double E_trial = lowest_energy(H_new, S_new, 1e8, E_floor, 1e-8);
-+ if (!s_well_conditioned(S_new)) continue;
-+ double E_trial = lowest_energy(H_new, S_new, 1e8, E_lower_bound);
-```
-
-同时移除了 `max_round_drop` / `E_floor` 机制。
-
-### 启用 refine
-
-Gaussian 和 Delta benchmark 的 `refine_rounds` 从 0 改为 10。
-
-## 测试结果（Gaussian benchmark）
+### 测试结果
 
 ```
 --- Phase 1: SVM ---
@@ -58,38 +45,76 @@ Round 2: E = 1.000005519  w_min=2.9348107844e-04  replaced=1
 Round 3: No improvement. Stopping.
 ```
 
-## 关键观察
+### 结果：假设 A 被证伪
 
-1. **S 的条件数始终很好。** w_min 从 6.7e-5 升到 3.0e-4（refine 后条件数反而更好了），κ 从 ~1.5e4 降到 ~3.3e3。
-2. **Ghost state 仍然出现了。** 能量从 1.527 降到 1.000，偏差 0.527，远超精确值。
-3. **sigma（能量方差）显示正常。** σ = 3.7e-7，看起来很小，没有报警。
+1. **S 的条件数始终很好。** w_min 从 6.7e-5 升到 3.0e-4（refine 后条件数反而更好了）
+2. **Ghost state 仍然出现。** 能量从 1.527 降到 1.000，偏差 0.527
+3. **sigma 没有报警。** σ = 3.7e-7，看起来很小
 
-## 误差量级分析
+#### 误差量级分析
 
-w_min = 6.7e-5 时，S^{-1/2} 的最大放大因子 = 1/√(6.7e-5) ≈ 122。
+w_min = 6.7e-5 → S^{-1/2} 最大放大 = 1/√(6.7e-5) ≈ 122。
 
 | 误差来源 | δ_H 量级 | H̃ 噪声 = δ_H / w_min | 能解释 0.5 漂移？ |
 |---------|---------|---------------------|----------------|
 | 机器精度 | 1e-16 | 2e-12 | 不能 |
 | 置换求和累积 | 1e-14 | 2e-10 | 不能 |
-| 取实部（若 Im(S) ~ 1e-3）| 1e-3 | 15 | **远超** |
 
-**结论：w_min = 6.7e-5 对应的 S 条件数完全不构成问题。纯 S 病态导致的噪声量级只有 1e-12，不可能产生 0.5 的漂移。**
+**S 病态导致的噪声只有 ~2e-12，不可能产生 0.5 的漂移。S 条件数不是 ghost 的原因。**
 
-## 假设被证伪
+---
 
-原始假设（"S 近奇异是 ghost state 的根本原因"）被实验否定。S 条件数好的情况下 ghost 仍然出现。
+## 假设 B：取实部 `.real()` 丢弃了虚部信息
 
-## 新的怀疑方向
+`lowest_energy_full` 中原来做了 `(0.5*(S+S†)).real()`，丢弃 S 和 H 的虚部。如果虚部不为零，这会引入误差。
 
-1. **取实部操作。** `lowest_energy_full` 中 `(0.5*(S+S†)).real()` 丢弃了 S 和 H 的虚部。如果基函数有非零的 B 或 R 参数，虚部不为零，取实部是一个 O(|Im|) 的误差。这个误差经过 S^{-1/2} 放大后可能很大——但这与 S 条件数无关，它是矩阵元本身的误差。
+### 实现
 
-2. **基函数替换破坏了波函数结构。** Refine 替换了 18 个基函数中的 5 个。新的广义本征值问题可能给出一个完全不同的基态——不是原来波函数的改进版，而是一个全新的（可能非物理的）态。
+将三个函数（`lowest_energy_full`、`set_u_from_eigenvector`、`s_well_conditioned`）从：
 
-3. **能量方差 σ² 没有报警的原因。** σ² 是在变换后的空间中算的，如果变换本身有问题（取实部引入的误差），σ² 也会跟着错。这和 Rayleigh 商交叉验证失效的原因相同：都是用同一套有偏的数据自我验证。
+```cpp
+Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(S.real());
+```
 
-## 下一步
+改为：
 
-- [ ] 检查 refine 过程中 S 和 H 矩阵的虚部大小
-- [ ] 尝试在 refine 阶段冻结 B=0, R=0（回到 Varga 的实参数设定）
-- [ ] 对比 refine 前后波函数的结构变化
+```cpp
+Eigen::SelfAdjointEigenSolver<MatrixXcd> es(S);  // 复 Hermitian，特征值仍是实数
+```
+
+所有中间变量（V_keep、S_inv_half、H_tilde、c）改为复数类型。S^{-1/2} = V diag(1/√w) V†（adjoint，不是 transpose）。
+
+### 测试结果
+
+```
+--- Phase 1: SVM ---
+K=18: E = 1.526702503  w_min=6.7237234821e-05  (与假设A几乎相同)
+
+--- Phase 1.5: Stochastic Refinement ---
+Round 1: E = 1.000009925  sigma=1.8821527846e-07  w_min=3.0484201574e-04  replaced=5
+Round 2: E = 1.000005519  sigma=5.5716284647e-07  w_min=2.9348107844e-04  replaced=1
+Round 3: No improvement. Stopping.
+```
+
+### 结果：假设 B 也被证伪
+
+行为与取实部版本**完全相同**——相同的能量、相同的 w_min、相同的 ghost。
+
+这证实了：**SVM/refine 阶段的基函数参数确实是实的**（B 虚部 = 0，R 虚部 = 0），所以 `.real()` 本来就没丢信息。去掉 `.real()` 是代码质量改进（更正确、更通用），但不影响 ghost state。
+
+---
+
+## 排除清单
+
+| 假设 | 结果 | 证据 |
+|------|------|------|
+| S 近奇异 → 噪声放大 | **排除** | w_min=6.7e-5，噪声仅 2e-12 |
+| `.real()` 丢虚部 | **排除** | 去掉后行为完全相同 |
+| Rayleigh 商交叉验证 | 无效 | 自我验证，抓不住 ghost |
+| sigma 方差检查 | 无效 | σ=1.9e-7，没有报警 |
+
+## 仍然待查
+
+Ghost 在 S 条件很好、没有取实部误差的情况下仍然出现（Round 1 就替换 5 个基函数后能量从 1.527 降到 1.000）。**问题不是数值精度，而是广义本征值问题本身给出了一个"合法但非物理"的解。**
+
+下一步方向：理解什么是"非物理态"——为什么替换 5 个基函数后，数学上正确的最低本征值对应的是一个不同于目标基态的态。

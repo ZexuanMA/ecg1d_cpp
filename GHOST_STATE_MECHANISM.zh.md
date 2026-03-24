@@ -129,9 +129,78 @@ $$
 
 ---
 
+### 我们代码中的基函数形式
+
+代码中基函数的具体形式可以从 overlap 矩阵元的计算（`pair_cache.cpp`）反推出来。
+
+#### 参数定义（`basis_params.hpp`）
+
+每个基函数由四个参数确定：
+
+| 参数 | 类型 | 含义 |
+|------|------|------|
+| $u$ | 复标量 | 线性组合系数 |
+| $A$ | $N \times N$ 复矩阵 | 二次型主要部分（宽度/关联） |
+| $B$ | $N \times N$ 对角复矩阵 | 额外二次型 + 位移耦合 |
+| $R$ | $N$ 维复向量 | 位移/中心参数 |
+
+#### 基函数表达式
+
+从 `pair_cache.cpp` 的 overlap 计算可以确认，第 $k$ 个 ket 侧基函数为：
+
+$$
+\phi_k(\mathbf{x}) = \exp\!\Big(-\mathbf{x}^T (A_k + B_k)\,\mathbf{x} \;+\; 2\,\mathbf{R}_k^T B_k\,\mathbf{x} \;-\; \mathbf{R}_k^T B_k\,\mathbf{R}_k\Big)
+$$
+
+对应的 bra 侧（出现在 $\langle\phi_i|$ 中）取复共轭：
+
+$$
+\phi_k^*(\mathbf{x}) = \exp\!\Big(-\mathbf{x}^T \overline{(A_k + B_k)}\,\mathbf{x} \;+\; 2\,\overline{\mathbf{R}_k}^T \overline{B_k}\,\mathbf{x} \;-\; \overline{\mathbf{R}_k}^T \overline{B_k}\,\overline{\mathbf{R}_k}\Big)
+$$
+
+#### 代码中的证据（`pair_cache.cpp`）
+
+overlap $\langle\phi_i|\phi_j\rangle = \int \phi_i^*(\mathbf{x})\,\phi_j(P\mathbf{x})\,d\mathbf{x}$（$P$ 是置换矩阵）的计算：
+
+```cpp
+// 两个高斯指数合并后的二次型矩阵
+K = conj(A_i + B_i) + P^T (A_j + B_j) P
+
+// 合并后的线性项
+b = 2*conj(R_i)^T*conj(B_i) + 2*R_j^T*B_j*P
+
+// 合并后的常数项
+C = -conj(R_i)^T*conj(B_i)*conj(R_i) - R_j^T*B_j*R_j
+
+// N 维高斯积分公式
+M_G = π^{N/2} * det(K)^{-1/2} * exp(C + b^T K^{-1} b / 4)
+```
+
+这就是标准的 $N$ 维高斯积分 $\int \exp(-\mathbf{x}^T K \mathbf{x} + \mathbf{b}^T \mathbf{x} + C)\,d\mathbf{x}$ 的结果。
+
+#### 关键：A 和 B 是复数
+
+$A$ 和 $B$ 都是**复数**矩阵。当 $B \neq 0$ 或 $R \neq 0$ 时，基函数有虚部（对应动量/相位结构）。这是为了支持 TDVP 实时间演化而设计的。
+
+后果是：$S_{ij} = \langle\phi_i|\phi_j\rangle$ 和 $H_{ij} = \langle\phi_i|H|\phi_j\rangle$ 都是**复数**。而 `lowest_energy_full` 中做了 `.real()` 取实部操作——这在基态搜索时假设波函数是实的，但如果 $B$ 或 $R$ 不为零，这个假设不完全成立，取实部会引入误差。
+
+#### 与 Varga 标准 ECG 的对比
+
+| | Varga Type II | 我们的参数化 |
+|---|---|---|
+| 二次型矩阵 | 实 $A$, 实 $B$ | **复** $A$, **复** $B$ |
+| 位移参数 | 实 $R$ | **复** $R$ |
+| 基函数有虚部？ | 否 | **是**（当 $B$, $R$ 有虚部时） |
+| S 矩阵 | 实正数元素 | **复数**元素 |
+| 求解时需要取实部？ | 不需要 | **需要**（`.real()` 操作） |
+
+静态优化（求基态）时，$B$ 和 $R$ 理论上可以是纯实的（基态波函数是实的）。但 `random_basis_2particle()` 和 `perturb_basis()` 生成的参数都是实数赋值给复数类型，所以在 SVM/refine 阶段 $B$ 和 $R$ 的虚部应该是零。如果确实如此，`.real()` 不会丢信息。需要验证这一点。
+
+---
+
 ### 为什么我们的基底不正交
 
-正交基底更方便（$S = I$，没有广义本征值问题的麻烦）。但高斯基函数 $\phi_k(x) = \exp(-x^T A_k x)$ 之间天然有非零 overlap——两个高斯函数的乘积仍是高斯函数，积分不为零。
+正交基底更方便（$S = I$，没有广义本征值问题的麻烦）。但上面的高斯基函数之间天然有非零 overlap——两个高斯函数的乘积仍是高斯函数，积分不为零。
 
 我们**可以**先做正交化，得到正交基底后解普通 $Hu = Eu$。实际上 $S^{-1/2}$ 变换就是在做这件事——把非正交基底变换成正交基底。
 
