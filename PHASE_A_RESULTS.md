@@ -69,16 +69,76 @@ TDVP 误差改善约 40%。1000 步结束时 dE 仍在 ~1e-10 量级，缓慢下
 3. **Delta 瓶颈确认是基底表达力**：优化器已收敛（dE~1e-9），但能量距目标 3e-3——Gaussian 基底无法有效表达 cusp
 4. **Stochastic refine 有稳定性 bug**：放松 `lowest_energy()` 阈值会导致接受虚假负能量，需要单独修复
 
-## 已知问题
+## Ghost State Bug 修复（2026-03-24）
 
-### Stochastic refine 数值不稳定
-- 启用 refine 后，即使在原始阈值下，某些 trial basis 会产生 E ~ -1e+3 到 -1e+200 的虚假能量
-- 原因：两个几乎线性相关的 basis function 使 overlap 矩阵接近奇异
-- `lowest_energy()` 的阈值检查不够：通过了 `w_min > 1e-10` 和 `cond < 1e12`，但实际广义本征值问题仍然病态
-- 修复方向：在 `stochastic_refine()` 中增加额外的物理合理性检查（如拒绝能量低于物理下界的 trial）
+### 根本原因
+
+`perturb_basis()` 中的 A 矩阵对称化语句：
+
+```cpp
+A_new = 0.5 * (A_new + A_new.transpose());  // BUG: Eigen aliasing
+```
+
+Eigen 的惰性求值导致 `A_new.transpose()` 在 `A_new` 被写入时同时被读取，结果不对称。
+
+**修复**：加 `.eval()` 强制先求值：
+
+```cpp
+A_new = (0.5 * (A_new + A_new.transpose())).eval();
+```
+
+### 因果链
+
+A 不对称 → K 矩阵不对称 → K_inv 不对称 → H kernel 不满足 Hermitian 对称性 → build_HS 用 conj 填下三角掩盖了真实不对称 → H 矩阵不代表真实 Hamiltonian → H_g 出现负特征值 → 变分原理被打破 → refine 找到 E < E_true 的"解"
+
+详见 `EXPERIMENT_S_CONDITIONING.zh.md`。
+
+### 附带改进
+
+| 改动 | 说明 |
+|------|------|
+| 复 Hermitian 求解 | `lowest_energy_full` 去掉 `.real()`，用 `SelfAdjointEigenSolver<MatrixXcd>` |
+| 全量重建 | `stochastic_refine` 用 `build_HS` 替代增量行/列更新 |
+| S 条件数检查 | `s_well_conditioned()` 替代 pair-wise overlap 检查 |
+
+## 修复后 Benchmark 结果（2026-03-24）
+
+### 2-particle Gaussian interaction (精确值 E = 1.5266998310)
+
+| 阶段 | K | 误差 | 耗时 |
+|------|---|------|------|
+| SVM | 18 | 2.67e-6 | 5.7s |
+| + Refine (10 轮) | 18 | 2.48e-6 | 59s |
+| + TDVP (收敛中) | 18 | ~2.4e-6 | — |
+
+Refine 每轮稳步改善约 2e-8，10 轮累计 1.95e-7。TDVP 每步约 5e-10。
+变分原理始终满足（E 单调递减且 > E_exact）。
+
+### 收敛曲线（Refine）
+
+```
+Refine初始: E = 1.5267025028
+Round  1:   E = 1.526702494   replaced=7
+Round  2:   E = 1.52670242    replaced=9
+Round  5:   E = 1.52670233    replaced=5
+Round 10:   E = 1.526702308   replaced=5
+```
+
+## N 粒子扩展性评估
+
+| N | N! | K 需求 | 典型精度 | 可行性 |
+|---|-----|--------|---------|--------|
+| 2 | 2 | 10-20 | 1e-6 ~ 1e-10 | **已实现** |
+| 3 | 6 | 50-200 | 1e-4 ~ 1e-6 | 可行（分钟级） |
+| 4 | 24 | 200-500 | 1e-3 ~ 1e-4 | 有挑战（小时级） |
+| 5-6 | 120-720 | 500-5000 | 1e-2 ~ 1e-3 | 极限（天级） |
+| 10 | 3.6M | — | — | 不可行（需换方法） |
+
+当前 N=2 精度 2.5e-6 对静态基态和动力学初态准备都够用。
+瓶颈不在精度，在 N! 置换求和的计算量。
 
 ## 下一步方向
 
-1. **修复 stochastic refine**：增加物理能量下界检查，安全增加 K 到 8-10
-2. **改进 SVM 基底采样**：对 delta 问题用更多窄 Gaussian 覆盖 cusp 区域
-3. **推进 Phase C**：实时间 kicked dynamics（不依赖 delta 精度的静态提升）
+1. **跑 Delta 和 Kicking benchmark**：验证 refine 在其他 Hamiltonian 下也正常
+2. **推进实时间动力学**：kicked TDVP 演化（Phase C）
+3. **N=3 扩展**：通用 `random_basis_Nparticle`，验证 N=3 可行性
