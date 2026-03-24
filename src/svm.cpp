@@ -96,9 +96,9 @@ bool has_excessive_overlap(const MatrixXcd& S, int k, double threshold) {
 // Returns true if condition number < max_cond (safe to solve eigenvalue problem).
 bool s_well_conditioned(const MatrixXcd& S, double max_cond, double* w_min_out) {
     int n = S.rows();
-    Eigen::MatrixXd Ss = (0.5 * (S + S.adjoint())).real();
+    MatrixXcd Ss = 0.5 * (S + S.adjoint());
 
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Ss);
+    Eigen::SelfAdjointEigenSolver<MatrixXcd> es(Ss);
     if (es.info() != Eigen::Success) return false;
 
     double w_min = es.eigenvalues()(0);
@@ -122,16 +122,16 @@ EigenResult lowest_energy_full(const MatrixXcd& H, const MatrixXcd& S,
 
     int n = H.rows();
 
-    // Symmetrize and take real parts
-    Eigen::MatrixXd Hs = (0.5 * (H + H.adjoint())).real();
-    Eigen::MatrixXd Ss = (0.5 * (S + S.adjoint())).real();
+    // Hermitian symmetrize (no .real() — work with complex Hermitian matrices directly)
+    MatrixXcd Hs = 0.5 * (H + H.adjoint());
+    MatrixXcd Ss = 0.5 * (S + S.adjoint());
 
-    // Eigendecompose S
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Ss);
+    // Eigendecompose S (complex Hermitian → real eigenvalues, complex eigenvectors)
+    Eigen::SelfAdjointEigenSolver<MatrixXcd> es(Ss);
     if (es.info() != Eigen::Success) return bad;
 
-    Eigen::VectorXd w = es.eigenvalues();
-    Eigen::MatrixXd v = es.eigenvectors();
+    Eigen::VectorXd w = es.eigenvalues();  // always real for Hermitian
+    MatrixXcd v = es.eigenvectors();
     double w_max = w(n - 1);
 
     // S must have at least some positive eigenvalues
@@ -151,16 +151,17 @@ EigenResult lowest_energy_full(const MatrixXcd& H, const MatrixXcd& S,
     if (w_max / w_min_kept > max_cond) return bad;
 
     // Build S^{-1/2} in the truncated subspace
-    // V_keep: n x n_keep matrix of kept eigenvectors
-    Eigen::MatrixXd V_keep = v.rightCols(n_keep);
+    // V_keep: n x n_keep matrix of kept eigenvectors (complex)
+    MatrixXcd V_keep = v.rightCols(n_keep);
     Eigen::VectorXd w_keep = w.tail(n_keep);
     Eigen::VectorXd w_inv_sqrt = w_keep.array().rsqrt();
-    Eigen::MatrixXd S_inv_half = V_keep * w_inv_sqrt.asDiagonal() * V_keep.transpose();
+    // S^{-1/2} = V diag(1/√w) V† (note: adjoint, not transpose, for complex)
+    MatrixXcd S_inv_half = V_keep * w_inv_sqrt.cast<Cd>().asDiagonal() * V_keep.adjoint();
 
-    // H_tilde = S^{-1/2} H S^{-1/2} in truncated space
-    Eigen::MatrixXd H_tilde = S_inv_half * Hs * S_inv_half;
+    // H_tilde = S^{-1/2} H S^{-1/2} (complex Hermitian)
+    MatrixXcd H_tilde = S_inv_half * Hs * S_inv_half;
 
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eh(H_tilde);
+    Eigen::SelfAdjointEigenSolver<MatrixXcd> eh(H_tilde);
     if (eh.info() != Eigen::Success) return bad;
 
     double E0 = eh.eigenvalues()(0);
@@ -169,20 +170,20 @@ EigenResult lowest_energy_full(const MatrixXcd& H, const MatrixXcd& S,
     if (E0 < E_lower_bound) return bad;
 
     // Cross-validation: back-transform eigenvector and check Rayleigh quotient
-    Eigen::VectorXd c_tilde = eh.eigenvectors().col(0);
-    Eigen::VectorXd c = S_inv_half * c_tilde;
-    double num = c.transpose() * Hs * c;
-    double den = c.transpose() * Ss * c;
-    if (den < 1e-15) return bad;
-    double E_check = num / den;
+    VectorXcd c_tilde = eh.eigenvectors().col(0);
+    VectorXcd c = S_inv_half * c_tilde;
+    Cd num = (c.adjoint() * Hs * c)(0);
+    Cd den = (c.adjoint() * Ss * c)(0);
+    if (den.real() < 1e-15) return bad;
+    double E_check = num.real() / den.real();
 
     // If eigenvalue and Rayleigh quotient disagree, untrustworthy
     if (std::abs(E_check - E0) > 1e-6 * std::abs(E0) + 1e-12)
         return bad;
 
-    // Compute energy variance: σ² = c^T H_tilde^2 c - E0^2
+    // Compute energy variance: σ² = ||H̃ c̃||² - E₀²
     // (c_tilde is normalized in the transformed space)
-    Eigen::VectorXd Hc = H_tilde * c_tilde;
+    VectorXcd Hc = H_tilde * c_tilde;
     double H2_expect = Hc.squaredNorm();
     double variance = H2_expect - E0 * E0;
 
@@ -204,12 +205,12 @@ void set_u_from_eigenvector(std::vector<BasisParams>& basis,
                             double max_cond, double rcond_trunc) {
     int n = H.rows();
 
-    Eigen::MatrixXd Hs = (0.5 * (H + H.adjoint())).real();
-    Eigen::MatrixXd Ss = (0.5 * (S + S.adjoint())).real();
+    MatrixXcd Hs = 0.5 * (H + H.adjoint());
+    MatrixXcd Ss = 0.5 * (S + S.adjoint());
 
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Ss);
+    Eigen::SelfAdjointEigenSolver<MatrixXcd> es(Ss);
     Eigen::VectorXd w = es.eigenvalues();
-    Eigen::MatrixXd v = es.eigenvectors();
+    MatrixXcd v = es.eigenvectors();
     double w_max = w(n - 1);
     if (w_max < 1e-15) return;
 
@@ -225,22 +226,22 @@ void set_u_from_eigenvector(std::vector<BasisParams>& basis,
     double w_min_kept = w(i_start);
     if (w_max / w_min_kept > max_cond) return;
 
-    Eigen::MatrixXd V_keep = v.rightCols(n_keep);
+    MatrixXcd V_keep = v.rightCols(n_keep);
     Eigen::VectorXd w_keep = w.tail(n_keep);
     Eigen::VectorXd w_inv_sqrt = w_keep.array().rsqrt();
-    Eigen::MatrixXd S_inv_half = V_keep * w_inv_sqrt.asDiagonal() * V_keep.transpose();
+    MatrixXcd S_inv_half = V_keep * w_inv_sqrt.cast<Cd>().asDiagonal() * V_keep.adjoint();
 
-    Eigen::MatrixXd H_tilde = S_inv_half * Hs * S_inv_half;
+    MatrixXcd H_tilde = S_inv_half * Hs * S_inv_half;
 
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eh(H_tilde);
-    Eigen::VectorXd c = S_inv_half * eh.eigenvectors().col(0);
+    Eigen::SelfAdjointEigenSolver<MatrixXcd> eh(H_tilde);
+    VectorXcd c = S_inv_half * eh.eigenvectors().col(0);
 
     // Normalize so max |c_i| = 1
     double max_c = c.array().abs().maxCoeff();
     if (max_c > 0) c /= max_c;
 
     for (int i = 0; i < n; i++) {
-        basis[i].u = Cd(c(i), 0.0);
+        basis[i].u = c(i);
     }
 }
 
