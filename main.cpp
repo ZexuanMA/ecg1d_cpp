@@ -468,7 +468,7 @@ static void run_phase3_tdvp_delta() {
 
     run_svm_tdvp("2-particle delta contact", terms, 1.3067455,
                  /*K_max=*/15, /*svm_trials=*/5000,
-                 /*refine_trials=*/500, /*refine_rounds=*/0,
+                 /*refine_trials=*/500, /*refine_rounds=*/10,
                  /*tdvp_steps=*/1000,
                  /*E_lower_bound=*/1.0);
 }
@@ -483,7 +483,7 @@ static void run_phase3_tdvp_gaussian() {
 
     run_svm_tdvp("2-particle Gaussian interaction", terms, 1.5266998310,
                  /*K_max=*/20, /*svm_trials=*/5000,
-                 /*refine_trials=*/500, /*refine_rounds=*/0,
+                 /*refine_trials=*/500, /*refine_rounds=*/10,
                  /*tdvp_steps=*/1000,
                  /*E_lower_bound=*/1.0);
 }

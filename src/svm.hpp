@@ -54,6 +54,13 @@ void set_u_from_eigenvector(std::vector<BasisParams>& basis,
 // Returns true if max normalized overlap > threshold (i.e., should reject).
 bool has_excessive_overlap(const MatrixXcd& S, int k, double threshold = 0.99);
 
+// Check if overlap matrix S is well-conditioned (w_min/w_max > 1/max_cond).
+// This is the primary guard against ghost states: reject any trial that would
+// make S too ill-conditioned, preventing the S^{-1/2} amplification of noise.
+// Returns true if safe, false if should reject.
+// Also returns w_min via optional pointer for diagnostics.
+bool s_well_conditioned(const MatrixXcd& S, double max_cond = 1e6, double* w_min_out = nullptr);
+
 // Physics-informed random basis for N=2 (CM/relative coordinate parameterization)
 BasisParams random_basis_2particle(std::mt19937_64& rng, int name = 0);
 

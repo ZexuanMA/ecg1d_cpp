@@ -92,6 +92,26 @@ bool has_excessive_overlap(const MatrixXcd& S, int k, double threshold) {
     return false;
 }
 
+// Check if overlap matrix S is well-conditioned.
+// Returns true if condition number < max_cond (safe to solve eigenvalue problem).
+bool s_well_conditioned(const MatrixXcd& S, double max_cond, double* w_min_out) {
+    int n = S.rows();
+    Eigen::MatrixXd Ss = (0.5 * (S + S.adjoint())).real();
+
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Ss);
+    if (es.info() != Eigen::Success) return false;
+
+    double w_min = es.eigenvalues()(0);
+    double w_max = es.eigenvalues()(n - 1);
+
+    if (w_min_out) *w_min_out = w_min;
+
+    if (w_max < 1e-15) return false;
+    if (w_min <= 0) return false;
+
+    return (w_max / w_min) < max_cond;
+}
+
 // Core eigenvalue solver with truncation. Returns full result with variance.
 EigenResult lowest_energy_full(const MatrixXcd& H, const MatrixXcd& S,
                                 double max_cond, double E_lower_bound,
@@ -381,8 +401,8 @@ SvmResult svm_build_basis(int N, int K_max, int n_trials,
             H_ext(n, n) = h_nn;
             S_ext(n, n) = s_nn;
 
-            // Overlap screening: reject trial if too similar to existing basis
-            if (has_excessive_overlap(S_ext, n, 0.99)) continue;
+            // S conditioning check: reject if adding this trial would make S ill-conditioned
+            if (!s_well_conditioned(S_ext)) continue;
 
             double E_trial = lowest_energy(H_ext, S_ext, 1e8, E_lower);
 
@@ -404,11 +424,13 @@ SvmResult svm_build_basis(int N, int K_max, int n_trials,
         H = best_H;
         S = best_S;
 
+        double w_min_diag = 0;
+        s_well_conditioned(S, 1e6, &w_min_diag);
         auto res = lowest_energy_full(H, S, 1e8, E_lower);
         std::cout << "  K=" << std::setw(2) << (k + 1)
                   << ": E = " << std::setprecision(10) << best_E
                   << "  sigma=" << std::scientific << std::sqrt(std::max(0.0, res.variance))
-                  << "  n_kept=" << res.n_kept
+                  << "  w_min=" << w_min_diag
                   << std::defaultfloat << std::endl;
     }
 
@@ -428,25 +450,16 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
     double E_current = lowest_energy(H, S, 1e8, E_lower_bound);
     double scale0 = 0.5;
 
-    // Max total energy drop allowed per round (across all K replacements).
-    // Anchored at start of round to prevent cascading drift.
-    // Legitimate total improvement per round is typically 1e-5 to 1e-7.
-    // Setting tight to prevent ghost states from sneaking through.
-    double max_round_drop = 1e-4;
-
+    double w_min_init = 0;
+    s_well_conditioned(S, 1e6, &w_min_init);
     std::cout << "  Refine: K=" << n << ", initial E=" << std::setprecision(10)
-              << E_current << ", E_lower_bound=" << E_lower_bound
-              << ", max_round_drop=" << max_round_drop << std::endl;
+              << E_current << ", w_min=" << std::scientific << w_min_init
+              << std::defaultfloat << std::endl;
 
     for (int round_idx = 0; round_idx < max_rounds; round_idx++) {
         bool improved = false;
         double scale = scale0 / (1.0 + round_idx * 0.1);
         int n_replaced = 0;
-
-        // Anchor: energy at start of this round. No replacement in this round
-        // can push energy below E_round_start - max_round_drop.
-        double E_round_start = E_current;
-        double E_floor = std::max(E_lower_bound, E_round_start - max_round_drop);
 
         for (int k = 0; k < n; k++) {
             double best_E = E_current;
@@ -477,11 +490,10 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
                     }
                 }
 
-                // Overlap screening: reject if trial too similar to existing basis
-                if (has_excessive_overlap(S_new, k, 0.95)) continue;
+                // Primary guard: reject if S would become ill-conditioned
+                if (!s_well_conditioned(S_new)) continue;
 
-                // Stricter eigenvalue truncation for refinement (rcond=1e-8)
-                double E_trial = lowest_energy(H_new, S_new, 1e8, E_floor, 1e-8);
+                double E_trial = lowest_energy(H_new, S_new, 1e8, E_lower_bound);
 
                 if (E_trial < best_E) {
                     best_E = E_trial;
@@ -502,12 +514,15 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
             }
         }
 
+        double w_min_round = 0;
+        s_well_conditioned(S, 1e6, &w_min_round);
         auto res = lowest_energy_full(H, S, 1e8, E_lower_bound);
         std::cout << "  Round " << (round_idx + 1) << " done: E = "
                   << std::setprecision(10) << E_current
                   << "  sigma=" << std::scientific << std::sqrt(std::max(0.0, res.variance))
-                  << "  replaced=" << n_replaced
-                  << std::defaultfloat << std::endl;
+                  << "  w_min=" << w_min_round
+                  << "  replaced=" << std::defaultfloat << n_replaced
+                  << std::endl;
 
         if (!improved) {
             std::cout << "  No improvement in round " << (round_idx + 1)
