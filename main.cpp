@@ -386,20 +386,92 @@ static void run_svm_tdvp(const std::string& label,
                   << "  (error = " << std::scientific << (E_refine - E_exact)
                   << std::defaultfloat << ")" << std::endl;
 
-        // Diagnostic: rebuild H/S from scratch and compare
-        auto [H_rebuilt, S_rebuilt] = build_HS(refined.basis, perms, terms);
-        double E_rebuilt = lowest_energy(H_rebuilt, S_rebuilt);
-        std::cout << "Refine result (rebuilt H/S): E = " << std::setprecision(10) << E_rebuilt
-                  << "  (error = " << std::scientific << (E_rebuilt - E_exact)
-                  << std::defaultfloat << ")" << std::endl;
-        if (std::abs(E_refine - E_rebuilt) > 1e-8) {
-            std::cout << "  *** MISMATCH: stored vs rebuilt differ by "
-                      << std::scientific << (E_refine - E_rebuilt)
-                      << " — incremental H/S update has a bug! ***"
-                      << std::defaultfloat << std::endl;
-            // Use rebuilt matrices going forward
-            refined.H = H_rebuilt;
-            refined.S = S_rebuilt;
+        // Diagnostic: compute energy components separately
+        {
+            HamiltonianTerms t_only  = {true, false, false, false, false};
+            HamiltonianTerms v_only  = {false, true, false, false, false};
+            HamiltonianTerms g_only  = {false, false, false, true, false};
+            HamiltonianTerms tv_only = {true, true, false, false, false};
+
+            auto [H_t, S_t] = build_HS(refined.basis, perms, t_only);
+            auto [H_v, S_v] = build_HS(refined.basis, perms, v_only);
+            auto [H_g, S_g] = build_HS(refined.basis, perms, g_only);
+            auto [H_tv, S_tv] = build_HS(refined.basis, perms, tv_only);
+            auto [H_full, S_full] = build_HS(refined.basis, perms, terms);
+
+            // Use the eigenvector from the full problem to compute each component
+            set_u_from_eigenvector(refined.basis, H_full, S_full);
+
+            // Compute <ψ|O|ψ> / <ψ|ψ> for each operator
+            // u is stored in refined.basis[i].u
+            int nb = static_cast<int>(refined.basis.size());
+            VectorXcd u(nb);
+            for (int i = 0; i < nb; i++) u(i) = refined.basis[i].u;
+
+            // S is the same for all terms (overlap doesn't depend on Hamiltonian)
+            Cd norm  = (u.adjoint() * S_full * u)(0);
+            Cd e_kin = (u.adjoint() * H_t * u)(0) / norm;
+            Cd e_har = (u.adjoint() * H_v * u)(0) / norm;
+            Cd e_int = (u.adjoint() * H_g * u)(0) / norm;
+            Cd e_tv  = (u.adjoint() * H_tv * u)(0) / norm;
+            Cd e_tot = (u.adjoint() * H_full * u)(0) / norm;
+
+            // Also verify: eigenvalue from full diag should match
+            double E_eigenval = lowest_energy(H_full, S_full);
+            // Check linearity: H_full should = H_t + H_v + H_g
+            double H_sum_diff = (H_full - H_t - H_v - H_g).norm();
+            // Check S consistency
+            double S_diff_tv = (S_t - S_full).norm();
+            double S_diff_g = (S_g - S_full).norm();
+
+            std::cout << "  Energy decomposition of refine result:" << std::endl;
+            std::cout << "    <T>     = " << std::setprecision(10) << e_kin.real() << std::endl;
+            std::cout << "    <V_har> = " << e_har.real() << std::endl;
+            std::cout << "    <V_int> = " << e_int.real() << std::endl;
+            std::cout << "    <T+V>   = " << e_tv.real() << std::endl;
+            std::cout << "    <Total> = " << e_tot.real() << std::endl;
+            std::cout << "    norm    = " << norm.real() << std::endl;
+            std::cout << "    E_eigenval = " << E_eigenval << std::endl;
+            std::cout << "    ||H_full - H_t - H_v - H_g|| = " << std::scientific << H_sum_diff << std::endl;
+            std::cout << "    ||S_t - S_full|| = " << S_diff_tv << std::endl;
+            std::cout << "    ||S_g - S_full|| = " << S_diff_g << std::defaultfloat << std::endl;
+
+            // Print H_g eigenvalues to see if it has negative eigenvalues
+            MatrixXcd Hg_herm = 0.5 * (H_g + H_g.adjoint());
+            Eigen::SelfAdjointEigenSolver<MatrixXcd> es_hg(Hg_herm);
+            std::cout << "    H_g eigenvalues: ";
+            for (int i = 0; i < std::min(5, nb); i++)
+                std::cout << std::setprecision(6) << es_hg.eigenvalues()(i) << " ";
+            std::cout << "..." << std::endl;
+
+            // Check: are basis function params actually real?
+            double max_imag = 0;
+            for (int i = 0; i < nb; i++) {
+                max_imag = std::max(max_imag, refined.basis[i].A.imag().cwiseAbs().maxCoeff());
+                max_imag = std::max(max_imag, refined.basis[i].B.imag().cwiseAbs().maxCoeff());
+                max_imag = std::max(max_imag, refined.basis[i].R.imag().cwiseAbs().maxCoeff());
+            }
+            std::cout << "    max |Im| in basis params = " << std::scientific << max_imag << std::defaultfloat << std::endl;
+
+            // Hermitian symmetry test: compare compute_HS_ij(a,b) vs conj(compute_HS_ij(b,a))
+            // for gaussian-only terms
+            std::cout << "    Hermitian symmetry test (gaussian interaction):" << std::endl;
+            for (int ii = 0; ii < std::min(3, nb); ii++) {
+                for (int jj = ii+1; jj < std::min(5, nb); jj++) {
+                    auto [h_ab, s_ab] = compute_HS_ij(refined.basis[ii], refined.basis[jj], perms, g_only);
+                    auto [h_ba, s_ba] = compute_HS_ij(refined.basis[jj], refined.basis[ii], perms, g_only);
+                    double h_diff = std::abs(h_ab - std::conj(h_ba));
+                    double s_diff = std::abs(s_ab - std::conj(s_ba));
+                    if (h_diff > 1e-14 || s_diff > 1e-14) {
+                        std::cout << "      (" << ii << "," << jj << ")"
+                                  << " |h(a,b)-conj(h(b,a))|=" << std::scientific << h_diff
+                                  << " |s(a,b)-conj(s(b,a))|=" << s_diff
+                                  << " h(a,b)=" << std::setprecision(10) << h_ab.real() << "+" << h_ab.imag() << "i"
+                                  << " h(b,a)=" << h_ba.real() << "+" << h_ba.imag() << "i"
+                                  << std::defaultfloat << std::endl;
+                    }
+                }
+            }
         }
 
         std::cout << "Phase 1.5 time: " << std::fixed << std::setprecision(1) << dt15 << "s" << std::endl;
