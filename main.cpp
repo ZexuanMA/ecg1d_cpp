@@ -369,6 +369,18 @@ static void run_svm_tdvp(const std::string& label,
               << std::defaultfloat << ")" << std::endl;
     std::cout << "Phase 1 time: " << std::fixed << std::setprecision(1) << dt1 << "s" << std::endl;
 
+    // Check A symmetry after SVM
+    {
+        double max_asym = 0;
+        int worst_k = -1;
+        for (int k = 0; k < (int)svm.basis.size(); k++) {
+            double asym = (svm.basis[k].A - svm.basis[k].A.transpose()).norm();
+            if (asym > max_asym) { max_asym = asym; worst_k = k; }
+        }
+        std::cout << "A symmetry after SVM: max ||A-A^T|| = " << std::scientific << max_asym
+                  << " (basis[" << worst_k << "])" << std::defaultfloat << std::endl;
+    }
+
     // Phase 1.5: Stochastic refinement (A3: re-enabled)
     PermutationSet perms = PermutationSet::generate(N);
     SvmResult refined = svm;
