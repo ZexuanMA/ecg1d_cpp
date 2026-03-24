@@ -4,8 +4,6 @@
 #include "hamiltonian_gradient.hpp"
 #include "tdvp_solver.hpp"
 #include "svm.hpp"
-#include "interaction_kernels.hpp"
-#include "pair_cache.hpp"
 #include "kicked_evolution.hpp"
 #include "observables.hpp"
 #include <iostream>
@@ -369,19 +367,7 @@ static void run_svm_tdvp(const std::string& label,
               << std::defaultfloat << ")" << std::endl;
     std::cout << "Phase 1 time: " << std::fixed << std::setprecision(1) << dt1 << "s" << std::endl;
 
-    // Check A symmetry after SVM
-    {
-        double max_asym = 0;
-        int worst_k = -1;
-        for (int k = 0; k < (int)svm.basis.size(); k++) {
-            double asym = (svm.basis[k].A - svm.basis[k].A.transpose()).norm();
-            if (asym > max_asym) { max_asym = asym; worst_k = k; }
-        }
-        std::cout << "A symmetry after SVM: max ||A-A^T|| = " << std::scientific << max_asym
-                  << " (basis[" << worst_k << "])" << std::defaultfloat << std::endl;
-    }
-
-    // Phase 1.5: Stochastic refinement (A3: re-enabled)
+    // Phase 1.5: Stochastic refinement
     PermutationSet perms = PermutationSet::generate(N);
     SvmResult refined = svm;
     double E_refine = E_svm;
@@ -396,136 +382,9 @@ static void run_svm_tdvp(const std::string& label,
         E_refine = lowest_energy(refined.H, refined.S);
         t2 = std::chrono::steady_clock::now();
         double dt15 = std::chrono::duration<double>(t2 - t1).count();
-        std::cout << "Refine result (stored H/S): E = " << std::setprecision(10) << E_refine
+        std::cout << "Refine result: E = " << std::setprecision(10) << E_refine
                   << "  (error = " << std::scientific << (E_refine - E_exact)
                   << std::defaultfloat << ")" << std::endl;
-
-        // Diagnostic: compute energy components separately
-        {
-            HamiltonianTerms t_only  = {true, false, false, false, false};
-            HamiltonianTerms v_only  = {false, true, false, false, false};
-            HamiltonianTerms g_only  = {false, false, false, true, false};
-            HamiltonianTerms tv_only = {true, true, false, false, false};
-
-            auto [H_t, S_t] = build_HS(refined.basis, perms, t_only);
-            auto [H_v, S_v] = build_HS(refined.basis, perms, v_only);
-            auto [H_g, S_g] = build_HS(refined.basis, perms, g_only);
-            auto [H_tv, S_tv] = build_HS(refined.basis, perms, tv_only);
-            auto [H_full, S_full] = build_HS(refined.basis, perms, terms);
-
-            // Use the eigenvector from the full problem to compute each component
-            set_u_from_eigenvector(refined.basis, H_full, S_full);
-
-            // Compute <ψ|O|ψ> / <ψ|ψ> for each operator
-            // u is stored in refined.basis[i].u
-            int nb = static_cast<int>(refined.basis.size());
-            VectorXcd u(nb);
-            for (int i = 0; i < nb; i++) u(i) = refined.basis[i].u;
-
-            // S is the same for all terms (overlap doesn't depend on Hamiltonian)
-            Cd norm  = (u.adjoint() * S_full * u)(0);
-            Cd e_kin = (u.adjoint() * H_t * u)(0) / norm;
-            Cd e_har = (u.adjoint() * H_v * u)(0) / norm;
-            Cd e_int = (u.adjoint() * H_g * u)(0) / norm;
-            Cd e_tv  = (u.adjoint() * H_tv * u)(0) / norm;
-            Cd e_tot = (u.adjoint() * H_full * u)(0) / norm;
-
-            // Also verify: eigenvalue from full diag should match
-            double E_eigenval = lowest_energy(H_full, S_full);
-            // Check linearity: H_full should = H_t + H_v + H_g
-            double H_sum_diff = (H_full - H_t - H_v - H_g).norm();
-            // Check S consistency
-            double S_diff_tv = (S_t - S_full).norm();
-            double S_diff_g = (S_g - S_full).norm();
-
-            std::cout << "  Energy decomposition of refine result:" << std::endl;
-            std::cout << "    <T>     = " << std::setprecision(10) << e_kin.real() << std::endl;
-            std::cout << "    <V_har> = " << e_har.real() << std::endl;
-            std::cout << "    <V_int> = " << e_int.real() << std::endl;
-            std::cout << "    <T+V>   = " << e_tv.real() << std::endl;
-            std::cout << "    <Total> = " << e_tot.real() << std::endl;
-            std::cout << "    norm    = " << norm.real() << std::endl;
-            std::cout << "    E_eigenval = " << E_eigenval << std::endl;
-            std::cout << "    ||H_full - H_t - H_v - H_g|| = " << std::scientific << H_sum_diff << std::endl;
-            std::cout << "    ||S_t - S_full|| = " << S_diff_tv << std::endl;
-            std::cout << "    ||S_g - S_full|| = " << S_diff_g << std::defaultfloat << std::endl;
-
-            // Print H_g eigenvalues to see if it has negative eigenvalues
-            MatrixXcd Hg_herm = 0.5 * (H_g + H_g.adjoint());
-            Eigen::SelfAdjointEigenSolver<MatrixXcd> es_hg(Hg_herm);
-            std::cout << "    H_g eigenvalues: ";
-            for (int i = 0; i < std::min(5, nb); i++)
-                std::cout << std::setprecision(6) << es_hg.eigenvalues()(i) << " ";
-            std::cout << "..." << std::endl;
-
-            // Check: are basis function params actually real?
-            double max_imag = 0;
-            for (int i = 0; i < nb; i++) {
-                max_imag = std::max(max_imag, refined.basis[i].A.imag().cwiseAbs().maxCoeff());
-                max_imag = std::max(max_imag, refined.basis[i].B.imag().cwiseAbs().maxCoeff());
-                max_imag = std::max(max_imag, refined.basis[i].R.imag().cwiseAbs().maxCoeff());
-            }
-            std::cout << "    max |Im| in basis params = " << std::scientific << max_imag << std::defaultfloat << std::endl;
-
-            // Per-permutation Hermitian symmetry test for pair (0,1)
-            std::cout << "    Per-permutation test (pair 0,1), gaussian only:" << std::endl;
-            for (int p = 0; p < perms.SN; p++) {
-                PairCache c_ab = PairCache::build(refined.basis[0], refined.basis[1], perms.matrices[p]);
-                PairCache c_ba = PairCache::build(refined.basis[1], refined.basis[0], perms.matrices[p]);
-
-                Cd mg_ab = c_ab.M_G, mg_ba = c_ba.M_G;
-                Cd gk_ab = compute_H_Mijab(c_ab, 0, 1);
-                Cd gk_ba = compute_H_Mijab(c_ba, 0, 1);
-
-                std::cout << "      P=" << p
-                          << "  M_G: " << std::setprecision(10) << mg_ab.real()
-                          << " vs " << mg_ba.real()
-                          << "  diff=" << std::scientific << std::abs(mg_ab - mg_ba)
-                          << std::endl;
-                std::cout << "        kernel: " << std::setprecision(10) << std::defaultfloat << gk_ab.real()
-                          << " vs " << gk_ba.real()
-                          << "  diff=" << std::scientific << std::abs(gk_ab - gk_ba)
-                          << std::endl;
-                std::cout << "        M_G*k:  " << std::defaultfloat << std::setprecision(10) << (mg_ab*gk_ab).real()
-                          << " vs " << (mg_ba*gk_ba).real()
-                          << "  diff=" << std::scientific << std::abs(mg_ab*gk_ab - mg_ba*gk_ba)
-                          << std::defaultfloat << std::endl;
-
-                // Detailed: K_inv, mu, h, p for this permutation
-                Cd h_ab_val = c_ab.K_inv(0,0) + c_ab.K_inv(1,1) - 2.0*c_ab.K_inv(0,1);
-                Cd h_ba_val = c_ba.K_inv(0,0) + c_ba.K_inv(1,1) - 2.0*c_ba.K_inv(0,1);
-                Cd p_ab_val = c_ab.mu(0) - c_ab.mu(1);
-                Cd p_ba_val = c_ba.mu(0) - c_ba.mu(1);
-                std::cout << "        h:  " << std::setprecision(10) << h_ab_val.real()
-                          << " vs " << h_ba_val.real() << std::endl;
-                std::cout << "        p:  " << p_ab_val.real()
-                          << " vs " << p_ba_val.real() << std::endl;
-                std::cout << "        K_inv(0,0): " << c_ab.K_inv(0,0).real() << " vs " << c_ba.K_inv(0,0).real() << std::endl;
-                std::cout << "        K_inv(1,1): " << c_ab.K_inv(1,1).real() << " vs " << c_ba.K_inv(1,1).real() << std::endl;
-                std::cout << "        K_inv(0,1): " << c_ab.K_inv(0,1).real() << " vs " << c_ba.K_inv(0,1).real() << std::endl;
-                std::cout << "        mu(0): " << c_ab.mu(0).real() << " vs " << c_ba.mu(0).real() << std::endl;
-                std::cout << "        mu(1): " << c_ab.mu(1).real() << " vs " << c_ba.mu(1).real() << std::endl;
-                std::cout << "        K(0,0): " << c_ab.K(0,0).real() << " vs " << c_ba.K(0,0).real() << std::endl;
-                std::cout << "        K(1,1): " << c_ab.K(1,1).real() << " vs " << c_ba.K(1,1).real() << std::endl;
-                std::cout << "        K(0,1): " << c_ab.K(0,1).real() << " vs " << c_ba.K(0,1).real() << std::endl;
-                std::cout << "        K(1,0): " << c_ab.K(1,0).real() << " vs " << c_ba.K(1,0).real() << std::endl;
-                if (p == 0) {
-                    // Print A matrices of basis[0] and basis[1]
-                    auto& b0 = refined.basis[0]; auto& b1 = refined.basis[1];
-                    std::cout << "        basis[0].A: [[" << b0.A(0,0).real() << "," << b0.A(0,1).real()
-                              << "],[" << b0.A(1,0).real() << "," << b0.A(1,1).real() << "]]" << std::endl;
-                    std::cout << "        basis[1].A: [[" << b1.A(0,0).real() << "," << b1.A(0,1).real()
-                              << "],[" << b1.A(1,0).real() << "," << b1.A(1,1).real() << "]]" << std::endl;
-                    std::cout << "        basis[0].B diag: " << b0.B(0,0).real() << "," << b0.B(1,1).real() << std::endl;
-                    std::cout << "        basis[1].B diag: " << b1.B(0,0).real() << "," << b1.B(1,1).real() << std::endl;
-                    double asym0 = std::abs(b0.A(0,1).real() - b0.A(1,0).real());
-                    double asym1 = std::abs(b1.A(0,1).real() - b1.A(1,0).real());
-                    std::cout << "        |A(0,1)-A(1,0)|: basis0=" << std::scientific << asym0
-                              << " basis1=" << asym1 << std::defaultfloat << std::endl;
-                }
-            }
-        }
-
         std::cout << "Phase 1.5 time: " << std::fixed << std::setprecision(1) << dt15 << "s" << std::endl;
     }
 

@@ -304,11 +304,6 @@ BasisParams random_basis_2particle(std::mt19937_64& rng, int name) {
         R(i) = Cd(0.5 * normal01(rng), 0.0);
     }
 
-    // Paranoia: verify A is symmetric
-    double asym_check = (A - A.transpose()).norm();
-    if (asym_check > 1e-14) {
-        std::cerr << "BUG in random_basis_2particle: A not symmetric! ||A-A^T||=" << asym_check << std::endl;
-    }
     return BasisParams::from_arrays(Cd(1.0, 0.0), A, B, R, name);
 }
 
@@ -355,11 +350,6 @@ BasisParams perturb_basis(const BasisParams& base, std::mt19937_64& rng,
             A_new(i, i) += Cd(shift, 0.0);
     }
 
-    // Paranoia: verify A is symmetric
-    double asym_check = (A_new - A_new.transpose()).norm();
-    if (asym_check > 1e-14) {
-        std::cerr << "BUG in perturb_basis: A not symmetric! ||A-A^T||=" << asym_check << std::endl;
-    }
     return BasisParams::from_arrays(Cd(1.0, 0.0), A_new, B_new, R_new, base.name);
 }
 
@@ -508,12 +498,6 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
             }
 
             if (found) {
-                double asym = (best_basis_k.A - best_basis_k.A.transpose()).norm();
-                if (asym > 1e-14) {
-                    std::cout << "  *** ASYMMETRIC A accepted at k=" << k
-                              << ": ||A-A^T||=" << std::scientific << asym
-                              << std::defaultfloat << std::endl;
-                }
                 basis[k] = best_basis_k;
                 H = best_H;
                 S = best_S;
