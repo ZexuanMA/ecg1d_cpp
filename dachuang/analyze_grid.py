@@ -69,7 +69,8 @@ def detect_rows(R, expected_spacing=42):
 
 
 def detect_spots_in_row(R, row_y, half_width=5):
-    """Find luminous spot positions within a row using peak detection."""
+    """Find luminous spot positions within a row using peak detection.
+    min_distance=30 prevents detecting noise between wells (~45px apart)."""
     y0 = max(0, row_y - half_width)
     y1 = min(R.shape[0], row_y + half_width + 1)
     strip = R[y0:y1, :].mean(axis=0)
@@ -95,17 +96,94 @@ def refine_center(R, y, x, radius=4):
     return (yy * patch_bg).sum() / total, (xx * patch_bg).sum() / total
 
 
+def fill_row_gaps(peaks, image_width, expected_period=46, margin=10):
+    """Fill gaps between detected peaks to recover ALL well positions.
+    Uses detected peaks as anchors, estimates well spacing from their
+    closest-neighbor distances, then interpolates missing wells.
+    expected_period: approximate well-to-well spacing (pixels)."""
+    if len(peaks) < 2:
+        return peaks
+
+    peaks = np.sort(peaks)
+    spacings = np.diff(peaks)
+
+    # Only consider spacings that are plausible single-well distances
+    # (0.6x to 1.5x expected period)
+    lo, hi = expected_period * 0.6, expected_period * 1.5
+    candidates = spacings[(spacings >= lo) & (spacings <= hi)]
+    if len(candidates) >= 3:
+        period = np.median(candidates)
+    else:
+        period = expected_period
+
+    if period < 15:  # sanity check
+        return peaks
+
+    # Fill gaps between consecutive peaks
+    all_pos = []
+    for i in range(len(peaks)):
+        all_pos.append(float(peaks[i]))
+        if i < len(peaks) - 1:
+            gap = peaks[i + 1] - peaks[i]
+            n_missing = round(gap / period) - 1
+            if n_missing > 0:
+                step = gap / (n_missing + 1)
+                for j in range(1, n_missing + 1):
+                    all_pos.append(peaks[i] + j * step)
+
+    # No edge extension — only fill between detected anchors
+
+    return np.array(sorted(all_pos))
+
+
+def merge_close_peaks(peaks, strip_values, min_sep=28):
+    """Merge double-detections of the same well. Keeps the brightest peak
+    in each cluster of peaks closer than min_sep."""
+    if len(peaks) < 2:
+        return peaks
+    peaks = np.sort(peaks)
+    merged = []
+    i = 0
+    while i < len(peaks):
+        cluster = [peaks[i]]
+        j = i + 1
+        while j < len(peaks) and peaks[j] - cluster[0] < min_sep:
+            cluster.append(peaks[j])
+            j += 1
+        cluster = np.array(cluster)
+        best = cluster[np.argmax(strip_values[cluster])]
+        merged.append(best)
+        i = j
+    return np.array(merged)
+
+
 def detect_grid(R):
-    """Detect all luminous spots on one image."""
+    """Detect all well positions on one image.
+    1. Peak detection finds bright anchors (may include double-peaks)
+    2. Merge double-peaks (< 28px apart)
+    3. Fill gaps to recover quenched wells"""
     row_ys = detect_rows(R)
+    H, W = R.shape
     all_spots = []
     counts = []
     for ri, ry in enumerate(row_ys):
-        spot_xs = detect_spots_in_row(R, ry)
-        for sx in spot_xs:
-            cy, cx = refine_center(R, ry, sx)
+        # Step 1: raw peak detection
+        raw_xs = detect_spots_in_row(R, ry)
+
+        # Step 2: merge double-peaks
+        y0 = max(0, ry - 5)
+        y1 = min(H, ry + 6)
+        strip = R[y0:y1, :].mean(axis=0)
+        strip_smooth = ndimage.gaussian_filter1d(strip, sigma=2)
+        clean_xs = merge_close_peaks(raw_xs, strip_smooth)
+
+        # Step 3: fill gaps between anchors
+        all_xs = fill_row_gaps(clean_xs, W, expected_period=46)
+
+        for sx in all_xs:
+            cy, cx = refine_center(R, ry, int(round(sx)))
             all_spots.append((ri, cy, cx))
-        counts.append(len(spot_xs))
+        counts.append(len(all_xs))
 
     counts = np.array(counts) if len(counts) > 0 else np.array([0])
     return all_spots, row_ys, counts
@@ -182,7 +260,25 @@ def block_filter(spots, measurements, n_br=7, n_bc=7):
 
 
 # ──────────────────────────────────────────────
-# Visualization
+# Coordinate mapping (rotated → original)
+# ──────────────────────────────────────────────
+def unrotate_spots(spots, angle_deg, img_shape):
+    """Map spot coordinates from rotated image back to original image."""
+    if abs(angle_deg) < 0.01:
+        return spots
+    theta = np.radians(angle_deg)
+    cy_img, cx_img = img_shape[0] / 2.0, img_shape[1] / 2.0
+    out = []
+    for ri, y, x in spots:
+        dy, dx = y - cy_img, x - cx_img
+        y_orig = cy_img + dy * np.cos(theta) + dx * np.sin(theta)
+        x_orig = cx_img - dy * np.sin(theta) + dx * np.cos(theta)
+        out.append((ri, y_orig, x_orig))
+    return out
+
+
+# ──────────────────────────────────────────────
+# Visualization (on original unrotated image)
 # ──────────────────────────────────────────────
 def save_crop(R, spots, keep, net_signals, bin_edges, filename,
               crop_center, crop_size=300, spot_radius=4):
@@ -279,6 +375,7 @@ def main():
 
         results[name] = {
             'angle': angle,
+            'R_raw': R_raw,
             'R': R,
             'spots': spots,
             'meas': meas,
@@ -305,20 +402,15 @@ def main():
     print(f"  Quench threshold: {quench:.1f}")
     print(f"  Bin edges: {[f'{e:.1f}' for e in bin_edges[1:-1]]}")
 
-    # Use 0ugL total detected spots as reference N_total
-    N_total = int(ref['keep'].sum())
-    print(f"  Reference well count (from 0ugL): {N_total}")
-
-    # Compute distributions
+    # Compute distributions (each image has all wells via gap filling)
     distributions = {}
     level_names = ["quench", "dim", "medium", "bright", "v.bright"]
 
     for name in ["0ugL", "5ugL", "20ugL"]:
         res = results[name]
         kept_net = res['meas'][res['keep'], 2] if res['keep'].sum() > 0 else np.array([])
-        n_detected = len(kept_net)
+        n_wells = len(kept_net)
 
-        # Count detected spots per level
         counts = np.zeros(n_levels)
         for i in range(n_levels):
             if i == 0:
@@ -329,19 +421,10 @@ def main():
                 counts[i] = ((kept_net > bin_edges[i]) &
                              (kept_net <= bin_edges[i + 1])).sum()
 
-        if name == "0ugL":
-            # For reference: distribution from detected spots directly
-            dist = counts / max(counts.sum(), 1)
-        else:
-            # For quenched images: undetected wells are quenched
-            n_undetected = max(0, N_total - n_detected)
-            counts[0] += n_undetected  # add undetected as quenched
-            dist = counts / max(counts.sum(), 1)
-
+        dist = counts / max(counts.sum(), 1)
         distributions[name] = dist
         parts = [f"{level_names[i]}={dist[i]:.4f}" for i in range(n_levels)]
-        print(f"  {name} ({n_detected} detected, {N_total} total): "
-              f"{', '.join(parts)}")
+        print(f"  {name} ({n_wells} wells): {', '.join(parts)}")
 
     # Stochastic dominance check
     print(f"\n  Stochastic dominance:")
@@ -364,9 +447,10 @@ def main():
 
     for name in ["0ugL", "5ugL", "20ugL"]:
         res = results[name]
-        R = res['R']
-        H, W = R.shape
-        spots = res['spots']
+        R_raw = res['R_raw']  # original unrotated image
+        H, W = R_raw.shape
+        # Map detected spots back to original image coordinates
+        spots_orig = unrotate_spots(res['spots'], res['angle'], (H, W))
         keep = res['keep']
         net = res['meas'][:, 2] if len(res['meas']) > 0 else np.array([])
 
@@ -375,7 +459,7 @@ def main():
             (int(H * 0.67), int(W * 0.65)),
         ]
         for ci, center in enumerate(crop_centers, 1):
-            save_crop(R, spots, keep, net, bin_edges,
+            save_crop(R_raw, spots_orig, keep, net, bin_edges,
                       f"crop{ci}_{name}.png", center, crop_size=300)
 
     # Charts
@@ -433,9 +517,8 @@ def main():
 
     # Save JSON
     output = {
-        "method": "v3: independent per-image rotation + peak detection",
+        "method": "v3: independent per-image rotation + peak detection + gap filling",
         "per_image": {},
-        "reference_well_count": N_total,
         "bin_edges": [round(e, 1) if abs(e) < 1e10 else str(e) for e in bin_edges],
         "n_levels": n_levels,
         "distributions": {n: d.tolist() for n, d in distributions.items()},

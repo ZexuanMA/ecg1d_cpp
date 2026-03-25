@@ -474,9 +474,9 @@ static void run_phase3_tdvp_delta() {
     terms.kicking  = false;
 
     run_svm_tdvp("2-particle delta contact", terms, 1.3067455,
-                 /*K_max=*/15, /*svm_trials=*/5000,
+                 /*K_max=*/40, /*svm_trials=*/5000,
                  /*refine_trials=*/500, /*refine_rounds=*/10,
-                 /*tdvp_steps=*/1000,
+                 /*tdvp_steps=*/5,
                  /*E_lower_bound=*/1.0);
 }
 

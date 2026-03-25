@@ -409,13 +409,15 @@ A 不对称 → K 矩阵不对称 → K_inv 不对称 → H kernel 不满足 Her
 
 ### 6.3 2-particle delta contact (E_exact = 1.3067455)
 
-| 阶段 | K | 误差 |
-|------|---|------|
-| SVM | 15 | 2.26e-3 |
-| + Refine 10 轮 | 15 | 2.26e-3 |
-| TDVP | — | 发散（C 矩阵条件数 3e+11） |
+| 阶段 | K=15 (overlap 0.99) | K=40 目标 (overlap 0.999) |
+|------|---------------------|--------------------------|
+| SVM | K=15, 2.26e-3 | K=12 即停, 2.03e-3 |
+| + Refine | 2.26e-3 | 2.03e-3 |
+| TDVP | 发散 (cond=3e11) | — |
 
-误差卡在 2.3e-3 是**代数收敛（K^{-1/2}）的预期行为**，不是 bug。Gaussian 基底逼近 delta cusp 效率极低。
+K=40 目标但 SVM 在 K=13 即停止（w_min=2.2e-7，即使 overlap 阈值放宽到 0.999 仍被触发）。增加 K 几乎无帮助——K=12 和 K=15 的误差相当（~2e-3）。
+
+**确认：delta 的瓶颈是 Gaussian 基底的表达力硬限制**，不是 K 不够大。代数收敛 K^{-1/2} 意味着要从 2e-3 降到 2e-4 需要 K 增大 100 倍（K~1200），不现实。
 
 ### 6.4 2-particle kicking (E_exact = 2.4452547216)
 
@@ -447,7 +449,7 @@ K=33: error=5.6e-6    (饱和，K=34 无法继续)
 | 1-particle harmonic | 0.5 | — | — | 1.8e-12（TDVP） |
 | Gaussian interaction | 1.5267 | 3.0e-6 | 2.8e-6 | 平滑势，指数收敛 |
 | Kicking (K=33) | 2.4453 | 5.6e-6 | **3.8e-6** (refine+TDVP) | cos 势，K=33 后饱和 |
-| Delta contact | 1.3067 | 2.3e-3 | 2.3e-3 | cusp，代数收敛 K^{-1/2} |
+| Delta contact | 1.3067 | 2.0e-3 (K=12) | 2.0e-3 | cusp，代数收敛，K 被 S 病态限制 |
 
 **对 MBDL 动力学，Gaussian 和 Kicking 的精度（1e-5 ~ 1e-6）足够做初态准备。**
 

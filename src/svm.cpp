@@ -368,7 +368,7 @@ SvmResult svm_build_basis(int N, int K_max, int n_trials,
             S_ext(n, n) = s_nn;
 
             // Overlap screening: reject if too similar to existing basis
-            if (has_excessive_overlap(S_ext, n, 0.99)) continue;
+            if (has_excessive_overlap(S_ext, n, 0.999)) continue;
 
             double E_trial = lowest_energy(H_ext, S_ext, 1e8, E_lower);
 
@@ -449,7 +449,7 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
                 auto [H_new, S_new] = build_HS(trial_basis, perms, terms);
 
                 // Overlap screening: reject if too similar to existing basis
-                if (has_excessive_overlap(S_new, k, 0.95)) continue;
+                if (has_excessive_overlap(S_new, k, 0.99)) continue;
 
                 double E_trial = lowest_energy(H_new, S_new, 1e8, E_lower_bound);
 
