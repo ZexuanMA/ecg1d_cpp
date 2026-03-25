@@ -31,6 +31,7 @@ add_executable(ecg1d
     src/tdvp_solver.cpp
     src/svm.cpp
     src/kicked_evolution.cpp
+    src/kicked_exact.cpp
     src/observables.cpp
 )
 

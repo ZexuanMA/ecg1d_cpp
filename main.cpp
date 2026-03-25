@@ -4,6 +4,7 @@
 #include "hamiltonian_gradient.hpp"
 #include "tdvp_solver.hpp"
 #include "svm.hpp"
+#include "kicked_exact.hpp"
 #include "kicked_evolution.hpp"
 #include "observables.hpp"
 #include <iostream>
@@ -633,6 +634,7 @@ int main(int argc, char* argv[]) {
     bool run_gaussian = false;
     bool run_kicking = false;
     bool run_kicked = false;
+    bool run_kicked_exact = false;
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--tdvp") run_tdvp = true;
         if (std::string(argv[i]) == "--tdvp-only") tdvp_only = true;
@@ -640,6 +642,7 @@ int main(int argc, char* argv[]) {
         if (std::string(argv[i]) == "--gaussian") run_gaussian = true;
         if (std::string(argv[i]) == "--kicking") run_kicking = true;
         if (std::string(argv[i]) == "--kicked") run_kicked = true;
+        if (std::string(argv[i]) == "--kicked-exact") run_kicked_exact = true;
     }
     if (run_tdvp || tdvp_only) {
         run_phase3_tdvp();
@@ -655,6 +658,9 @@ int main(int argc, char* argv[]) {
     }
     if (run_kicked) {
         run_kicked_evolution_test();
+    }
+    if (run_kicked_exact) {
+        run_kicked_exact_test(50);
     }
 
     return 0;
