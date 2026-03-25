@@ -264,49 +264,63 @@ def filter_blocks(block_ids, ref_data, n_blocks, min_spots=5,
 def discretize_intensity(ref_net, method="auto"):
     """
     Determine bin edges from the reference (0ugL) net signal distribution.
-    Uses Jenks natural breaks or quantile-based binning.
+    Uses physically motivated thresholds based on distribution shape analysis.
     Returns: bin_edges, n_levels
+
+    The distribution typically has:
+    - A noise/quenched peak near zero (net ≤ ~8)
+    - A broad dim region (8-25)
+    - A medium region (25-45)
+    - A bright tail (45-70, >70)
     """
-    valid = ref_net[ref_net > 0]  # only positive net signals for binning
-    if len(valid) < 10:
-        return np.array([0, np.inf]), 2
+    # Estimate noise level from the lower tail
+    p5 = np.percentile(ref_net, 5)
+    p10 = np.percentile(ref_net, 10)
+    noise_estimate = max(abs(p5), abs(p10), 5.0)
 
-    # Try different numbers of bins, pick by elbow method
-    # Use quantile-based approach: split into roughly equal-count bins
-    # But first add a "quenched" level for near-zero signals
-
-    # Quench threshold: signals within noise level of zero
-    all_net = ref_net.copy()
-    noise_level = np.percentile(np.abs(all_net[all_net < np.percentile(all_net, 20)]), 90)
-    quench_threshold = max(noise_level, 5.0)
+    # Quench threshold: where signal is indistinguishable from noise
+    quench_threshold = noise_estimate
 
     bright = ref_net[ref_net > quench_threshold]
     if len(bright) < 20:
         return np.array([-np.inf, quench_threshold, np.inf]), 2
 
-    # Determine number of bins for the bright spots
-    # Use Freedman-Diaconis or Sturges rule, but cap at 3-6
-    iqr = np.percentile(bright, 75) - np.percentile(bright, 25)
-    data_range = bright.max() - bright.min()
-    if iqr > 0 and data_range > 0:
-        fd_bins = int(np.ceil(data_range / (2 * iqr * len(bright)**(-1/3))))
-        fd_bins = np.clip(fd_bins, 3, 6)
-    else:
-        fd_bins = 3
+    # Use physically motivated bin edges for 5 levels:
+    # Level 0: quenched  (≤ quench_threshold)
+    # Level 1: dim       (quench_threshold, edge1]
+    # Level 2: medium    (edge1, edge2]
+    # Level 3: bright    (edge2, edge3]
+    # Level 4: very bright (> edge3)
+    #
+    # Edges based on signal range, roughly equal-width in log-ish space
+    p90 = np.percentile(bright, 90)
 
-    # Use quantile-based edges for the bright part
-    quantiles = np.linspace(0, 100, fd_bins + 1)
-    edges_bright = np.percentile(bright, quantiles)
+    # Divide the range [quench_threshold, p90] into intervals
+    # that capture the decay shape of the distribution
+    sig_range = p90 - quench_threshold
+    edge1 = quench_threshold + sig_range * 0.22  # dim → medium boundary
+    edge2 = quench_threshold + sig_range * 0.50  # medium → bright boundary
+    edge3 = quench_threshold + sig_range * 0.80  # bright → very bright boundary
 
-    # Full edges: [-inf, quench_threshold, edge1, edge2, ..., inf]
-    bin_edges = np.concatenate([[-np.inf], [quench_threshold], edges_bright[1:-1], [np.inf]])
-
-    # Remove duplicates
-    bin_edges = np.unique(bin_edges)
+    bin_edges = np.array([-np.inf, quench_threshold, edge1, edge2, edge3, np.inf])
     n_levels = len(bin_edges) - 1
 
+    # Verify no level is too sparse (< 3%)
+    for i in range(n_levels):
+        if i == 0:
+            frac = (ref_net <= bin_edges[1]).sum() / len(ref_net)
+        elif i == n_levels - 1:
+            frac = (ref_net > bin_edges[-2]).sum() / len(ref_net)
+        else:
+            frac = ((ref_net > bin_edges[i]) & (ref_net <= bin_edges[i+1])).sum() / len(ref_net)
+        if frac < 0.03:
+            # Merge with adjacent level — fall back to 4 levels
+            bin_edges = np.array([-np.inf, quench_threshold, p50, p90, np.inf])
+            n_levels = 4
+            break
+
     print(f"  Discretization: {n_levels} levels, quench threshold = {quench_threshold:.1f}")
-    print(f"  Bin edges: {bin_edges}")
+    print(f"  Bin edges: {[f'{e:.1f}' if abs(e) < 1e10 else str(e) for e in bin_edges]}")
     return bin_edges, n_levels
 
 
@@ -340,19 +354,40 @@ def compute_distribution(net_signals, bin_edges):
 # ──────────────────────────────────────────────
 # 10. Visualization
 # ──────────────────────────────────────────────
-def save_marked_image(R, spots, keep_mask, filename, spot_radius=5):
-    """Save image with circles marking detected spots. Green=kept, Red=excluded."""
+def save_marked_image(R, spots, keep_mask, filename, spot_radius=5,
+                      net_signals=None, bin_edges=None):
+    """Save image with circles marking detected spots.
+    If net_signals and bin_edges provided, color-code by intensity level.
+    Otherwise: Green=kept, Red=excluded."""
     from PIL import ImageDraw
 
-    # Normalize to 0-255 and convert to RGB
-    R_norm = ((R - R.min()) / (R.max() - R.min()) * 200).astype(np.uint8)
-    img_rgb = np.stack([R_norm, R_norm // 3, R_norm // 4], axis=2)
+    # Normalize to 0-255 and convert to RGB (warm tone for fluorescence)
+    R_norm = ((R - R.min()) / max(R.max() - R.min(), 1) * 220).astype(np.uint8)
+    img_rgb = np.stack([R_norm, R_norm // 4, R_norm // 6], axis=2)
     pil_img = Image.fromarray(img_rgb)
     draw = ImageDraw.Draw(pil_img)
 
+    # Color palette for levels (level 0=blue/quenched, up to level 4=bright yellow)
+    level_colors = [
+        (80, 80, 255),    # 0: blue (quenched)
+        (0, 200, 200),    # 1: cyan (dim)
+        (0, 255, 0),      # 2: green (medium)
+        (255, 200, 0),    # 3: yellow (bright)
+        (255, 50, 50),    # 4: red (very bright)
+        (255, 0, 255),    # 5+: magenta
+    ]
+
     for i, (_, cy, cx) in enumerate(spots):
         iy, ix = int(round(cy)), int(round(cx))
-        color = (0, 255, 0) if keep_mask[i] else (255, 0, 0)
+        if not keep_mask[i]:
+            color = (60, 60, 60)  # gray for excluded
+        elif net_signals is not None and bin_edges is not None:
+            val = net_signals[i]
+            level = np.searchsorted(bin_edges, val) - 1
+            level = np.clip(level, 0, len(level_colors) - 1)
+            color = level_colors[level]
+        else:
+            color = (0, 255, 0)
         draw.ellipse(
             [ix - spot_radius, iy - spot_radius,
              ix + spot_radius, iy + spot_radius],
@@ -487,23 +522,43 @@ def main():
 
     # Save visualizations
     print("\n[8] Saving visualizations...")
-    save_marked_image(R_ref, spots, keep, "grid_marked_0ugL.png")
+
+    # Full image with level-colored spots for each sample
+    for name in ["0ugL", "5ugL", "20ugL"]:
+        net = measurements[name][:, 2]
+        save_marked_image(
+            images[name], spots, keep,
+            f"grid_marked_{name}.png", spot_radius=5,
+            net_signals=net, bin_edges=bin_edges,
+        )
+
     save_block_map(spots, block_ids, keep, R_ref.shape, "block_map.png",
                    y_edges, x_edges)
 
-    # Save crop for inspection
+    # Save crop for inspection (center region, all three samples side by side)
     cy_center = R_ref.shape[0] // 2
     cx_center = R_ref.shape[1] // 2
-    crop_size = 400
-    R_crop = R_ref[cy_center - crop_size:cy_center + crop_size,
-                   cx_center - crop_size:cx_center + crop_size]
-    crop_spots = [(ri, cy - cy_center + crop_size, cx - cx_center + crop_size)
-                  for ri, cy, cx in spots
-                  if (abs(cy - cy_center) < crop_size and
-                      abs(cx - cx_center) < crop_size)]
-    crop_keep = np.ones(len(crop_spots), dtype=bool)
-    save_marked_image(R_crop, crop_spots, crop_keep,
-                      "grid_marked_crop.png", spot_radius=4)
+    crop_size = 300
+    for name in ["0ugL", "5ugL", "20ugL"]:
+        R_img = images[name]
+        R_crop = R_img[cy_center - crop_size:cy_center + crop_size,
+                       cx_center - crop_size:cx_center + crop_size]
+        crop_spots = []
+        crop_nets = []
+        crop_keep_list = []
+        for idx, (ri, cy, cx) in enumerate(spots):
+            if abs(cy - cy_center) < crop_size and abs(cx - cx_center) < crop_size:
+                crop_spots.append((ri, cy - cy_center + crop_size,
+                                   cx - cx_center + crop_size))
+                crop_nets.append(measurements[name][idx, 2])
+                crop_keep_list.append(keep[idx])
+        crop_nets = np.array(crop_nets) if crop_nets else np.array([])
+        crop_keep_arr = np.array(crop_keep_list) if crop_keep_list else np.array([], dtype=bool)
+        save_marked_image(
+            R_crop, crop_spots, crop_keep_arr,
+            f"grid_crop_{name}.png", spot_radius=4,
+            net_signals=crop_nets, bin_edges=bin_edges,
+        )
 
     # Output for Ridge-Projection
     print("\n" + "=" * 60)
