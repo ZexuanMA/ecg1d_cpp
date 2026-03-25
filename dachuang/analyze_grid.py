@@ -21,7 +21,7 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def load_red_channel(name):
-    path = os.path.join(DIR, f"{name}.bmp")
+    path = os.path.join(DIR, "raw_images", f"{name}.bmp")
     img = np.array(Image.open(path))
     return img[:, :, 0].astype(np.float64)
 
@@ -68,16 +68,22 @@ def detect_rows(R, expected_spacing=42):
     return rows
 
 
-def detect_spots_in_row(R, row_y, half_width=5):
+def detect_spots_in_row(R, row_y, half_width=8):
     """Find luminous spot positions within a row using peak detection.
-    min_distance=30 prevents detecting noise between wells (~45px apart)."""
+    Uses top-hat filtering to remove broad PSF tails before detection,
+    so dim spots between bright neighbors are not swamped."""
     y0 = max(0, row_y - half_width)
     y1 = min(R.shape[0], row_y + half_width + 1)
     strip = R[y0:y1, :].mean(axis=0)
-    strip_smooth = ndimage.gaussian_filter1d(strip, sigma=2)
-    bg = np.median(strip_smooth)
+    strip_smooth = ndimage.gaussian_filter1d(strip, sigma=1.5)
+
+    # Top-hat: subtract broad background (PSF tails, uneven illumination)
+    # kernel size ~2x well spacing removes everything broader than a single spot
+    bg_broad = ndimage.uniform_filter1d(strip_smooth, size=40)
+    strip_tophat = strip_smooth - bg_broad
+
     spots, _ = signal.find_peaks(
-        strip_smooth, height=bg + 5, distance=15, prominence=2)
+        strip_tophat, height=1.0, distance=8, prominence=0.5)
     return spots
 
 
@@ -96,7 +102,7 @@ def refine_center(R, y, x, radius=4):
     return (yy * patch_bg).sum() / total, (xx * patch_bg).sum() / total
 
 
-def fill_row_gaps(peaks, image_width, expected_period=46, margin=10):
+def fill_row_gaps(peaks, image_width=0, expected_period=24, margin=0):
     """Fill gaps between detected peaks to recover ALL well positions.
     Uses detected peaks as anchors, estimates well spacing from their
     closest-neighbor distances, then interpolates missing wells.
@@ -159,26 +165,38 @@ def merge_close_peaks(peaks, strip_values, min_sep=28):
 
 def detect_grid(R):
     """Detect all well positions on one image.
-    1. Peak detection finds bright anchors (may include double-peaks)
-    2. Merge double-peaks (< 28px apart)
-    3. Fill gaps to recover quenched wells"""
+    1. Peak detection with top-hat (finds bright spots including dim ones)
+    2. Merge PSF double-peaks (< 12px apart, keep brightest)
+    3. Fill gaps with period ~25px to recover quenched wells"""
     row_ys = detect_rows(R)
     H, W = R.shape
     all_spots = []
     counts = []
     for ri, ry in enumerate(row_ys):
-        # Step 1: raw peak detection
-        raw_xs = detect_spots_in_row(R, ry)
+        # Step 1: peak detection
+        anchor_xs = detect_spots_in_row(R, ry)
 
-        # Step 2: merge double-peaks
-        y0 = max(0, ry - 5)
-        y1 = min(H, ry + 6)
+        # Step 2: merge PSF double-peaks (< 12px)
+        y0 = max(0, ry - 8)
+        y1 = min(H, ry + 9)
         strip = R[y0:y1, :].mean(axis=0)
-        strip_smooth = ndimage.gaussian_filter1d(strip, sigma=2)
-        clean_xs = merge_close_peaks(raw_xs, strip_smooth)
+        strip_s = ndimage.gaussian_filter1d(strip, sigma=1.5)
+        cleaned = []
+        i = 0
+        xs = np.sort(anchor_xs)
+        while i < len(xs):
+            cluster = [xs[i]]
+            j = i + 1
+            while j < len(xs) and xs[j] - cluster[0] < 12:
+                cluster.append(xs[j])
+                j += 1
+            cluster = np.array(cluster)
+            cleaned.append(cluster[np.argmax(strip_s[cluster])])
+            i = j
+        clean_xs = np.array(cleaned) if cleaned else np.array([], dtype=int)
 
-        # Step 3: fill gaps between anchors
-        all_xs = fill_row_gaps(clean_xs, W, expected_period=46)
+        # Step 3: fill gaps with well period ~25px
+        all_xs = fill_row_gaps(clean_xs, expected_period=25)
 
         for sx in all_xs:
             cy, cx = refine_center(R, ry, int(round(sx)))
@@ -278,20 +296,14 @@ def unrotate_spots(spots, angle_deg, img_shape):
 
 
 # ──────────────────────────────────────────────
-# Visualization (on original unrotated image)
+# Visualization (full image with circles on original)
 # ──────────────────────────────────────────────
-def save_crop(R, spots, keep, net_signals, bin_edges, filename,
-              crop_center, crop_size=300, spot_radius=4):
-    cy_c, cx_c = crop_center
+def save_full_image(R, spots, keep, net_signals, bin_edges, filename,
+                    spot_radius=5):
+    """Save full-size original image with color-coded circles on all spots."""
     H, W = R.shape
-    y0 = max(0, cy_c - crop_size)
-    y1 = min(H, cy_c + crop_size)
-    x0 = max(0, cx_c - crop_size)
-    x1 = min(W, cx_c + crop_size)
-
-    crop = R[y0:y1, x0:x1]
-    vmin, vmax = crop.min(), crop.max()
-    norm = ((crop - vmin) / max(vmax - vmin, 1) * 220).astype(np.uint8)
+    vmin, vmax = R.min(), R.max()
+    norm = ((R - vmin) / max(vmax - vmin, 1) * 220).astype(np.uint8)
     rgb = np.stack([norm, norm // 4, norm // 6], axis=2)
     img = Image.fromarray(rgb)
     draw = ImageDraw.Draw(img)
@@ -305,10 +317,10 @@ def save_crop(R, spots, keep, net_signals, bin_edges, filename,
     ]
 
     for i, (_, cy, cx) in enumerate(spots):
-        if not (y0 <= cy < y1 and x0 <= cx < x1):
+        iy = int(round(cy))
+        ix = int(round(cx))
+        if iy < 0 or iy >= H or ix < 0 or ix >= W:
             continue
-        iy = int(round(cy - y0))
-        ix = int(round(cx - x0))
         if not keep[i]:
             c = (60, 60, 60)
         else:
@@ -454,13 +466,8 @@ def main():
         keep = res['keep']
         net = res['meas'][:, 2] if len(res['meas']) > 0 else np.array([])
 
-        crop_centers = [
-            (int(H * 0.33), int(W * 0.40)),
-            (int(H * 0.67), int(W * 0.65)),
-        ]
-        for ci, center in enumerate(crop_centers, 1):
-            save_crop(R_raw, spots_orig, keep, net, bin_edges,
-                      f"crop{ci}_{name}.png", center, crop_size=300)
+        save_full_image(R_raw, spots_orig, keep, net, bin_edges,
+                        f"marked_{name}.png")
 
     # Charts
     try:
@@ -536,11 +543,13 @@ def main():
         json.dump(output, f, indent=2)
     print(f"\nResults saved to grid_analysis_results.json")
 
-    # Clean up diagnostic files
-    for f in ["_diag_0ugL.png", "_diag_5ugL.png", "_diag_20ugL.png"]:
-        p = os.path.join(DIR, f)
-        if os.path.exists(p):
+    # Clean up old files
+    for pattern in ["crop1_*.png", "crop2_*.png", "grid_crop_*.png",
+                     "grid_marked_*.png", "_diag_*.png", "block_map.png"]:
+        import glob
+        for p in glob.glob(os.path.join(DIR, pattern)):
             os.remove(p)
+            print(f"    Removed {os.path.basename(p)}")
 
 
 if __name__ == "__main__":
