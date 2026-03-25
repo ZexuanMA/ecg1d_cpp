@@ -41,7 +41,20 @@ struct SolverConfig {
     bool   adaptive_lambda = false;    // Auto-increase lambda_C when condition number too high
     double lambda_max      = 1e-4;    // Upper bound for adaptive regularization
 
+    // Parameter selection
+    bool optimize_A = true;   // Include A matrix parameters
+    bool optimize_B = false;  // Include B diagonal parameters (only for dynamics)
+    bool optimize_R = false;  // Include R vector parameters (only for dynamics)
+    // Note: B is redundant with A diagonal at B=0; R derivative is zero at B=0.
+    // For static ground state, only A matters. For real-time dynamics, enable all three.
+
     static SolverConfig defaults() { return {}; }
+    static SolverConfig dynamics() {
+        SolverConfig c;
+        c.optimize_B = true;
+        c.optimize_R = true;
+        return c;
+    }
 };
 
 // Diagnostics from a TDVP step

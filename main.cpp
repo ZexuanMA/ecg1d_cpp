@@ -320,24 +320,29 @@ static void run_phase3_tdvp() {
 }
 
 // Build alpha_z_list for TDVP (including A matrix parameters for N>=2)
-static std::vector<AlphaIndex> build_alpha_z_list(int basis_n, int N) {
+static std::vector<AlphaIndex> build_alpha_z_list(int basis_n, int N,
+                                                    const SolverConfig& config) {
     std::vector<AlphaIndex> alpha_z_list;
-    // u parameters (a1=1)
+    // u parameters (a1=1) — always included but excluded from C update
     for (int i = 0; i < basis_n; i++)
         alpha_z_list.push_back({1, i, 0, 0});
-    // B parameters (a1=2)
-    for (int i = 0; i < basis_n; i++)
-        for (int j = 0; j < N; j++)
-            alpha_z_list.push_back({2, i, j, 0});
-    // R parameters (a1=3)
-    for (int i = 0; i < basis_n; i++)
-        for (int j = 0; j < N; j++)
-            alpha_z_list.push_back({3, i, j, 0});
-    // A parameters (a1=4), upper triangle only
-    for (int i = 0; i < basis_n; i++)
-        for (int j = 0; j < N; j++)
-            for (int k = j; k < N; k++)
-                alpha_z_list.push_back({4, i, j, k});
+
+    if (config.optimize_B) {
+        for (int i = 0; i < basis_n; i++)
+            for (int j = 0; j < N; j++)
+                alpha_z_list.push_back({2, i, j, 0});
+    }
+    if (config.optimize_R) {
+        for (int i = 0; i < basis_n; i++)
+            for (int j = 0; j < N; j++)
+                alpha_z_list.push_back({3, i, j, 0});
+    }
+    if (config.optimize_A) {
+        for (int i = 0; i < basis_n; i++)
+            for (int j = 0; j < N; j++)
+                for (int k = j; k < N; k++)
+                    alpha_z_list.push_back({4, i, j, k});
+    }
 
     return alpha_z_list;
 }
@@ -392,9 +397,6 @@ static void run_svm_tdvp(const std::string& label,
     std::cout << "\n--- Phase 2: TDVP refinement ---" << std::endl;
     set_u_from_eigenvector(refined.basis, refined.H, refined.S);
 
-    int basis_n = static_cast<int>(refined.basis.size());
-    auto alpha_z_list = build_alpha_z_list(basis_n, N);
-
     SolverConfig config;
     config.lambda_C          = 1e-8;
     config.rcond             = 1e-4;
@@ -406,7 +408,12 @@ static void run_svm_tdvp(const std::string& label,
     config.adaptive_lambda   = true;
     config.lambda_max        = 1e-4;
 
+    int basis_n = static_cast<int>(refined.basis.size());
+    auto alpha_z_list = build_alpha_z_list(basis_n, N, config);
+
     std::cout << "TDVP config: dtao_max=" << config.dtao_max
+              << ", params=" << alpha_z_list.size() - basis_n << " (A"
+              << (config.optimize_B ? "+B" : "") << (config.optimize_R ? "+R" : "") << ")"
               << ", energy_tol=" << std::scientific << config.energy_tol
               << ", stagnation_window=" << config.stagnation_window
               << ", adaptive_lambda=" << config.adaptive_lambda
@@ -499,7 +506,7 @@ static void run_phase3_tdvp_kicking() {
     // Exact: 2 * E_single where E_single from H_1 = -d²/dx²/2 + x²/2 + cos(x)
     // Computed via finite-difference grid (n=4000, x∈[-15,15])
     run_svm_tdvp("2-particle kicking", terms, 2.4452547216,
-                 /*K_max=*/30, /*svm_trials=*/5000,
+                 /*K_max=*/40, /*svm_trials=*/5000,
                  /*refine_trials=*/500, /*refine_rounds=*/10,
                  /*tdvp_steps=*/5,
                  /*E_lower_bound=*/2.0);
@@ -537,14 +544,14 @@ static void run_kicked_evolution_test() {
     set_u_from_eigenvector(refined.basis, refined.H, refined.S);
 
     // TDVP imaginary-time polish
-    int basis_n = static_cast<int>(refined.basis.size());
-    auto alpha_z_list = build_alpha_z_list(basis_n, N);
-
     SolverConfig config;
     config.lambda_C  = 1e-8;
     config.rcond     = 1e-4;
     config.resolve_u = true;
     config.dtao_grow = 1.5;
+
+    int basis_n = static_cast<int>(refined.basis.size());
+    auto alpha_z_list = build_alpha_z_list(basis_n, N, config);
 
     std::cout << "\n--- Imaginary-time TDVP polish ---" << std::endl;
     evolution(alpha_z_list, refined.basis, 1, 100, 1e-10, terms_free, config, &perms);
