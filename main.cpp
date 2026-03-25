@@ -599,6 +599,106 @@ static void run_kicked_evolution_test() {
     }
 }
 
+// N=2, gamma=0 kicked dynamics: ECG+TDVP vs exact finite-difference
+static void run_kicked_gamma0_test() {
+    std::cout << "\n=== Kicked Dynamics: N=2, gamma=0 (ECG+TDVP) ===" << std::endl;
+
+    int N = 2;
+    int K_max = 20;
+    int n_kicks = 50;
+    double dt_step = 0.01;
+
+    // Free Hamiltonian: kinetic + harmonic only (no interaction)
+    HamiltonianTerms terms_free;
+    terms_free.kinetic  = true;
+    terms_free.harmonic = true;
+    terms_free.delta    = false;
+    terms_free.gaussian = false;
+    terms_free.kicking  = false;
+
+    // --- Phase 1: SVM basis construction (static mode: B=0, R=0) ---
+    std::cout << "\n--- Phase 1: SVM basis (B=0, R=0) ---" << std::endl;
+    double E_lower = N * 0.5;  // harmonic ground state
+    auto svm = svm_build_basis(N, K_max, 5000, terms_free, 42, E_lower);
+    double E_svm = lowest_energy(svm.H, svm.S);
+    std::cout << "SVM ground state E = " << std::setprecision(10) << E_svm
+              << "  (exact = " << N * 0.5 << ")" << std::endl;
+
+    // --- Phase 1.5: Refinement ---
+    PermutationSet perms = PermutationSet::generate(N);
+    auto refined = stochastic_refine(svm.basis, svm.H, svm.S,
+                                      perms, N, terms_free, 500, 5, 123, E_lower);
+    set_u_from_eigenvector(refined.basis, refined.H, refined.S);
+    double E_ref = lowest_energy(refined.H, refined.S);
+    std::cout << "Refined ground state E = " << std::setprecision(10) << E_ref << std::endl;
+
+    // --- Phase 2: Imaginary-time TDVP polish (static mode) ---
+    SolverConfig static_config = SolverConfig::defaults();
+    int basis_n = static_cast<int>(refined.basis.size());
+    auto alpha_z_static = build_alpha_z_list(basis_n, N, static_config);
+
+    std::cout << "\n--- Phase 2: Imaginary-time TDVP polish ---" << std::endl;
+    evolution(alpha_z_static, refined.basis, 1, 50, 1e-10, terms_free, static_config, &perms);
+
+    auto [H_check, S_check] = build_HS(refined.basis, perms, terms_free);
+    double E_polished = lowest_energy(H_check, S_check);
+    std::cout << "Polished ground state E = " << std::setprecision(10) << E_polished << std::endl;
+
+    // --- Phase 3: Real-time kicked evolution (dynamics mode: B, R enabled) ---
+    HamiltonianTerms terms_kick = terms_free;
+    terms_kick.kicking = true;
+
+    // Switch to dynamics mode for real-time evolution
+    SolverConfig rt_config = SolverConfig::dynamics();
+    auto alpha_z_dyn = build_alpha_z_list(basis_n, N, rt_config);
+
+    KickParams kick_params;
+    kick_params.T_period   = 1.0;
+    kick_params.T_pulse    = 0.0;   // ideal delta kick
+    kick_params.kappa_kick = 1.0;   // kappa
+    kick_params.k_L_kick   = 0.5;  // k_L
+    kick_params.n_kicks    = n_kicks;
+
+    std::cout << "\n--- Phase 3: Real-time kicked evolution ---" << std::endl;
+    std::cout << "T_period=" << kick_params.T_period
+              << ", n_kicks=" << kick_params.n_kicks
+              << ", dt=" << dt_step
+              << ", params=" << alpha_z_dyn.size() << " (dynamics mode)"
+              << std::endl;
+
+    auto obs = kicked_evolution(refined.basis, alpha_z_dyn, kick_params,
+                                 dt_step, terms_free, terms_kick,
+                                 rt_config, &perms);
+
+    // --- Also run exact for comparison ---
+    std::cout << "\n--- Exact reference (finite difference) ---" << std::endl;
+    auto exact = kicked_exact_1particle(1.0, 1.0, 0.5, 1.0,  // omega, mass, k_L, kappa
+                                         kick_params.T_period, n_kicks);
+
+    // --- Comparison table ---
+    std::cout << "\n--- Comparison: ECG vs Exact ---" << std::endl;
+    std::cout << std::setw(6) << "kick"
+              << std::setw(14) << "E_ECG"
+              << std::setw(14) << "E_exact"
+              << std::setw(14) << "error"
+              << std::setw(14) << "rel_error"
+              << std::setw(12) << "norm" << std::endl;
+
+    for (int n = 0; n <= n_kicks; n++) {
+        double E_ecg = obs[n].energy;
+        double E_ex = 2.0 * exact.kick_energies[n];
+        double err = E_ecg - E_ex;
+        double rel = std::abs(err) / std::abs(E_ex);
+        std::cout << std::setw(6) << n
+                  << std::setw(14) << std::setprecision(8) << E_ecg
+                  << std::setw(14) << std::setprecision(8) << E_ex
+                  << std::setw(14) << std::scientific << err
+                  << std::setw(14) << rel
+                  << std::setw(12) << std::fixed << std::setprecision(6) << obs[n].overlap_norm
+                  << std::defaultfloat << std::endl;
+    }
+}
+
 int main(int argc, char* argv[]) {
     std::cout << std::setprecision(18);
 
@@ -635,6 +735,7 @@ int main(int argc, char* argv[]) {
     bool run_kicking = false;
     bool run_kicked = false;
     bool run_kicked_exact = false;
+    bool run_kicked_gamma0 = false;
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--tdvp") run_tdvp = true;
         if (std::string(argv[i]) == "--tdvp-only") tdvp_only = true;
@@ -643,6 +744,7 @@ int main(int argc, char* argv[]) {
         if (std::string(argv[i]) == "--kicking") run_kicking = true;
         if (std::string(argv[i]) == "--kicked") run_kicked = true;
         if (std::string(argv[i]) == "--kicked-exact") run_kicked_exact = true;
+        if (std::string(argv[i]) == "--kicked-gamma0") run_kicked_gamma0 = true;
     }
     if (run_tdvp || tdvp_only) {
         run_phase3_tdvp();
@@ -661,6 +763,9 @@ int main(int argc, char* argv[]) {
     }
     if (run_kicked_exact) {
         run_kicked_exact_test(50);
+    }
+    if (run_kicked_gamma0) {
+        run_kicked_gamma0_test();
     }
 
     return 0;
