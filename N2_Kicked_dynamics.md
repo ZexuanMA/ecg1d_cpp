@@ -177,13 +177,11 @@ VectorXcd rhs = Cd(0, -1) * g_bar_update;    // C dz = -ig
 
 ### 4.1 单粒子有限差分法
 
-在位置空间离散化：$z_j = z_\min + j \cdot dz$, $j = 0, 1, ..., N_\text{grid}-1$。
+在位置空间离散化：z_j = z_min + j * dz, j = 0, 1, ..., N_grid - 1。
 
-$$
-H_\text{free} = -\frac{1}{2}\frac{d^2}{dz^2} + \frac{1}{2}\omega^2 z^2
-$$
+H_free = -(1/2) d^2/dz^2 + (1/2) omega^2 z^2
 
-用中心差分近似 $d^2/dz^2$，得到 $N_\text{grid} \times N_\text{grid}$ 的三对角矩阵。
+用中心差分近似二阶导数，得到 N_grid x N_grid 的三对角矩阵。
 
 ### 4.2 Kick 的施加
 
@@ -418,3 +416,134 @@ E(n)
     ↓
 论文结果  ←  与实验对比
 ```
+
+---
+
+## 11. 实验记录
+
+### 11.1 实验 A：TDVP kick（失败）
+
+**方法**：用 TDVP 做一步实时间演化来模拟 kick（原始 `apply_kick` 实现）。
+
+**参数**：K=10, dt=0.05, 20 kicks
+
+**结果**：
+
+| Kick | ECG E | 精确 E |
+|------|-------|--------|
+| 0 | 1.000 | 1.000 |
+| 1 | 1.001 | **1.315** |
+| 2 | 1.001 | **1.705** |
+| 5 | 1.001 | **1.073** |
+
+**分析**：ECG 能量几乎不变（0.1% 变化），而精确解第一次 kick 后涨了 30%。
+
+**原因**：TDVP kick 在基底可表达的范围内做"最优近似"——但 $e^{-i\kappa\cos(x)}|\psi\rangle$ 不在 Gaussian 基底内，TDVP 无法表达 kick 注入的高动量成分，被困在初态附近。
+
+**结论**：δ-kick 是瞬时的，不能用时间演化来模拟。
+
+### 11.2 实验 B：解析 kick（进行中）
+
+**方法**：Jacobi-Anger 展开计算 kick 矩阵元 $K_{ij} = \langle\phi_i|e^{-i\kappa V}|\phi_j\rangle$，通过 $u' = S^{-1}Ku$ 精确更新线性系数。kick 之间用 TDVP 做自由演化。
+
+**数学**：
+
+$$e^{-i\kappa\cos\theta} = \sum_{n=-\infty}^{\infty} (-i)^n J_n(\kappa) e^{in\theta}$$
+
+对高斯基函数：
+
+$$\frac{\langle\phi_i|e^{in \cdot 2k_L x_a}|\phi_j\rangle}{M_G} = e^{-n^2 k_L^2 K^{-1}(a,a) + in \cdot 2k_L \mu(a)}$$
+
+N 个粒子的 kick kernel 相乘（独立坐标）。截断到 n_max=20 项（$J_n(\kappa=1)$ 在 n>5 时已极小）。
+
+**关键实现细节**：
+
+- kick 矩阵不是 Hermitian（$U = e^{-i\kappa V}$ 是酉算符，不是 Hermitian），必须计算全部 K×K 矩阵元
+- 首次实现误用了 `K(j,i) = conj(K(i,j))`（Hermitian 假设），导致 E → -427，已修复
+
+**参数**：K=10, dt=0.05, 20 kicks
+
+**结果（kick-only，无自由演化）**：
+
+```
+Kick  0: E=1.000,  S=6.283  (初态)
+Kick  1: E=1.399,  S=6.184  (精确值 1.315，误差 6%)
+Kick  2: E=2.569,  S=5.871  (精确值 1.705，已严重偏离)
+Kick  5: E=8.721,  S=4.225  (精确值 1.073)
+Kick 10: E=13.81,  S=3.322
+Kick 20: E=11.54,  S=44.26  (norm 发散)
+```
+
+第一次 kick 方向正确（能量涨了 40%），但没有自由演化时误差纯累积。Norm 从 6.28 发散到 44.26。
+
+**关键诊断输出解读**：
+
+```
+[kick] norm before=6.28, norm after=6.18, ratio=0.984, |u|=1 -> 2.59, S cond=2577
+[post-kick] E=1.399, S=6.28
+```
+
+| 参数 | 含义 | 当前值 | 评价 |
+|------|------|--------|------|
+| norm before | kick 前 u†Su（波函数模方） | 6.283 | 正常（= 2π，归一化约定） |
+| norm after | kick 后 u'†Su'（投影后模方） | 6.184 | 掉了 1.6%，因为 kicked 态不完全在基底空间内 |
+| ratio | norm_after/norm_before | 0.984 | 每次 kick 损失 ~2% 的范数 |
+| \|u\| | u 向量的欧几里得范数 | 1→2.59 | kick 注入了大的复数分量 |
+| S cond | overlap 矩阵 S 的条件数 | 2577 | 适中，不是问题 |
+| post-kick E | kick 后立刻测量的能量 | 1.399 | 精确值 1.315，误差 6%（K=10 基底不够） |
+| post-kick S | 重归一化后的 norm | 6.283 | 已恢复（加了 renormalize 后） |
+
+**结论**：
+- kick 矩阵本身基本正确（第一次 kick 能量变化方向和量级对）
+- 6% 误差来自 K=10 基底的投影损失（kicked 态有高动量成分，Gaussian 基底表达不了）
+- 需要更大的 K 和/或自由演化来让基底"适应" kick 后的波函数
+
+### 11.3 实验 C：解析 kick + TDVP 自由演化（进行中）
+
+**改进**：
+1. Kick 后重归一化 u（防止 TDVP 梯度爆炸）
+2. 减小 dt 从 0.05 到 0.01（100 步/周期）
+
+**参数**：K=10, dt=0.01, 5 kicks, static_mode (params=40, 只有 A)
+
+**结果**：
+
+```
+Kick  0: t=0, E=1.000, S=6.283
+  [kick] norm=6.283→6.184, |u|=1→2.59
+  [post-kick] E=1.399, S=6.283 (renormalized)
+Kick  1: t=1, E=1.847, S=27.326  ← norm 从 6.28 飙到 27.3（自由演化导致）
+  [kick] norm=27.3→NaN  ← 第二次 kick 就 NaN
+```
+
+**分析**：free_evolve 不保持 norm。TDVP 更新 A 参数后 S 矩阵变了，但 u 没有同步调整，导致 u†Su 从 6.28 飙到 27.3（4 倍）。到第二次 kick 时 S 矩阵已经病态，LDLT 分解失败。
+
+**修复**：在 `realtime_tdvp_step` 末尾加归一化——每步更新 A 后重算 S，调整 u 使 u†Su 保持不变。代价是每步多两次 `build_HS`（速度减半），但保证了 norm 守恒。
+
+### 11.4 实验 D：解析 kick + 归一化 TDVP（进行中）
+
+**改进**：
+1. kick 后 renormalize u
+2. TDVP 每步后 renormalize u（保持 u†Su 不变）
+3. static_mode (params=40)
+
+**参数**：K=10, dt=0.01, 5 kicks
+
+**结果**：运行中...
+
+### 11.5 TDVP 自由演化崩溃的原因分析
+
+**实验 B（dt=0.05, dynamics mode）**：kick 后 E → -370
+
+原因：
+1. kick 后 |u| = 2.59，TDVP 梯度 ∝ |u|²，放大了 ~7 倍
+2. dt=0.05 对放大后的梯度太粗，一步走偏
+
+**实验 C（dt=0.01, static mode）**：第一个周期后 norm 从 6.28 飙到 27.3
+
+原因：
+1. TDVP 更新 A 参数 → S 矩阵变了
+2. u 没有同步调整 → u†Su 漂移
+3. 不是梯度爆炸，是 **norm 不守恒**
+
+**根本问题**：实时间 TDVP 在变分流形上投影，不精确保持酉性。对虚时间（能量最小化）无所谓，对实时间是致命缺陷。必须在每步后显式归一化。

@@ -79,6 +79,36 @@ RealtimeStepResult realtime_tdvp_step(
         }
     }
 
+    // Renormalize u to preserve norm after parameter update.
+    // When A/B/R change, S changes, and u†Su drifts. This corrects it.
+    {
+        int Kb = static_cast<int>(basis_new.size());
+        VectorXcd u_vec(Kb);
+        for (int i = 0; i < Kb; i++) u_vec(i) = basis_new[i].u;
+
+        // Compute norm before (with old basis) and after (with new basis)
+        VectorXcd u_old(Kb);
+        for (int i = 0; i < Kb; i++) u_old(i) = basis[i].u;
+
+        // We need S_old and S_new. For efficiency, compute S_new from
+        // the basis_new overlap. S_old norm is approximately preserved
+        // from the previous step.
+        if (perms != nullptr) {
+            auto [H_new, S_new] = build_HS(basis_new, *perms, terms);
+            Cd norm_new = (u_vec.adjoint() * S_new * u_vec)(0);
+
+            auto [H_old, S_old] = build_HS(basis, *perms, terms);
+            Cd norm_old = (u_old.adjoint() * S_old * u_old)(0);
+
+            if (norm_new.real() > 1e-15 && norm_old.real() > 1e-15) {
+                double scale = std::sqrt(norm_old.real() / norm_new.real());
+                for (int i = 0; i < Kb; i++) {
+                    basis_new[i].u *= scale;
+                }
+            }
+        }
+    }
+
     Cd E_new = compute_total_energy(basis_new, terms);
     return {basis_new, E_new, norm_dz, dt, diag};
 }

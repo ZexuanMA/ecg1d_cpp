@@ -32,6 +32,7 @@ add_executable(ecg1d
     src/svm.cpp
     src/kicked_evolution.cpp
     src/kicked_exact.cpp
+    src/kick_operator.cpp
     src/observables.cpp
 )
 

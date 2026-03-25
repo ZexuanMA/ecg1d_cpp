@@ -6,6 +6,7 @@
 #include "svm.hpp"
 #include "kicked_exact.hpp"
 #include "kicked_evolution.hpp"
+#include "kick_operator.hpp"
 #include "observables.hpp"
 #include <iostream>
 #include <iomanip>
@@ -604,8 +605,8 @@ static void run_kicked_gamma0_test() {
     std::cout << "\n=== Kicked Dynamics: N=2, gamma=0 (ECG+TDVP) ===" << std::endl;
 
     int N = 2;
-    int K_max = 20;
-    int n_kicks = 50;
+    int K_max = 10;
+    int n_kicks = 5;
     double dt_step = 0.01;
 
     // Free Hamiltonian: kinetic + harmonic only (no interaction)
@@ -644,36 +645,76 @@ static void run_kicked_gamma0_test() {
     double E_polished = lowest_energy(H_check, S_check);
     std::cout << "Polished ground state E = " << std::setprecision(10) << E_polished << std::endl;
 
-    // --- Phase 3: Real-time kicked evolution (dynamics mode: B, R enabled) ---
-    HamiltonianTerms terms_kick = terms_free;
-    terms_kick.kicking = true;
+    // --- Phase 3: Real-time kicked evolution ---
+    // Use analytic kick (exact projection) + TDVP free evolution
+    double T_period = 1.0;
+    double kappa_val = 1.0;
+    double k_L_val = 0.5;
 
-    // Switch to dynamics mode for real-time evolution
-    SolverConfig rt_config = SolverConfig::dynamics();
+    // Static mode for now (A params only, ~30 params vs 80 in dynamics)
+    // B and R start at zero and analytic kick only modifies u, not nonlinear params
+    SolverConfig rt_config;
     auto alpha_z_dyn = build_alpha_z_list(basis_n, N, rt_config);
 
-    KickParams kick_params;
-    kick_params.T_period   = 1.0;
-    kick_params.T_pulse    = 0.0;   // ideal delta kick
-    kick_params.kappa_kick = 1.0;   // kappa
-    kick_params.k_L_kick   = 0.5;  // k_L
-    kick_params.n_kicks    = n_kicks;
-
-    std::cout << "\n--- Phase 3: Real-time kicked evolution ---" << std::endl;
-    std::cout << "T_period=" << kick_params.T_period
-              << ", n_kicks=" << kick_params.n_kicks
+    std::cout << "\n--- Phase 3: Real-time kicked evolution (analytic kick) ---" << std::endl;
+    std::cout << "T_period=" << T_period
+              << ", n_kicks=" << n_kicks
               << ", dt=" << dt_step
+              << ", kappa=" << kappa_val
+              << ", k_L=" << k_L_val
               << ", params=" << alpha_z_dyn.size() << " (dynamics mode)"
               << std::endl;
 
-    auto obs = kicked_evolution(refined.basis, alpha_z_dyn, kick_params,
-                                 dt_step, terms_free, terms_kick,
-                                 rt_config, &perms);
+    // Collect observables
+    struct Obs { double time, energy, kinetic, norm; };
+    std::vector<Obs> obs;
+
+    // Record initial state
+    {
+        Cd E = compute_total_energy(refined.basis, terms_free);
+        Cd S = overlap(refined.basis);
+        Cd T = kinetic_energy_functional(refined.basis);
+        double norm = S.real();
+        obs.push_back({0.0, E.real(), (T/S).real(), norm});
+        std::cout << "Kick  0: t=0, E=" << std::setprecision(8) << E.real()
+                  << ", T=" << (T/S).real() << ", S=" << std::setprecision(6) << norm << std::endl;
+    }
+
+    double current_time = 0.0;
+    for (int n = 0; n < n_kicks; n++) {
+        // 1. Apply analytic kick (instantaneous, exact projection)
+        apply_analytic_kick(refined.basis, perms, kappa_val, k_L_val);
+
+        // Diagnostic: energy right after kick, before free evolution
+        {
+            Cd Ek = compute_total_energy(refined.basis, terms_free);
+            Cd Sk = overlap(refined.basis);
+            std::cout << "  [post-kick] E=" << std::setprecision(8) << Ek.real()
+                      << ", S=" << std::setprecision(6) << Sk.real() << std::endl;
+        }
+
+        // 2. Free evolution for one period using TDVP
+        free_evolve(refined.basis, alpha_z_dyn, dt_step, T_period,
+                    terms_free, rt_config, &perms);
+        current_time += T_period;
+
+        // 3. Record observables
+        Cd E = compute_total_energy(refined.basis, terms_free);
+        Cd S = overlap(refined.basis);
+        Cd T = kinetic_energy_functional(refined.basis);
+        double norm = S.real();
+        obs.push_back({current_time, E.real(), (T/S).real(), norm});
+        std::cout << "Kick " << std::setw(2) << (n+1)
+                  << ": t=" << std::setprecision(4) << current_time
+                  << ", E=" << std::setprecision(8) << E.real()
+                  << ", T=" << std::setprecision(8) << (T/S).real()
+                  << ", S=" << std::setprecision(6) << norm << std::endl;
+    }
 
     // --- Also run exact for comparison ---
     std::cout << "\n--- Exact reference (finite difference) ---" << std::endl;
-    auto exact = kicked_exact_1particle(1.0, 1.0, 0.5, 1.0,  // omega, mass, k_L, kappa
-                                         kick_params.T_period, n_kicks);
+    auto exact = kicked_exact_1particle(1.0, 1.0, k_L_val, kappa_val,
+                                         T_period, n_kicks);
 
     // --- Comparison table ---
     std::cout << "\n--- Comparison: ECG vs Exact ---" << std::endl;
@@ -694,7 +735,7 @@ static void run_kicked_gamma0_test() {
                   << std::setw(14) << std::setprecision(8) << E_ex
                   << std::setw(14) << std::scientific << err
                   << std::setw(14) << rel
-                  << std::setw(12) << std::fixed << std::setprecision(6) << obs[n].overlap_norm
+                  << std::setw(12) << std::fixed << std::setprecision(6) << obs[n].norm
                   << std::defaultfloat << std::endl;
     }
 }
