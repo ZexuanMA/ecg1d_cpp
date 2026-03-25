@@ -496,8 +496,13 @@ static void run_phase3_tdvp_kicking() {
     terms.gaussian = false;
     terms.kicking  = true;
 
-    // No known exact value; use a placeholder
-    run_svm_tdvp("2-particle kicking term", terms, 0.0);
+    // Exact: 2 * E_single where E_single from H_1 = -d²/dx²/2 + x²/2 + cos(x)
+    // Computed via finite-difference grid (n=4000, x∈[-15,15])
+    run_svm_tdvp("2-particle kicking", terms, 2.4452547216,
+                 /*K_max=*/20, /*svm_trials=*/5000,
+                 /*refine_trials=*/500, /*refine_rounds=*/10,
+                 /*tdvp_steps=*/1000,
+                 /*E_lower_bound=*/2.0);
 }
 
 static void run_kicked_evolution_test() {
