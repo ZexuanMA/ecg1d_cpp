@@ -34,4 +34,13 @@ void free_evolve_fixed_basis(std::vector<BasisParams>& basis,
                               const MatrixXcd& H, const MatrixXcd& S,
                               double T_duration);
 
+// Augment a ground-state-optimized basis with momentum-carrying basis functions.
+// For each existing basis function, creates copies with momenta p = n * 2 * k_L
+// for n = -n_mom, ..., -1, +1, ..., +n_mom.
+// The momentum is encoded via complex R: R_a → R_a + i*n*k_L (with B_aa set to b_val).
+// Returns the augmented basis (original + momentum copies).
+std::vector<BasisParams> augment_basis_with_momentum(
+    const std::vector<BasisParams>& basis,
+    double k_L, int n_mom = 2, double b_val = 0.5);
+
 } // namespace ecg1d

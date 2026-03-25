@@ -221,4 +221,82 @@ void free_evolve_fixed_basis(std::vector<BasisParams>& basis,
     }
 }
 
+std::vector<BasisParams> augment_basis_with_momentum(
+    const std::vector<BasisParams>& basis,
+    double k_L, int n_mom, double b_val) {
+
+    int N = basis[0].N();
+    std::vector<BasisParams> augmented = basis;
+
+    // Candidate momentum functions: various widths × various momenta
+    std::vector<double> widths = {0.2, 0.4, 0.8, 1.5, 3.0, 6.0};
+    std::vector<BasisParams> candidates;
+
+    for (double w : widths) {
+        for (int n = -n_mom; n <= n_mom; n++) {
+            if (n == 0) continue;
+
+            MatrixXcd A_new = MatrixXcd::Zero(N, N);
+            MatrixXcd B_new = MatrixXcd::Zero(N, N);
+            VectorXcd R_new = VectorXcd::Zero(N);
+
+            for (int a = 0; a < N; a++) {
+                A_new(a, a) = Cd(w, 0.0);
+                B_new(a, a) = Cd(b_val, 0.0);
+                double mom = static_cast<double>(n) * k_L;
+                R_new(a) = Cd(0.0, mom / b_val);
+            }
+            if (N >= 2) {
+                A_new(0, 1) = Cd(0.1 * w, 0.0);
+                A_new(1, 0) = Cd(0.1 * w, 0.0);
+            }
+
+            candidates.push_back(BasisParams::from_arrays(
+                Cd(0.0, 0.0), A_new, B_new, R_new, 1000 * n));
+        }
+    }
+
+    // Greedy selection: add candidates one-by-one, checking S condition number.
+    // Only keep those that don't make S too ill-conditioned.
+    double max_cond = 1e6;  // conservative threshold
+    PermutationSet perms = PermutationSet::generate(N);
+
+    int added = 0;
+    for (auto& cand : candidates) {
+        std::vector<BasisParams> trial = augmented;
+        trial.push_back(cand);
+
+        // Quick S conditioning check
+        int Kt = static_cast<int>(trial.size());
+        MatrixXcd St = MatrixXcd::Zero(Kt, Kt);
+        for (int i = 0; i < Kt; i++) {
+            for (int j = i; j < Kt; j++) {
+                Cd s_ij(0.0, 0.0);
+                for (int p = 0; p < perms.SN; p++) {
+                    double sign = static_cast<double>(perms.signs[p]);
+                    PairCache c = PairCache::build(trial[i], trial[j], perms.matrices[p]);
+                    s_ij += sign * c.M_G;
+                }
+                St(i, j) = s_ij;
+                St(j, i) = std::conj(s_ij);
+            }
+        }
+
+        Eigen::SelfAdjointEigenSolver<MatrixXcd> es(St);
+        double w_min = es.eigenvalues()(0);
+        double w_max = es.eigenvalues()(Kt - 1);
+        if (w_min > 0 && w_max / w_min < max_cond) {
+            augmented.push_back(cand);
+            added++;
+        }
+    }
+
+    std::cout << "  Augmented basis: " << basis.size() << " original + "
+              << added << " momentum (from " << candidates.size() << " candidates, cond<"
+              << std::scientific << max_cond << std::defaultfloat << ") = "
+              << augmented.size() << " total" << std::endl;
+
+    return augmented;
+}
+
 } // namespace ecg1d

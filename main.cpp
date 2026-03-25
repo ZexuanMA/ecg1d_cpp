@@ -605,9 +605,10 @@ static void run_kicked_gamma0_test() {
     std::cout << "\n=== Kicked Dynamics: N=2, gamma=0 (ECG+TDVP) ===" << std::endl;
 
     int N = 2;
-    int K_max = 10;
-    int n_kicks = 5;
-    double dt_step = 0.02;
+    int K_max = 5;     // ground state basis (keep small)
+    int n_kicks = 50;
+    int n_mom = 2;     // momentum harmonics: ±1, ±2
+    double b_val = 0.3; // B value for momentum basis functions
 
     // Free Hamiltonian: kinetic + harmonic only (no interaction)
     HamiltonianTerms terms_free;
@@ -646,23 +647,40 @@ static void run_kicked_gamma0_test() {
     std::cout << "Polished ground state E = " << std::setprecision(10) << E_polished << std::endl;
 
     // --- Phase 3: Real-time kicked evolution ---
-    // Use analytic kick (exact projection) + TDVP free evolution
+    // Strategy: augmented basis (ground state + momentum harmonics) + exact propagation
     double T_period = 1.0;
     double kappa_val = 1.0;
     double k_L_val = 0.5;
 
-    // Dynamics mode: evolve A, B, R via RK2 TDVP
-    SolverConfig rt_config = SolverConfig::dynamics();
-    auto alpha_z_dyn = build_alpha_z_list(basis_n, N, rt_config);
+    // Augment basis with momentum-carrying functions
+    std::cout << "\n--- Phase 2.5: Augmenting basis with momentum harmonics ---" << std::endl;
+    auto aug_basis = augment_basis_with_momentum(refined.basis, k_L_val, n_mom, b_val);
 
-    std::cout << "\n--- Phase 3: Real-time kicked evolution (analytic kick + RK2 TDVP) ---" << std::endl;
+    // Build H and S for augmented basis
+    auto [H_aug, S_aug] = build_HS(aug_basis, perms, terms_free);
+
+    // Check S conditioning
+    Eigen::SelfAdjointEigenSolver<MatrixXcd> es_S(S_aug);
+    int K_total = static_cast<int>(aug_basis.size());
+    double w_min_aug = es_S.eigenvalues()(0);
+    double w_max_aug = es_S.eigenvalues()(K_total - 1);
+    std::cout << "S conditioning: w_min=" << std::scientific << w_min_aug
+              << ", w_max=" << w_max_aug
+              << ", cond=" << w_max_aug / std::max(w_min_aug, 1e-30)
+              << std::defaultfloat << std::endl;
+
+    // Set u from ground state eigenvector
+    set_u_from_eigenvector(aug_basis, H_aug, S_aug);
+    double E_aug = lowest_energy(H_aug, S_aug);
+    std::cout << "Augmented basis: K=" << K_total << ", E=" << std::setprecision(10) << E_aug << std::endl;
+
+    std::cout << "\n--- Phase 3: Real-time kicked evolution (analytic kick + fixed basis) ---" << std::endl;
     std::cout << "T_period=" << T_period
               << ", n_kicks=" << n_kicks
-              << ", dt=" << dt_step
               << ", kappa=" << kappa_val
               << ", k_L=" << k_L_val
-              << ", K=" << basis_n
-              << ", params=" << alpha_z_dyn.size() << " (dynamics mode, RK2)"
+              << ", K=" << K_total
+              << " (augmented fixed basis, exact propagation)"
               << std::endl;
 
     // Collect observables
@@ -671,36 +689,35 @@ static void run_kicked_gamma0_test() {
 
     // Record initial state
     {
-        Cd E = compute_total_energy(refined.basis, terms_free);
-        Cd S = overlap(refined.basis);
-        Cd T = kinetic_energy_functional(refined.basis);
-        double norm = S.real();
-        obs.push_back({0.0, E.real(), (T/S).real(), norm});
+        Cd E = compute_total_energy(aug_basis, terms_free);
+        Cd S_val = overlap(aug_basis);
+        Cd T = kinetic_energy_functional(aug_basis);
+        double norm = S_val.real();
+        obs.push_back({0.0, E.real(), (T/S_val).real(), norm});
         std::cout << "Kick  0: t=0, E=" << std::setprecision(8) << E.real()
-                  << ", T=" << (T/S).real() << ", S=" << std::setprecision(6) << norm << std::endl;
+                  << ", T=" << (T/S_val).real() << ", norm=" << std::setprecision(6) << norm << std::endl;
     }
 
     double current_time = 0.0;
     for (int n = 0; n < n_kicks; n++) {
         // 1. Apply analytic kick (instantaneous, exact projection onto basis)
-        apply_analytic_kick(refined.basis, perms, kappa_val, k_L_val);
+        apply_analytic_kick(aug_basis, perms, kappa_val, k_L_val);
 
-        // 2. Free evolution via RK2 TDVP (A, B, R all evolve)
-        free_evolve(refined.basis, alpha_z_dyn, dt_step, T_period,
-                    terms_free, rt_config, &perms);
+        // 2. Free evolution: exact propagation in fixed augmented basis
+        free_evolve_fixed_basis(aug_basis, H_aug, S_aug, T_period);
         current_time += T_period;
 
         // 3. Record observables
-        Cd E = compute_total_energy(refined.basis, terms_free);
-        Cd S = overlap(refined.basis);
-        Cd T = kinetic_energy_functional(refined.basis);
-        double norm = S.real();
-        obs.push_back({current_time, E.real(), (T/S).real(), norm});
+        Cd E = compute_total_energy(aug_basis, terms_free);
+        Cd S_val = overlap(aug_basis);
+        Cd T = kinetic_energy_functional(aug_basis);
+        double norm = S_val.real();
+        obs.push_back({current_time, E.real(), (T/S_val).real(), norm});
         std::cout << "Kick " << std::setw(2) << (n+1)
                   << ": t=" << std::setprecision(4) << current_time
                   << ", E=" << std::setprecision(8) << E.real()
-                  << ", T=" << std::setprecision(8) << (T/S).real()
-                  << ", S=" << std::setprecision(6) << norm << std::endl;
+                  << ", T=" << std::setprecision(8) << (T/S_val).real()
+                  << ", norm=" << std::setprecision(6) << norm << std::endl;
     }
 
     // --- Also run exact for comparison ---
