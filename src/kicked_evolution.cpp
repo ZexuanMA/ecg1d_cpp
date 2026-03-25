@@ -11,6 +11,52 @@
 
 namespace ecg1d {
 
+// Helper: compute dz = C^{-1}(-ig) at a given basis configuration
+static VectorXcd compute_realtime_dz(
+    const std::vector<AlphaIndex>& alpha_z_list,
+    const std::vector<BasisParams>& basis,
+    const HamiltonianTerms& terms,
+    const SolverConfig& config,
+    int updata_constant,
+    TdvpDiagnostics* diag_out = nullptr) {
+
+    int d_update = static_cast<int>(alpha_z_list.size()) - updata_constant;
+
+    MatrixXcd C_1 = assemble_C(alpha_z_list, basis);
+    MatrixXcd C_bar = C_1.conjugate().transpose();
+    VectorXcd g_bar = assemble_grad(alpha_z_list, false, basis, terms);
+
+    MatrixXcd C_bar_update = C_bar.bottomRightCorner(d_update, d_update);
+    VectorXcd g_bar_update = g_bar.tail(d_update);
+
+    if (config.lambda_C > 0.0) {
+        C_bar_update += config.lambda_C * MatrixXcd::Identity(d_update, d_update);
+    }
+
+    Eigen::JacobiSVD<MatrixXcd> svd(C_bar_update, Eigen::ComputeThinU | Eigen::ComputeThinV);
+    double max_sv = svd.singularValues()(0);
+    double threshold = config.rcond * max_sv;
+    Eigen::VectorXd sv = svd.singularValues();
+
+    if (diag_out) {
+        diag_out->max_sv_C = sv(0);
+        diag_out->min_sv_C = sv(sv.size() - 1);
+        diag_out->cond_C = (diag_out->min_sv_C > 0) ? diag_out->max_sv_C / diag_out->min_sv_C : 1e30;
+        diag_out->effective_rank = 0;
+        for (int i = 0; i < sv.size(); i++) {
+            if (sv(i) > threshold) diag_out->effective_rank++;
+        }
+    }
+
+    VectorXcd rhs = Cd(0, -1) * g_bar_update;
+    VectorXcd Utrhs = svd.matrixU().adjoint() * rhs;
+    VectorXcd sinv_utrhs(sv.size());
+    for (int i = 0; i < sv.size(); i++) {
+        sinv_utrhs(i) = (sv(i) > threshold) ? Utrhs(i) / sv(i) : Cd(0, 0);
+    }
+    return svd.matrixV() * sinv_utrhs;
+}
+
 RealtimeStepResult realtime_tdvp_step(
     const std::vector<AlphaIndex>& alpha_z_list,
     const std::vector<BasisParams>& basis,
@@ -19,95 +65,30 @@ RealtimeStepResult realtime_tdvp_step(
     const SolverConfig& config,
     const PermutationSet* perms) {
 
-    int updata_constant = 0;
-    for (const auto& a : alpha_z_list) {
-        if (a.a1 == 1) updata_constant++;
-    }
+    // For real-time evolution, include u in the TDVP update (updata_constant=0).
+    // This ensures u evolves consistently with z (A/B/R).
+    // For imaginary time, u is excluded and re-solved as eigenstate.
+    int updata_constant = 0;  // include u in the update
 
-    // Assemble C matrix and gradient
-    MatrixXcd C_1 = assemble_C(alpha_z_list, basis);
-    MatrixXcd C_bar = C_1.conjugate().transpose();
-    VectorXcd g_bar = assemble_grad(alpha_z_list, false, basis, terms);
-
-    int d_update = static_cast<int>(alpha_z_list.size()) - updata_constant;
-    MatrixXcd C_bar_update = C_bar.bottomRightCorner(d_update, d_update);
-    VectorXcd g_bar_update = g_bar.tail(d_update);
-
-    // Tikhonov regularization
-    if (config.lambda_C > 0.0) {
-        C_bar_update += config.lambda_C * MatrixXcd::Identity(d_update, d_update);
-    }
-
-    // SVD solve
-    Eigen::JacobiSVD<MatrixXcd> svd(C_bar_update, Eigen::ComputeThinU | Eigen::ComputeThinV);
-    double max_sv = svd.singularValues()(0);
-    double threshold = config.rcond * max_sv;
-    Eigen::VectorXd sv = svd.singularValues();
-
-    // Build diagnostics
+    // --- RK2 Midpoint method (symplectic for oscillatory problems) ---
+    // 1. Compute dz at current point (dz includes du and dA/dB/dR)
     TdvpDiagnostics diag;
-    diag.max_sv_C = sv(0);
-    diag.min_sv_C = sv(sv.size() - 1);
-    diag.cond_C = (diag.min_sv_C > 0) ? diag.max_sv_C / diag.min_sv_C : 1e30;
-    diag.effective_rank = 0;
-    for (int i = 0; i < sv.size(); i++) {
-        if (sv(i) > threshold) diag.effective_rank++;
-    }
+    VectorXcd dz1 = compute_realtime_dz(alpha_z_list, basis, terms, config,
+                                          updata_constant, &diag);
 
-    // Real-time: rhs = -i * g (multiply gradient by -i for Schrodinger evolution)
-    VectorXcd rhs = Cd(0, -1) * g_bar_update;
-    VectorXcd Utrhs = svd.matrixU().adjoint() * rhs;
-    VectorXcd sinv_utrhs(sv.size());
-    for (int i = 0; i < sv.size(); i++) {
-        sinv_utrhs(i) = (sv(i) > threshold) ? Utrhs(i) / sv(i) : Cd(0, 0);
-    }
-    VectorXcd dz = svd.matrixV() * sinv_utrhs;
+    // 2. Half step to midpoint
+    std::vector<BasisParams> basis_mid = basis;
+    update_basis_function(basis_mid, dz1, dt * 0.5, alpha_z_list, updata_constant);
 
-    double norm_dz = dz.norm();
+    // 3. Compute dz at midpoint
+    VectorXcd dz2 = compute_realtime_dz(alpha_z_list, basis_mid, terms, config,
+                                          updata_constant);
 
-    // Apply update (no line search for real-time evolution)
+    // 4. Full step from original point using midpoint derivative
     std::vector<BasisParams> basis_new = basis;
-    update_basis_function(basis_new, dz, dt, alpha_z_list, updata_constant);
+    update_basis_function(basis_new, dz2, dt, alpha_z_list, updata_constant);
 
-    // Re-solve u via eigenvalue if requested
-    if (config.resolve_u && perms != nullptr) {
-        auto [H_new, S_new] = build_HS(basis_new, *perms, terms);
-        double E_eigen = lowest_energy(H_new, S_new);
-        if (std::isfinite(E_eigen)) {
-            set_u_from_eigenvector(basis_new, H_new, S_new);
-            return {basis_new, Cd(E_eigen, 0.0), norm_dz, dt, diag};
-        }
-    }
-
-    // Renormalize u to preserve norm after parameter update.
-    // When A/B/R change, S changes, and u†Su drifts. This corrects it.
-    {
-        int Kb = static_cast<int>(basis_new.size());
-        VectorXcd u_vec(Kb);
-        for (int i = 0; i < Kb; i++) u_vec(i) = basis_new[i].u;
-
-        // Compute norm before (with old basis) and after (with new basis)
-        VectorXcd u_old(Kb);
-        for (int i = 0; i < Kb; i++) u_old(i) = basis[i].u;
-
-        // We need S_old and S_new. For efficiency, compute S_new from
-        // the basis_new overlap. S_old norm is approximately preserved
-        // from the previous step.
-        if (perms != nullptr) {
-            auto [H_new, S_new] = build_HS(basis_new, *perms, terms);
-            Cd norm_new = (u_vec.adjoint() * S_new * u_vec)(0);
-
-            auto [H_old, S_old] = build_HS(basis, *perms, terms);
-            Cd norm_old = (u_old.adjoint() * S_old * u_old)(0);
-
-            if (norm_new.real() > 1e-15 && norm_old.real() > 1e-15) {
-                double scale = std::sqrt(norm_old.real() / norm_new.real());
-                for (int i = 0; i < Kb; i++) {
-                    basis_new[i].u *= scale;
-                }
-            }
-        }
-    }
+    double norm_dz = dz2.norm();
 
     Cd E_new = compute_total_energy(basis_new, terms);
     return {basis_new, E_new, norm_dz, dt, diag};
