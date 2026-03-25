@@ -26,4 +26,12 @@ void apply_analytic_kick(std::vector<BasisParams>& basis,
                          double kappa, double k_L,
                          int n_bessel = 20);
 
+// Free evolution with fixed basis: solve i S du/dt = H u exactly.
+// Uses eigendecomposition: u(t) = V exp(-i D t) V^{-1} u(0)
+// where (H, S) generalized eigenproblem gives eigenvalues D and eigenvectors V.
+// Only u coefficients change; A, B, R stay fixed.
+void free_evolve_fixed_basis(std::vector<BasisParams>& basis,
+                              const MatrixXcd& H, const MatrixXcd& S,
+                              double T_duration);
+
 } // namespace ecg1d

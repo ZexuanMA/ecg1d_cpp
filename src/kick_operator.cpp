@@ -147,4 +147,78 @@ void apply_analytic_kick(std::vector<BasisParams>& basis,
     }
 }
 
+void free_evolve_fixed_basis(std::vector<BasisParams>& basis,
+                              const MatrixXcd& H, const MatrixXcd& S,
+                              double T_duration) {
+    int K = static_cast<int>(basis.size());
+
+    // Solve generalized eigenvalue problem: H v = E S v
+    // via S^{-1/2} transformation
+    Eigen::SelfAdjointEigenSolver<MatrixXcd> es_S(S);
+    if (es_S.info() != Eigen::Success) {
+        std::cerr << "free_evolve_fixed_basis: S eigendecomposition failed" << std::endl;
+        return;
+    }
+
+    Eigen::VectorXd w = es_S.eigenvalues();
+    double w_max = w(K - 1);
+    double w_cutoff = w_max * 1e-10;
+
+    // Count kept eigenvalues
+    int n_keep = 0;
+    for (int i = 0; i < K; i++) {
+        if (w(i) > w_cutoff) n_keep++;
+    }
+
+    int i_start = K - n_keep;
+    MatrixXcd V_keep = es_S.eigenvectors().rightCols(n_keep);
+    Eigen::VectorXd w_keep = w.tail(n_keep);
+
+    // S^{-1/2} in kept subspace
+    Eigen::VectorXd w_inv_sqrt = w_keep.array().rsqrt();
+    MatrixXcd S_inv_half = V_keep * w_inv_sqrt.asDiagonal() * V_keep.adjoint();
+
+    // Transform H: H_tilde = S^{-1/2} H S^{-1/2}
+    MatrixXcd H_tilde = S_inv_half * H * S_inv_half;
+    // Symmetrize
+    H_tilde = (0.5 * (H_tilde + H_tilde.adjoint())).eval();
+
+    // Diagonalize H_tilde
+    Eigen::SelfAdjointEigenSolver<MatrixXcd> es_H(H_tilde);
+    if (es_H.info() != Eigen::Success) {
+        std::cerr << "free_evolve_fixed_basis: H_tilde eigendecomposition failed" << std::endl;
+        return;
+    }
+
+    Eigen::VectorXd eigenvalues = es_H.eigenvalues();   // real
+    MatrixXcd eigenvectors = es_H.eigenvectors();         // in S^{-1/2} space
+
+    // Current u in original space
+    VectorXcd u(K);
+    for (int i = 0; i < K; i++) u(i) = basis[i].u;
+
+    // Transform u to S^{-1/2} space: u_tilde = S^{1/2} u
+    MatrixXcd S_half = V_keep * w_keep.array().sqrt().matrix().asDiagonal() * V_keep.adjoint();
+    VectorXcd u_tilde = S_half * u;
+
+    // Expand in eigenbasis of H_tilde: u_tilde = Σ c_n v_n
+    VectorXcd c = eigenvectors.adjoint() * u_tilde;
+
+    // Time evolve: c_n(t) = c_n(0) * exp(-i E_n t)
+    for (int n = 0; n < n_keep; n++) {
+        c(n) *= std::exp(Cd(0, -1) * eigenvalues(n) * T_duration);
+    }
+
+    // Back-transform: u_tilde(t) = Σ c_n(t) v_n
+    VectorXcd u_tilde_new = eigenvectors * c;
+
+    // Back to original space: u = S^{-1/2} u_tilde
+    VectorXcd u_new = S_inv_half * u_tilde_new;
+
+    // Update basis
+    for (int i = 0; i < K; i++) {
+        basis[i].u = u_new(i);
+    }
+}
+
 } // namespace ecg1d

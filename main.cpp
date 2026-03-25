@@ -606,8 +606,8 @@ static void run_kicked_gamma0_test() {
 
     int N = 2;
     int K_max = 10;
-    int n_kicks = 5;
-    double dt_step = 0.01;
+    int n_kicks = 20;
+    double dt_step = 0.01;  // unused now (fixed-basis propagation is exact)
 
     // Free Hamiltonian: kinetic + harmonic only (no interaction)
     HamiltonianTerms terms_free;
@@ -651,18 +651,16 @@ static void run_kicked_gamma0_test() {
     double kappa_val = 1.0;
     double k_L_val = 0.5;
 
-    // Static mode for now (A params only, ~30 params vs 80 in dynamics)
-    // B and R start at zero and analytic kick only modifies u, not nonlinear params
-    SolverConfig rt_config;
-    auto alpha_z_dyn = build_alpha_z_list(basis_n, N, rt_config);
+    // Build H and S once for fixed-basis evolution
+    auto [H_fixed, S_fixed] = build_HS(refined.basis, perms, terms_free);
 
-    std::cout << "\n--- Phase 3: Real-time kicked evolution (analytic kick) ---" << std::endl;
+    std::cout << "\n--- Phase 3: Real-time kicked evolution (analytic kick + fixed basis) ---" << std::endl;
     std::cout << "T_period=" << T_period
               << ", n_kicks=" << n_kicks
-              << ", dt=" << dt_step
               << ", kappa=" << kappa_val
               << ", k_L=" << k_L_val
-              << ", params=" << alpha_z_dyn.size() << " (dynamics mode)"
+              << ", K=" << basis_n
+              << " (fixed basis, exact propagation)"
               << std::endl;
 
     // Collect observables
@@ -682,20 +680,13 @@ static void run_kicked_gamma0_test() {
 
     double current_time = 0.0;
     for (int n = 0; n < n_kicks; n++) {
-        // 1. Apply analytic kick (instantaneous, exact projection)
+        // 1. Apply analytic kick (instantaneous, exact projection onto basis)
         apply_analytic_kick(refined.basis, perms, kappa_val, k_L_val);
 
-        // Diagnostic: energy right after kick, before free evolution
-        {
-            Cd Ek = compute_total_energy(refined.basis, terms_free);
-            Cd Sk = overlap(refined.basis);
-            std::cout << "  [post-kick] E=" << std::setprecision(8) << Ek.real()
-                      << ", S=" << std::setprecision(6) << Sk.real() << std::endl;
-        }
-
-        // 2. Free evolution for one period using TDVP
-        free_evolve(refined.basis, alpha_z_dyn, dt_step, T_period,
-                    terms_free, rt_config, &perms);
+        // 2. Free evolution: exact propagation in fixed basis
+        //    Solves i S du/dt = H u analytically via eigendecomposition
+        //    No TDVP, no parameter updates, just u evolves
+        free_evolve_fixed_basis(refined.basis, H_fixed, S_fixed, T_period);
         current_time += T_period;
 
         // 3. Record observables
