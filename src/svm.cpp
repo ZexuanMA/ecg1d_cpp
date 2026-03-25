@@ -282,27 +282,10 @@ BasisParams random_basis_2particle(std::mt19937_64& rng, int name) {
         A(1, 1) += Cd(shift, 0.0);
     }
 
-    // B: small positive diagonal (log-uniform)
+    // B=0, R=0 for static ground state (Varga's setting)
+    // B and R are only needed for TDVP dynamics; they evolve from zero naturally.
     MatrixXcd B = MatrixXcd::Zero(N, N);
-    for (int i = 0; i < N; i++) {
-        double b_val = std::exp(std::log(0.005) + uniform01(rng) * (std::log(3.0) - std::log(0.005)));
-        B(i, i) = Cd(b_val, 0.0);
-    }
-
-    // Ensure A+B positive definite
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_ab((A + B).real());
-    double w_ab_min = es_ab.eigenvalues()(0);
-    if (w_ab_min < 0.05) {
-        double shift = 0.05 - w_ab_min + 0.01;
-        A(0, 0) += Cd(shift, 0.0);
-        A(1, 1) += Cd(shift, 0.0);
-    }
-
-    // R: Gaussian centers
-    VectorXcd R(N);
-    for (int i = 0; i < N; i++) {
-        R(i) = Cd(0.5 * normal01(rng), 0.0);
-    }
+    VectorXcd R = VectorXcd::Zero(N);
 
     return BasisParams::from_arrays(Cd(1.0, 0.0), A, B, R, name);
 }
@@ -328,27 +311,9 @@ BasisParams perturb_basis(const BasisParams& base, std::mt19937_64& rng,
             A_new(i, i) += Cd(shift, 0.0);
     }
 
-    // Perturb B
-    MatrixXcd B_new = base.B;
-    for (int i = 0; i < N; i++) {
-        double b_val = std::max(0.005, base.B(i, i).real() + scale * normal01(rng));
-        B_new(i, i) = Cd(b_val, 0.0);
-    }
-
-    // Perturb R
-    VectorXcd R_new = base.R;
-    for (int i = 0; i < N; i++) {
-        R_new(i) += Cd(scale * 0.3 * normal01(rng), 0.0);
-    }
-
-    // Ensure A+B positive definite
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_ab((A_new + B_new).real());
-    double w_ab_min = es_ab.eigenvalues()(0);
-    if (w_ab_min < 0.05) {
-        double shift = 0.05 - w_ab_min + 0.01;
-        for (int i = 0; i < N; i++)
-            A_new(i, i) += Cd(shift, 0.0);
-    }
+    // B=0, R=0 for static ground state (only A matters)
+    MatrixXcd B_new = MatrixXcd::Zero(N, N);
+    VectorXcd R_new = VectorXcd::Zero(N);
 
     return BasisParams::from_arrays(Cd(1.0, 0.0), A_new, B_new, R_new, base.name);
 }
@@ -402,8 +367,8 @@ SvmResult svm_build_basis(int N, int K_max, int n_trials,
             H_ext(n, n) = h_nn;
             S_ext(n, n) = s_nn;
 
-            // S conditioning check: reject if adding this trial would make S ill-conditioned
-            if (!s_well_conditioned(S_ext)) continue;
+            // Overlap screening: reject if too similar to existing basis
+            if (has_excessive_overlap(S_ext, n, 0.99)) continue;
 
             double E_trial = lowest_energy(H_ext, S_ext, 1e8, E_lower);
 
@@ -483,8 +448,8 @@ SvmResult stochastic_refine(std::vector<BasisParams> basis,
                 trial_basis[k] = tb;
                 auto [H_new, S_new] = build_HS(trial_basis, perms, terms);
 
-                // Primary guard: reject if S would become ill-conditioned
-                if (!s_well_conditioned(S_new)) continue;
+                // Overlap screening: reject if too similar to existing basis
+                if (has_excessive_overlap(S_new, k, 0.95)) continue;
 
                 double E_trial = lowest_energy(H_new, S_new, 1e8, E_lower_bound);
 
