@@ -421,21 +421,23 @@ A 不对称 → K 矩阵不对称 → K_inv 不对称 → H kernel 不满足 Her
 
 精确值由有限差分法计算：$E = 2 \times E_\text{single}$，其中 $H_\text{single} = -\frac{1}{2}\frac{d^2}{dx^2} + \frac{1}{2}x^2 + \cos(x)$（无粒子间相互作用）。
 
-| 阶段 | K=20 误差 | K=30 误差 |
-|------|----------|----------|
-| SVM | 3.7e-5 | 6.1e-6 |
-| + Refine 10 轮 | 1.8e-5 | **3.7e-6** |
-| + TDVP | 1.5e-5 | ~3.5e-6 |
+| 阶段 | K=20 | K=30 | K=40 (static_mode) |
+|------|------|------|------|
+| SVM | 3.7e-5 | 6.1e-6 | **5.6e-6** (K=33 停止) |
+| + Refine 10 轮 | 1.8e-5 | 3.7e-6 | **3.8e-6** |
+| + TDVP 5 步 | 1.5e-5 | ~3.5e-6 | **3.8e-6** |
 
-Kicking 的 cos(x) 势需要比 Gaussian interaction 更多的基函数（非高斯形状）。K=20 不够，K=30 显著改善（SVM 误差降 6 倍）。K=30 时 SVM 收敛曲线仍未饱和，更大 K 可能继续有收益。
+Kicking 的 cos(x) 势需要比 Gaussian interaction 更多的基函数（非高斯形状）。K=20→30 有 6 倍改善，K=30→33 改善趋缓。
 
-SVM 收敛曲线（K=30）：
+K=40 (static_mode) 实际停在 K=33（后续 trial 全被 overlap 检查拒绝）。TDVP 5 步改善 3.5e-8（cond(C)=3.4e9, rank=13/99）。总耗时 1276s（SVM 23s + Refine 350s + TDVP 903s）。
+
+SVM 收敛曲线：
 ```
-K=10: error=1.6e-4    (快速下降阶段)
-K=15: error=6.1e-5
+K=10: error=1.6e-4
 K=20: error=3.7e-5
 K=25: error=1.1e-5
-K=30: error=6.1e-6    (仍在下降，未饱和)
+K=30: error=6.1e-6
+K=33: error=5.6e-6    (饱和，K=34 无法继续)
 ```
 
 ### 6.5 精度总结
@@ -444,7 +446,7 @@ K=30: error=6.1e-6    (仍在下降，未饱和)
 |-----------|---------|---------|----------|---------|
 | 1-particle harmonic | 0.5 | — | — | 1.8e-12（TDVP） |
 | Gaussian interaction | 1.5267 | 3.0e-6 | 2.8e-6 | 平滑势，指数收敛 |
-| Kicking (K=30) | 2.4453 | 6.1e-6 | **3.7e-6** → ~3.5e-6 (TDVP) | cos 势，K=30 显著改善 |
+| Kicking (K=33) | 2.4453 | 5.6e-6 | **3.8e-6** (refine+TDVP) | cos 势，K=33 后饱和 |
 | Delta contact | 1.3067 | 2.3e-3 | 2.3e-3 | cusp，代数收敛 K^{-1/2} |
 
 **对 MBDL 动力学，Gaussian 和 Kicking 的精度（1e-5 ~ 1e-6）足够做初态准备。**

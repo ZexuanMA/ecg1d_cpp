@@ -1,61 +1,56 @@
 {
-  "method": "v3: per-image rotation + periodic grid fitting",
-  "rotation_angles_deg": {
-    "0ugL": 0.3,
-    "5ugL": -0.1,
-    "20ugL": -4.78
-  },
-  "grid_periods_px": {
-    "row": 42,
-    "col": 49
-  },
-  "per_image_stats": {
+  "method": "v3: independent per-image rotation + peak detection",
+  "per_image": {
     "0ugL": {
-      "total_spots": 6015,
-      "spots_after_filter": 6015,
-      "net_signal_mean": 16.75
+      "rotation_deg": 0.3,
+      "n_rows": 84,
+      "spots_detected": 6659,
+      "spots_after_filter": 6659
     },
     "5ugL": {
-      "total_spots": 6086,
-      "spots_after_filter": 6086,
-      "net_signal_mean": 10.1
+      "rotation_deg": -0.1,
+      "n_rows": 84,
+      "spots_detected": 4621,
+      "spots_after_filter": 4621
     },
     "20ugL": {
-      "total_spots": 6066,
-      "spots_after_filter": 6066,
-      "net_signal_mean": 5.32
+      "rotation_deg": -4.78,
+      "n_rows": 84,
+      "spots_detected": 4675,
+      "spots_after_filter": 4675
     }
   },
+  "reference_well_count": 6659,
   "bin_edges": [
     "-inf",
-    5.0,
-    17.5,
-    33.4,
-    50.5,
+    20.0,
+    32.6,
+    48.6,
+    65.8,
     "inf"
   ],
   "n_levels": 5,
   "distributions": {
     "0ugL": [
-      0.45187032418952616,
-      0.19384871155444722,
-      0.14546965918536992,
-      0.10773067331670823,
-      0.10108063175394846
+      0.10001501726986034,
+      0.2138459228112329,
+      0.2803724282925364,
+      0.22465835711067728,
+      0.18110827451569306
     ],
     "5ugL": [
-      0.6633256654617155,
-      0.13933618139993428,
-      0.07180414065067368,
-      0.054222806441012156,
-      0.07131120604666448
+      0.5060819942934375,
+      0.11923712269109477,
+      0.1447664814536717,
+      0.11698453221204386,
+      0.11292986934975222
     ],
     "20ugL": [
-      0.559841740850643,
-      0.4066930431915595,
-      0.016485328058028353,
-      0.009891196834817012,
-      0.007088691064952192
+      0.9077939630575161,
+      0.04505180958101817,
+      0.025679531461180356,
+      0.01381588827151224,
+      0.007658807628773089
     ]
   }
 }
