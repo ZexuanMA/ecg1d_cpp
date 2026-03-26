@@ -185,13 +185,71 @@ H_free = -(1/2) d^2/dz^2 + (1/2) omega^2 z^2
 
 ### 4.2 Kick 的施加
 
+#### 4.2.1 位置空间（有限差分精确解）
+
 理想 delta kick 等价于瞬时乘以相位：
 
-$$
-\psi(z, t^+) = e^{-i\kappa\cos(2k_L z)} \cdot \psi(z, t^-)
-$$
+$$\psi(z, t^+) = e^{-i\kappa\cos(2k_L z)} \cdot \psi(z, t^-)$$
 
 这在位置空间是**逐点乘法**，不涉及矩阵运算。
+
+#### 4.2.2 ECG 基底中的解析 kick（Jacobi-Anger 展开）
+
+对 ECG 基底，kick 不是逐点乘法——需要算 kick 矩阵元 $K_{ij} = \langle\phi_i|U_{\text{kick}}|\phi_j\rangle$。
+
+**第 1 步：Jacobi-Anger 展开。** 把指数中的 cos 展开为平面波求和：
+
+$$e^{-i\kappa\cos\theta} = \sum_{n=-\infty}^{\infty} (-i)^n J_n(\kappa) \, e^{in\theta}$$
+
+其中 $J_n$ 是第一类 Bessel 函数。$\kappa=1$ 时 $J_0=0.765$, $J_1=0.440$, $J_2=0.115$, $J_3=0.020$, $J_4=0.002$... 截断到 n_max=20 绰绰有余。
+
+**第 2 步：平面波的高斯矩阵元。** 需要 $\langle\phi_i|e^{in \cdot 2k_L x_a}|\phi_j\rangle$（高斯夹平面波）。
+
+两个高斯的 overlap 为：
+
+$$M_G = \frac{\pi^{N/2}}{\sqrt{\det K}} \exp\left(C + \frac{1}{4}b^T K^{-1} b\right)$$
+
+其中 K, b, C 是 bra 和 ket 参数合并的结果（PairCache 中已算好）。
+
+**关键技巧**：插入平面波 $e^{in \cdot 2k_L x_a}$ 等价于给线性项 b 的第 a 分量加一个虚部偏移：
+
+$$b \to b' = b + 2ink_L \, \mathbf{e}_a$$
+
+修改后的 overlap $M_G'$ 和原始 $M_G$ 的比值：
+
+$$\frac{\langle\phi_i|e^{in \cdot 2k_L x_a}|\phi_j\rangle}{M_G} = \frac{M_G'}{M_G} = \exp\left(\frac{1}{4}\left[b'^T K^{-1} b' - b^T K^{-1} b\right]\right)$$
+
+**第 3 步：化简。** 设 $\delta b = 2ink_L \mathbf{e}_a$，利用 $\mu = \frac{1}{2}K^{-1}b$（PairCache 中已缓存）：
+
+$$\delta b^T K^{-1} b = 2ink_L \cdot 2\mu_a = 4ink_L\mu_a$$
+
+$$\delta b^T K^{-1} \delta b = -4n^2k_L^2 K^{-1}(a,a)$$
+
+合并得：
+
+$$\frac{\langle\phi_i|e^{in \cdot 2k_L x_a}|\phi_j\rangle}{M_G} = \exp\left(-n^2 k_L^2 K^{-1}(a,a) + in \cdot 2k_L \mu(a)\right)$$
+
+**这是一个解析闭合表达式**，只用到 PairCache 中已有的 $K^{-1}(a,a)$ 和 $\mu(a)$，无需额外积分。
+
+**第 4 步：单粒子 kick kernel。** 把 Bessel 展开和高斯矩阵元合起来：
+
+$$\text{kick}_a = \sum_{n=-n_{\max}}^{n_{\max}} (-i)^n J_n(\kappa) \cdot \exp\left(-n^2 k_L^2 K^{-1}(a,a) + in \cdot 2k_L \mu(a)\right)$$
+
+对应代码中的 `single_particle_kick_kernel()`。高斯的 $e^{-n^2 k_L^2 K^{-1}}$ 因子保证高阶项快速衰减——n 越大，指数衰减越快，Bessel 函数也越小。双重衰减使截断非常有效。
+
+**第 5 步：多粒子 + 置换求和。** N 个粒子的 kick 因子相乘（粒子间独立），加上 Bose 对称化的置换求和：
+
+$$K_{ij} = \sum_p \text{sign}(p) \cdot M_G^{(p)} \cdot \prod_{a=1}^{N} \text{kick}_a^{(p)}$$
+
+其中 p 遍历所有 N! 个置换。
+
+**第 6 步：更新线性系数。** 求 $u'$ 使 $\sum_k u'_k |\phi_k\rangle$ 最优逼近 $U_{\text{kick}}\sum_k u_k |\phi_k\rangle$：
+
+$$u' = S^{-1} K u$$
+
+**注意**：kick 矩阵 K 不是 Hermitian！$U_{\text{kick}}$ 是酉算符，$K_{ji} \neq \overline{K_{ij}}$。必须计算全部 K×K 个矩阵元。
+
+**整个 kick 过程不涉及任何 ODE 求解、C 矩阵、时间积分器**。只是矩阵元计算 + 线性方程组求解。
 
 ### 4.3 自由演化
 

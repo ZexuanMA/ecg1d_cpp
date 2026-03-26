@@ -210,15 +210,36 @@ def detect_grid(R):
 # ──────────────────────────────────────────────
 # Intensity measurement
 # ──────────────────────────────────────────────
-def measure_intensity(R, cy, cx, spot_radius=3, bg_inner=6, bg_outer=10):
+def _measure_peak_flux(patch, py, px, bg_val, radius=3):
+    """Measure flux of a single peak in a small circular aperture."""
+    ph, pw = patch.shape
+    yy = np.arange(max(0, py - radius), min(ph, py + radius + 1))
+    xx = np.arange(max(0, px - radius), min(pw, px + radius + 1))
+    yg, xg = np.meshgrid(yy, xx, indexing='ij')
+    dist_sq = (yg - py)**2 + (xg - px)**2
+    mask = dist_sq <= radius**2
+    return (patch[yg[mask], xg[mask]] - bg_val).clip(0).sum()
+
+
+def measure_intensity(R, cy, cx, core_radius=3, search_radius=10,
+                      bg_inner=11, bg_outer=14,
+                      core_threshold=25.0, branch_threshold=20.0,
+                      min_peak_flux=200.0, max_branches=4):
+    """Two-stage microsphere intensity measurement.
+
+    Stage 1 — Core detection:
+      Measure the main peak at the well center (r=core_radius).
+      If the center pixel is not above core_threshold → quenched → return 0.
+
+    Stage 2 — Branch search (only if core exists):
+      Search r=core_radius..search_radius for additional bright peaks
+      (branches sticking out). Each branch must pass branch_threshold
+      and min_peak_flux. Sum core + branch fluxes.
+
+    Returns (total_flux, bg_val, net_signal)
+    """
     H, W = R.shape
     iy, ix = int(round(cy)), int(round(cx))
-
-    sy0 = max(0, iy - spot_radius)
-    sy1 = min(H, iy + spot_radius + 1)
-    sx0 = max(0, ix - spot_radius)
-    sx1 = min(W, ix + spot_radius + 1)
-    spot_val = R[sy0:sy1, sx0:sx1].mean()
 
     by0 = max(0, iy - bg_outer)
     by1 = min(H, iy + bg_outer + 1)
@@ -227,13 +248,58 @@ def measure_intensity(R, cy, cx, spot_radius=3, bg_inner=6, bg_outer=10):
     local_yy = np.arange(by1 - by0)[:, None]
     local_xx = np.arange(bx1 - bx0)[None, :]
     local_dist_sq = (local_yy - (cy - by0))**2 + (local_xx - (cx - bx0))**2
-    local_mask = (local_dist_sq >= bg_inner**2) & (local_dist_sq <= bg_outer**2)
-    if local_mask.sum() > 5:
-        bg_val = R[by0:by1, bx0:bx1][local_mask].mean()
-    else:
-        bg_val = np.median(R[by0:by1, bx0:bx1])
 
-    return spot_val, bg_val, spot_val - bg_val
+    patch = R[by0:by1, bx0:bx1]
+
+    # Background from annulus
+    bg_mask = (local_dist_sq >= bg_inner**2) & (local_dist_sq <= bg_outer**2)
+    if bg_mask.sum() > 5:
+        bg_val = patch[bg_mask].mean()
+    else:
+        bg_val = np.median(patch)
+
+    # ── Stage 1: Core detection ──
+    # Check if center region has a real peak
+    center_y = int(round(cy - by0))
+    center_x = int(round(cx - bx0))
+    core_mask = local_dist_sq <= core_radius**2
+    core_pixels = patch[core_mask]
+    core_max = core_pixels.max() - bg_val
+
+    if core_max < core_threshold:
+        # No significant signal at well center → quenched
+        return 0.0, bg_val, 0.0
+
+    # Measure core flux
+    core_flux = _measure_peak_flux(patch, center_y, center_x, bg_val,
+                                   radius=core_radius)
+
+    if core_flux < min_peak_flux:
+        return 0.0, bg_val, 0.0
+
+    # ── Stage 2: Branch search (outside core, inside search radius) ──
+    from scipy.ndimage import maximum_filter
+    local_max = (patch == maximum_filter(patch, size=3))
+    # Search only in the annular region outside the core
+    branch_zone = (local_dist_sq > core_radius**2) & \
+                  (local_dist_sq <= search_radius**2)
+    patch_bg_sub = patch - bg_val
+    branch_peaks = local_max & (patch_bg_sub > branch_threshold) & branch_zone
+
+    branch_ys, branch_xs = np.where(branch_peaks)
+
+    branch_fluxes = []
+    for py, px in zip(branch_ys, branch_xs):
+        flux = _measure_peak_flux(patch, py, px, bg_val, radius=core_radius)
+        if flux >= min_peak_flux:
+            branch_fluxes.append(flux)
+
+    # Keep brightest branches, cap at max
+    branch_fluxes.sort(reverse=True)
+    branch_fluxes = branch_fluxes[:max_branches]
+
+    total_flux = core_flux + sum(branch_fluxes)
+    return total_flux, bg_val, total_flux
 
 
 # ──────────────────────────────────────────────
@@ -402,9 +468,15 @@ def main():
 
     ref = results["0ugL"]
     ref_net = ref['meas'][ref['keep'], 2]
-    p5 = np.percentile(ref_net, 5)
-    p10 = np.percentile(ref_net, 10)
-    quench = max(abs(p5), abs(p10), 5.0)
+    # Quench threshold: based on noise floor of non-zero measurements.
+    # Wells with flux=0 are definitively quenched (no core peak).
+    # Wells with small positive flux may be noise leaking through.
+    # Use P25 of non-zero values as noise ceiling.
+    nonzero = ref_net[ref_net > 0]
+    if len(nonzero) >= 20:
+        quench = np.percentile(nonzero, 25)
+    else:
+        quench = 500.0
     bright = ref_net[ref_net > quench]
     p90 = np.percentile(bright, 90) if len(bright) >= 20 else quench + 50
     r = p90 - quench
