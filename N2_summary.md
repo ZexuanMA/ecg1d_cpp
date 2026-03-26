@@ -82,8 +82,8 @@ cos(x) 势需要更多基函数（K=33），但收敛稳定。
 1e-1 ─ *
   |     \
   |      *
-1e-2 ─    *--*--*--*--*--*--*  ← 卡在 2.0e-3，K=12 后无法继续
-  |
+1e-2 ─    *
+  |        *--*--*--*--*--*  ← 卡在 2.0e-3，K=12 后无法继续添加
   |
 1e-3 ─
   |
@@ -91,7 +91,26 @@ cos(x) 势需要更多基函数（K=33），但收敛稳定。
      K=1  3   5   7   9  11 12
 ```
 
-Delta 函数（cusp）与 Gaussian 基底不匹配：代数收敛 ~K^{-1/2}，K=12 就达到 overlap 极限。
+**SVM 收敛细节**：
+
+```
+K= 1: E=1.399  error=9.2e-2
+K= 5: E=1.310  error=3.0e-3
+K= 7: E=1.309  error=2.5e-3
+K=10: E=1.309  error=2.1e-3
+K=12: E=1.309  error=2.0e-3
+K=13: no valid trial found（w_min=2.2e-7，overlap 阈值触发）
+```
+
+**Refine（10 轮）**：完全无效，Round 5 即 replaced=0 停止。误差仍为 2.0e-3。
+
+**TDVP**：发散。C 矩阵 cond=2.9e8，rank=7/36。Delta 的 cusp 结构导致梯度指向不可达的方向。
+
+**为什么 K 最多只能到 12**：
+
+Delta 势需要极窄的 Gaussian 来逼近 cusp，但窄 Gaussian 之间的 overlap 极高。B=0,R=0 后暴露了 A 空间的真实容量——线性无关的窄 Gaussian 只有 ~12 个。旧版（含 B/R）能到 K=23，但多出来的 11 个函数只在 B/R 方向上有区别，对基态能量贡献可忽略。
+
+**根本限制**：Gaussian 基底逼近 delta cusp 是代数收敛（~K^{-1/2}），要从 2e-3 降到 2e-4 需要 K~1200，不现实。对比：Gaussian interaction 和 Kicking 都是光滑势，ECG 指数收敛，K=20~33 即可达到 1e-6。
 
 ### 1.3 Stochastic Refinement 效果
 
