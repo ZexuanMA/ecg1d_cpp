@@ -221,6 +221,35 @@ def _measure_peak_flux(patch, py, px, bg_val, radius=3):
     return (patch[yg[mask], xg[mask]] - bg_val).clip(0).sum()
 
 
+def _measure_peaks_no_overlap(patch, peak_positions, bg_val, radius=3):
+    """Measure total flux of multiple peaks without double-counting.
+
+    Each pixel within radius of ANY peak is assigned to its nearest peak.
+    Total flux = sum of all assigned pixels minus background.
+    """
+    ph, pw = patch.shape
+    if len(peak_positions) == 0:
+        return 0.0
+
+    if len(peak_positions) == 1:
+        py, px = peak_positions[0]
+        return _measure_peak_flux(patch, py, px, bg_val, radius)
+
+    # Collect all pixels within radius of any peak
+    all_pixels = set()
+    for py, px in peak_positions:
+        for y in range(max(0, py - radius), min(ph, py + radius + 1)):
+            for x in range(max(0, px - radius), min(pw, px + radius + 1)):
+                if (y - py)**2 + (x - px)**2 <= radius**2:
+                    all_pixels.add((y, x))
+
+    # Sum flux (each pixel counted once)
+    total = 0.0
+    for y, x in all_pixels:
+        total += max(patch[y, x] - bg_val, 0.0)
+    return total
+
+
 def measure_intensity(R, cy, cx, core_radius=3, search_radius=10,
                       bg_inner=11, bg_outer=14,
                       core_threshold=25.0, branch_threshold=20.0,
@@ -288,17 +317,23 @@ def measure_intensity(R, cy, cx, core_radius=3, search_radius=10,
 
     branch_ys, branch_xs = np.where(branch_peaks)
 
-    branch_fluxes = []
+    # Filter branches by individual flux, keep brightest
+    valid_branches = []
     for py, px in zip(branch_ys, branch_xs):
         flux = _measure_peak_flux(patch, py, px, bg_val, radius=core_radius)
         if flux >= min_peak_flux:
-            branch_fluxes.append(flux)
+            valid_branches.append((flux, py, px))
 
-    # Keep brightest branches, cap at max
-    branch_fluxes.sort(reverse=True)
-    branch_fluxes = branch_fluxes[:max_branches]
+    valid_branches.sort(reverse=True)
+    valid_branches = valid_branches[:max_branches]
 
-    total_flux = core_flux + sum(branch_fluxes)
+    # Combine core + branches, measure without double-counting pixels
+    all_peaks = [(center_y, center_x)]
+    for _, py, px in valid_branches:
+        all_peaks.append((py, px))
+
+    total_flux = _measure_peaks_no_overlap(patch, all_peaks, bg_val,
+                                           radius=core_radius)
     return total_flux, bg_val, total_flux
 
 
