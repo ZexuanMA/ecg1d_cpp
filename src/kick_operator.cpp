@@ -229,7 +229,7 @@ std::vector<BasisParams> augment_basis_with_momentum(
     std::vector<BasisParams> augmented = basis;
 
     // Candidate momentum functions: various widths × various momenta
-    std::vector<double> widths = {0.2, 0.4, 0.8, 1.5, 3.0, 6.0};
+    std::vector<double> widths = {0.15, 0.3, 0.5, 0.8, 1.2, 2.0, 3.5, 6.0, 10.0};
     std::vector<BasisParams> candidates;
 
     for (double w : widths) {
@@ -258,7 +258,7 @@ std::vector<BasisParams> augment_basis_with_momentum(
 
     // Greedy selection: add candidates one-by-one, checking S condition number.
     // Only keep those that don't make S too ill-conditioned.
-    double max_cond = 1e6;  // conservative threshold
+    double max_cond = 1e6;  // keep S well-conditioned for accurate kick projection
     PermutationSet perms = PermutationSet::generate(N);
 
     int added = 0;

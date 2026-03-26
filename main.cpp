@@ -605,7 +605,7 @@ static void run_kicked_gamma0_test() {
     std::cout << "\n=== Kicked Dynamics: N=2, gamma=0 (ECG+TDVP) ===" << std::endl;
 
     int N = 2;
-    int K_max = 5;     // ground state basis (keep small)
+    int K_max = 5;     // ground state basis (small to avoid S ill-conditioning)
     int n_kicks = 50;
     int n_mom = 2;     // momentum harmonics: ±1, ±2
     double b_val = 0.3; // B value for momentum basis functions
