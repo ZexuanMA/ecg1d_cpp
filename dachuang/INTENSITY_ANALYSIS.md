@@ -201,18 +201,7 @@
 
 **重要发现**：两张图的梯度方向一致（左暗右亮），证实这是**光学系统的固有特征**（如激发光光路不均匀、光纤耦合偏心等），而非随机噪声。
 
-### 8.5 子区域网格叠加图
-
-![0μg/L 子区域网格叠加](_subregion_grid_0ugL.png)
-![20μg/L 子区域网格叠加](_subregion_grid_20ugL.png)
-
-这两张图在原始图像上叠加了黄色网格线（子区域边界），并标注了每个子区域的编号和 well 数量。可以看到：
-
-- 每个子区域大小大致相同（~1500 wells）
-- 切分后每块都有足够的统计量进行分布对比
-- 网格线与 well 行对齐良好，没有切割到行边缘造成的偏差
-
-### 8.6 诊断结论
+### 8.5 诊断结论
 
 **根本原因是照明不均匀 (illumination non-uniformity)，不是检测或分类算法的逻辑错误。**
 
@@ -226,7 +215,7 @@
 - 左侧区域：激发光弱 → well 信号系统性偏低 → 大量亮 well 被全局阈值误判为 "淬灭"
 - 右侧区域：激发光强 → 同样的 well 信号偏高 → 被正确或偏高地分类
 
-### 8.7 修正方向
+### 8.6 修正方向
 
 要消除照明不均匀的影响，可以考虑以下两个方向：
 
@@ -268,8 +257,8 @@
 | `_subregion_dist_20ugL.png` | 20μg/L 子区域分布柱状图（2×4 网格） |
 | `_subregion_heatmap_0ugL.png` | 0μg/L 各类别比例热力图 |
 | `_subregion_heatmap_20ugL.png` | 20μg/L 各类别比例热力图 |
-| `_subregion_grid_0ugL.png` | 0μg/L 子区域网格叠加图 |
-| `_subregion_grid_20ugL.png` | 20μg/L 子区域网格叠加图 |
+| `_adhesion_detection.png` | 粘连检测总览（簇大小分布、强度对比、示例） |
+| `_adhesion_crop_detail.png` | 粘连检测裁剪细节（连通域 + 合并标注） |
 | `distributions_bar.png` | 5 档分布柱状图 |
 | `stochastic_dominance.png` | 随机占优验证图 |
 | `INTENSITY_ANALYSIS.md` | 本文档 |
