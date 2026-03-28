@@ -573,8 +573,9 @@ def main():
         keep = res['keep']
         net = res['meas'][:, 2] if len(res['meas']) > 0 else np.array([])
 
+        os.makedirs(os.path.join(DIR, "figures", "marked"), exist_ok=True)
         save_full_image(R_raw, spots_orig, keep, net, bin_edges,
-                        f"marked_{name}.png")
+                        os.path.join("figures", "marked", f"marked_{name}.png"))
 
     # Charts
     try:
@@ -596,7 +597,8 @@ def main():
         axes[0].set_ylabel("Probability")
         fig.suptitle("Discrete Intensity Distribution (v3)", fontsize=13)
         fig.tight_layout()
-        fig.savefig(os.path.join(DIR, "distributions_bar.png"), dpi=150)
+        os.makedirs(os.path.join(DIR, "figures", "distribution"), exist_ok=True)
+        fig.savefig(os.path.join(DIR, "figures", "distribution", "distributions_bar.png"), dpi=150)
         plt.close()
         print("  Saved distributions_bar.png")
 
@@ -614,7 +616,7 @@ def main():
         ax.set_title("Stochastic Dominance Verification")
         ax.legend()
         fig.tight_layout()
-        fig.savefig(os.path.join(DIR, "stochastic_dominance.png"), dpi=150)
+        fig.savefig(os.path.join(DIR, "figures", "distribution", "stochastic_dominance.png"), dpi=150)
         plt.close()
         print("  Saved stochastic_dominance.png")
     except ImportError:

@@ -70,9 +70,8 @@ def analyze_subregions(name, n_rows_grid=2, n_cols_grid=4):
     # Compute distribution per region using SAME bin edges
     # Use percentile-based bins from the full image
     all_net = meas[:, 2]
-    p5 = np.percentile(all_net, 5)
-    p10 = np.percentile(all_net, 10)
-    quench = max(abs(p5), abs(p10), 5.0)
+    nonzero = all_net[all_net > 0]
+    quench = np.percentile(nonzero, 25) if len(nonzero) >= 20 else 500.0
     bright = all_net[all_net > quench]
     p90 = np.percentile(bright, 90) if len(bright) >= 20 else quench + 50
     r = p90 - quench
@@ -171,40 +170,12 @@ def plot_results(name, region_data, R_raw, R, spots, meas, coords,
     fig.suptitle(f"{name}: Subregion Intensity Distributions "
                  f"({n_rows_grid}x{n_cols_grid})", fontsize=14)
     fig.tight_layout()
-    outpath = os.path.join(DIR, f"_subregion_dist_{name}.png")
+    outpath = os.path.join(DIR, "figures", "subregion", f"dist_{name}.png")
     fig.savefig(outpath, dpi=150)
     plt.close()
     print(f"  Saved {outpath}")
 
-    # --- Figure 2: Overlay on image showing sub-region boundaries ---
-    H, W = R.shape
-    vmin, vmax = R.min(), R.max()
-    norm = ((R - vmin) / max(vmax - vmin, 1) * 220).astype(np.uint8)
-    rgb = np.stack([norm, norm // 4, norm // 6], axis=2)
-    img = Image.fromarray(rgb)
-    draw = ImageDraw.Draw(img)
-
-    # Draw sub-region grid lines
-    for ye in y_edges[1:-1]:
-        draw.line([(0, int(ye)), (W - 1, int(ye))], fill=(255, 255, 0), width=2)
-    for xe in x_edges[1:-1]:
-        draw.line([(int(xe), 0), (int(xe), H - 1)], fill=(255, 255, 0), width=2)
-
-    # Label each region with spot count
-    for rid in range(n_regions):
-        ry = rid // n_cols_grid
-        rx = rid % n_cols_grid
-        cy = (y_edges[ry] + y_edges[ry + 1]) / 2
-        cx = (x_edges[rx] + x_edges[rx + 1]) / 2
-        rd = region_data[rid]
-        text = f"{rd['label']}\nn={rd['n_spots']}"
-        draw.text((int(cx) - 30, int(cy) - 15), text, fill=(255, 255, 0))
-
-    outpath2 = os.path.join(DIR, f"_subregion_grid_{name}.png")
-    img.save(outpath2)
-    print(f"  Saved {outpath2}")
-
-    # --- Figure 3: Heatmap of quenched fraction per region ---
+    # --- Figure 2: Heatmap of quenched fraction per region ---
     fig, axes = plt.subplots(1, n_levels, figsize=(3.5 * n_levels, 3))
     for k in range(n_levels):
         ax = axes[k]
@@ -226,7 +197,7 @@ def plot_results(name, region_data, R_raw, R, spots, meas, coords,
 
     fig.suptitle(f"{name}: Fraction heatmap per subregion", fontsize=13)
     fig.tight_layout()
-    outpath3 = os.path.join(DIR, f"_subregion_heatmap_{name}.png")
+    outpath3 = os.path.join(DIR, "figures", "subregion", f"heatmap_{name}.png")
     fig.savefig(outpath3, dpi=150)
     plt.close()
     print(f"  Saved {outpath3}")
