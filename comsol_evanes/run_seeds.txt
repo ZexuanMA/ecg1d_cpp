@@ -1,0 +1,14 @@
+# 终端 1 (seed=1)
+cd comsol_evanes; for THETA in $(seq 45 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 1 --no-mph $THETA 1.0 $CASE; done; done; for THETA in $(seq 66 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 1 --no-mph $THETA 1.33 $CASE; done; done
+
+# 终端 2 (seed=7)
+cd comsol_evanes; for THETA in $(seq 45 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 7 --no-mph $THETA 1.0 $CASE; done; done; for THETA in $(seq 66 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 7 --no-mph $THETA 1.33 $CASE; done; done
+
+# 终端 3 (seed=13)
+cd comsol_evanes; for THETA in $(seq 45 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 13 --no-mph $THETA 1.0 $CASE; done; done; for THETA in $(seq 66 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 13 --no-mph $THETA 1.33 $CASE; done; done
+
+# 终端 4 (seed=29)
+cd comsol_evanes; for THETA in $(seq 45 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 29 --no-mph $THETA 1.0 $CASE; done; done; for THETA in $(seq 66 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 29 --no-mph $THETA 1.33 $CASE; done; done
+
+# 终端 5 (seed=53)
+cd comsol_evanes; for THETA in $(seq 45 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 53 --no-mph $THETA 1.0 $CASE; done; done; for THETA in $(seq 66 84); do for CASE in low med high; do python3 evanescent_sim.py --seed 53 --no-mph $THETA 1.33 $CASE; done; done
