@@ -25,7 +25,8 @@ MatrixXcd build_kick_matrix(const std::vector<BasisParams>& basis,
 double apply_analytic_kick(std::vector<BasisParams>& basis,
                            const PermutationSet& perms,
                            double kappa, double k_L,
-                           int n_bessel = 20);
+                           int n_bessel = 20,
+                           bool print_diag = true);
 
 // Free evolution with fixed basis: solve i S du/dt = H u exactly.
 // Uses eigendecomposition: u(t) = V exp(-i D t) V^{-1} u(0)
