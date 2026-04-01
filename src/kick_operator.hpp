@@ -20,11 +20,12 @@ MatrixXcd build_kick_matrix(const std::vector<BasisParams>& basis,
 //   |psi'> = e^{-i*kappa*V_kick} |psi>
 // This updates the linear coefficients u via: u' = S^{-1} K u
 // where K is the kick matrix and S is the overlap matrix.
-// Returns the new u coefficients (basis functions unchanged).
-void apply_analytic_kick(std::vector<BasisParams>& basis,
-                         const PermutationSet& perms,
-                         double kappa, double k_L,
-                         int n_bessel = 20);
+// Updates u in-place and returns the kick fidelity (norm_after/norm_before).
+// Fidelity = 1.0 means perfect (unitary), >1 means basis can't represent kicked state.
+double apply_analytic_kick(std::vector<BasisParams>& basis,
+                           const PermutationSet& perms,
+                           double kappa, double k_L,
+                           int n_bessel = 20);
 
 // Free evolution with fixed basis: solve i S du/dt = H u exactly.
 // Uses eigendecomposition: u(t) = V exp(-i D t) V^{-1} u(0)
@@ -41,6 +42,7 @@ void free_evolve_fixed_basis(std::vector<BasisParams>& basis,
 // Returns the augmented basis (original + momentum copies).
 std::vector<BasisParams> augment_basis_with_momentum(
     const std::vector<BasisParams>& basis,
-    double k_L, int n_mom = 2, double b_val = 0.5);
+    double k_L, int n_mom = 2, double b_val = 0.5,
+    double max_cond = 1e6);
 
 } // namespace ecg1d

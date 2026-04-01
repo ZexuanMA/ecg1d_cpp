@@ -600,15 +600,15 @@ static void run_kicked_evolution_test() {
     }
 }
 
-// N=2, gamma=0 kicked dynamics: ECG+TDVP vs exact finite-difference
-static void run_kicked_gamma0_test() {
-    std::cout << "\n=== Kicked Dynamics: N=2, gamma=0 (ECG+TDVP) ===" << std::endl;
+// N=2, gamma=0 kicked dynamics: ECG fixed-basis evolution vs exact finite-difference
+static void run_kicked_gamma0_test(int n_kicks = 50,
+                                   int n_mom = 4,
+                                   double max_cond = 1e10) {
+    std::cout << "\n=== Kicked Dynamics: N=2, gamma=0 (ECG fixed basis) ===" << std::endl;
 
     int N = 2;
-    int K_max = 5;     // ground state basis (small to avoid S ill-conditioning)
-    int n_kicks = 50;
-    int n_mom = 2;     // momentum harmonics: ±1, ±2
-    double b_val = 0.3; // B value for momentum basis functions
+    int K_max = 10;    // ground state basis
+    double b_val = 0.5; // B value for momentum basis functions
 
     // Free Hamiltonian: kinetic + harmonic only (no interaction)
     HamiltonianTerms terms_free;
@@ -621,7 +621,7 @@ static void run_kicked_gamma0_test() {
     // --- Phase 1: SVM basis construction (static mode: B=0, R=0) ---
     std::cout << "\n--- Phase 1: SVM basis (B=0, R=0) ---" << std::endl;
     double E_lower = N * 0.5;  // harmonic ground state
-    auto svm = svm_build_basis(N, K_max, 5000, terms_free, 42, E_lower);
+    auto svm = svm_build_basis(N, K_max, 8000, terms_free, 42, E_lower);
     double E_svm = lowest_energy(svm.H, svm.S);
     std::cout << "SVM ground state E = " << std::setprecision(10) << E_svm
               << "  (exact = " << N * 0.5 << ")" << std::endl;
@@ -654,7 +654,7 @@ static void run_kicked_gamma0_test() {
 
     // Augment basis with momentum-carrying functions
     std::cout << "\n--- Phase 2.5: Augmenting basis with momentum harmonics ---" << std::endl;
-    auto aug_basis = augment_basis_with_momentum(refined.basis, k_L_val, n_mom, b_val);
+    auto aug_basis = augment_basis_with_momentum(refined.basis, k_L_val, n_mom, b_val, max_cond);
 
     // Build H and S for augmented basis
     auto [H_aug, S_aug] = build_HS(aug_basis, perms, terms_free);
@@ -686,6 +686,7 @@ static void run_kicked_gamma0_test() {
     // Collect observables
     struct Obs { double time, energy, kinetic, norm; };
     std::vector<Obs> obs;
+    std::vector<double> kick_fidelities;
 
     // Record initial state
     {
@@ -701,7 +702,8 @@ static void run_kicked_gamma0_test() {
     double current_time = 0.0;
     for (int n = 0; n < n_kicks; n++) {
         // 1. Apply analytic kick (instantaneous, exact projection onto basis)
-        apply_analytic_kick(aug_basis, perms, kappa_val, k_L_val);
+        double fid = apply_analytic_kick(aug_basis, perms, kappa_val, k_L_val);
+        kick_fidelities.push_back(fid);
 
         // 2. Free evolution: exact propagation in fixed augmented basis
         free_evolve_fixed_basis(aug_basis, H_aug, S_aug, T_period);
@@ -734,11 +736,13 @@ static void run_kicked_gamma0_test() {
               << std::setw(14) << "rel_error"
               << std::setw(12) << "norm" << std::endl;
 
+    double max_rel_err = 0.0;
     for (int n = 0; n <= n_kicks; n++) {
         double E_ecg = obs[n].energy;
         double E_ex = 2.0 * exact.kick_energies[n];
         double err = E_ecg - E_ex;
         double rel = std::abs(err) / std::abs(E_ex);
+        if (rel > max_rel_err) max_rel_err = rel;
         std::cout << std::setw(6) << n
                   << std::setw(14) << std::setprecision(8) << E_ecg
                   << std::setw(14) << std::setprecision(8) << E_ex
@@ -747,6 +751,34 @@ static void run_kicked_gamma0_test() {
                   << std::setw(12) << std::fixed << std::setprecision(6) << obs[n].norm
                   << std::defaultfloat << std::endl;
     }
+
+    // --- Kick fidelity summary ---
+    std::cout << "\n--- Kick Fidelity Summary ---" << std::endl;
+    double max_fid = 0.0, min_fid = 1e30, sum_fid = 0.0;
+    for (double fid : kick_fidelities) {
+        if (fid > max_fid) max_fid = fid;
+        if (fid < min_fid) min_fid = fid;
+        sum_fid += fid;
+    }
+    double mean_fid = sum_fid / static_cast<double>(kick_fidelities.size());
+    std::cout << "  norm ratio (per kick): min=" << std::setprecision(6) << min_fid
+              << ", max=" << max_fid
+              << ", mean=" << mean_fid << std::endl;
+    std::cout << "  max energy rel_error=" << std::scientific << max_rel_err
+              << std::defaultfloat << std::endl;
+
+    double E_ecg_final = obs[n_kicks].energy;
+    double E_ex_final = 2.0 * exact.kick_energies[n_kicks];
+    double rel_final = std::abs(E_ecg_final - E_ex_final) / std::abs(E_ex_final);
+    std::cout << "  kick " << n_kicks << " energy: ECG=" << std::setprecision(8) << E_ecg_final
+              << ", exact=" << E_ex_final
+              << ", rel_error=" << std::scientific << rel_final
+              << std::defaultfloat << std::endl;
+    std::cout << "  RESULT: fidelity " << (max_fid < 1.05 ? "PASS" : "FAIL")
+              << " (max=" << std::setprecision(4) << max_fid << " vs threshold 1.05)"
+              << ", energy " << (rel_final < 0.10 ? "PASS" : "FAIL")
+              << " (rel=" << std::scientific << rel_final << " vs threshold 0.10)"
+              << std::defaultfloat << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -786,6 +818,18 @@ int main(int argc, char* argv[]) {
     bool run_kicked = false;
     bool run_kicked_exact = false;
     bool run_kicked_gamma0 = false;
+    int kicked_n_kicks = 50;
+    int kicked_n_mom = 4;
+    double kicked_max_cond = 1e10;
+
+    auto require_value = [&](int& i, const char* opt) -> std::string {
+        if (i + 1 >= argc) {
+            std::cerr << "Missing value after " << opt << std::endl;
+            std::exit(1);
+        }
+        return std::string(argv[++i]);
+    };
+
     for (int i = 1; i < argc; i++) {
         if (std::string(argv[i]) == "--tdvp") run_tdvp = true;
         if (std::string(argv[i]) == "--tdvp-only") tdvp_only = true;
@@ -795,7 +839,30 @@ int main(int argc, char* argv[]) {
         if (std::string(argv[i]) == "--kicked") run_kicked = true;
         if (std::string(argv[i]) == "--kicked-exact") run_kicked_exact = true;
         if (std::string(argv[i]) == "--kicked-gamma0") run_kicked_gamma0 = true;
+        if (std::string(argv[i]) == "--n-kicks") {
+            kicked_n_kicks = std::stoi(require_value(i, "--n-kicks"));
+        }
+        if (std::string(argv[i]) == "--n-mom") {
+            kicked_n_mom = std::stoi(require_value(i, "--n-mom"));
+        }
+        if (std::string(argv[i]) == "--max-cond") {
+            kicked_max_cond = std::stod(require_value(i, "--max-cond"));
+        }
     }
+
+    if (kicked_n_kicks <= 0) {
+        std::cerr << "--n-kicks must be positive" << std::endl;
+        return 1;
+    }
+    if (kicked_n_mom <= 0) {
+        std::cerr << "--n-mom must be positive" << std::endl;
+        return 1;
+    }
+    if (kicked_max_cond <= 0.0) {
+        std::cerr << "--max-cond must be positive" << std::endl;
+        return 1;
+    }
+
     if (run_tdvp || tdvp_only) {
         run_phase3_tdvp();
     }
@@ -812,10 +879,10 @@ int main(int argc, char* argv[]) {
         run_kicked_evolution_test();
     }
     if (run_kicked_exact) {
-        run_kicked_exact_test(50);
+        run_kicked_exact_test(kicked_n_kicks);
     }
     if (run_kicked_gamma0) {
-        run_kicked_gamma0_test();
+        run_kicked_gamma0_test(kicked_n_kicks, kicked_n_mom, kicked_max_cond);
     }
 
     return 0;

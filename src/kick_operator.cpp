@@ -83,10 +83,10 @@ MatrixXcd build_kick_matrix(const std::vector<BasisParams>& basis,
     return Kick;
 }
 
-void apply_analytic_kick(std::vector<BasisParams>& basis,
-                         const PermutationSet& perms,
-                         double kappa, double k_L,
-                         int n_bessel) {
+double apply_analytic_kick(std::vector<BasisParams>& basis,
+                           const PermutationSet& perms,
+                           double kappa, double k_L,
+                           int n_bessel) {
     int K = static_cast<int>(basis.size());
 
     // Build kick matrix and overlap matrix
@@ -124,13 +124,12 @@ void apply_analytic_kick(std::vector<BasisParams>& basis,
     Cd norm_after = (u_new.adjoint() * S * u_new)(0);
 
     // Check unitarity: kick should preserve norm
-    // |<ψ'|ψ'>| should equal |<ψ|ψ>| since U is unitary
-    std::cout << "  [kick] norm before=" << std::setprecision(6) << norm_before.real()
-              << ", norm after=" << norm_after.real()
-              << ", ratio=" << norm_after.real() / norm_before.real()
-              << ", |u|=" << u.norm() << " -> " << u_new.norm()
-              << ", S cond=" << std::scientific
-              << svd.singularValues()(0) / svd.singularValues()(K-1)
+    double fidelity = norm_after.real() / norm_before.real();
+    double s_cond = svd.singularValues()(0) / svd.singularValues()(K-1);
+    const char* status = (std::abs(fidelity - 1.0) < 0.05) ? "PASS" : "FAIL";
+    std::cout << "  [kick] fidelity=" << std::setprecision(6) << fidelity
+              << " (" << status << ")"
+              << ", S_cond=" << std::scientific << s_cond
               << std::defaultfloat << std::endl;
 
     // Renormalize u so that u'†S u' = u†S u (preserve norm)
@@ -145,6 +144,8 @@ void apply_analytic_kick(std::vector<BasisParams>& basis,
     for (int i = 0; i < K; i++) {
         basis[i].u = u_new(i);
     }
+
+    return fidelity;
 }
 
 void free_evolve_fixed_basis(std::vector<BasisParams>& basis,
@@ -223,42 +224,92 @@ void free_evolve_fixed_basis(std::vector<BasisParams>& basis,
 
 std::vector<BasisParams> augment_basis_with_momentum(
     const std::vector<BasisParams>& basis,
-    double k_L, int n_mom, double b_val) {
+    double k_L, int n_mom, double b_val,
+    double max_cond) {
 
     int N = basis[0].N();
     std::vector<BasisParams> augmented = basis;
 
-    // Candidate momentum functions: various widths × various momenta
-    std::vector<double> widths = {0.15, 0.3, 0.5, 0.8, 1.2, 2.0, 3.5, 6.0, 10.0};
+    // Collect width candidates: sparse grid + A diagonal values from ground state basis
+    // Fewer widths = less redundancy = more momentum pairs pass conditioning
+    std::vector<double> widths = {0.3, 0.8, 2.0, 6.0};
+    for (const auto& bp : basis) {
+        for (int a = 0; a < N; a++) {
+            double a_diag = bp.A(a, a).real();
+            if (a_diag > 0.05 && a_diag < 20.0) {
+                // Check not already in list (within 10% tolerance)
+                bool duplicate = false;
+                for (double w : widths) {
+                    if (std::abs(a_diag - w) / w < 0.1) { duplicate = true; break; }
+                }
+                if (!duplicate) widths.push_back(a_diag);
+            }
+        }
+    }
+    std::sort(widths.begin(), widths.end());
+
+    // Generate candidate basis functions with all unordered momentum pairs.
+    // For N=2: pairs (m1, m2) with m1 <= m2, skipping (0,0).
+    // For N=1: just single momentum index m, skipping m=0.
     std::vector<BasisParams> candidates;
 
-    for (double w : widths) {
-        for (int n = -n_mom; n <= n_mom; n++) {
-            if (n == 0) continue;
-
-            MatrixXcd A_new = MatrixXcd::Zero(N, N);
-            MatrixXcd B_new = MatrixXcd::Zero(N, N);
-            VectorXcd R_new = VectorXcd::Zero(N);
-
-            for (int a = 0; a < N; a++) {
-                A_new(a, a) = Cd(w, 0.0);
-                B_new(a, a) = Cd(b_val, 0.0);
-                double mom = static_cast<double>(n) * k_L;
-                R_new(a) = Cd(0.0, mom / b_val);
+    if (N == 1) {
+        // Single-particle case: momentum n * 2k_L
+        for (double w : widths) {
+            for (int n = -n_mom; n <= n_mom; n++) {
+                if (n == 0) continue;
+                MatrixXcd A_new = MatrixXcd::Zero(1, 1);
+                MatrixXcd B_new = MatrixXcd::Zero(1, 1);
+                VectorXcd R_new = VectorXcd::Zero(1);
+                A_new(0, 0) = Cd(w, 0.0);
+                B_new(0, 0) = Cd(b_val, 0.0);
+                R_new(0) = Cd(0.0, static_cast<double>(n) * k_L / b_val);
+                candidates.push_back(BasisParams::from_arrays(
+                    Cd(0.0, 0.0), A_new, B_new, R_new, 1000 * n));
             }
-            if (N >= 2) {
-                A_new(0, 1) = Cd(0.1 * w, 0.0);
-                A_new(1, 0) = Cd(0.1 * w, 0.0);
-            }
+        }
+    } else {
+        // N >= 2: generate all unordered momentum pairs (m1, m2) with m1 <= m2.
+        // Each particle independently gets momentum mi * 2k_L.
+        // Skip (0,0) since that's covered by the ground state basis.
+        for (double w : widths) {
+            for (int m1 = -n_mom; m1 <= n_mom; m1++) {
+                for (int m2 = m1; m2 <= n_mom; m2++) {
+                    if (m1 == 0 && m2 == 0) continue;
 
-            candidates.push_back(BasisParams::from_arrays(
-                Cd(0.0, 0.0), A_new, B_new, R_new, 1000 * n));
+                    MatrixXcd A_new = MatrixXcd::Zero(N, N);
+                    MatrixXcd B_new = MatrixXcd::Zero(N, N);
+                    VectorXcd R_new = VectorXcd::Zero(N);
+
+                    for (int a = 0; a < N; a++) {
+                        A_new(a, a) = Cd(w, 0.0);
+                        B_new(a, a) = Cd(b_val, 0.0);
+                    }
+                    // Small off-diagonal coupling (10% of diagonal)
+                    if (N >= 2) {
+                        A_new(0, 1) = Cd(0.1 * w, 0.0);
+                        A_new(1, 0) = Cd(0.1 * w, 0.0);
+                    }
+
+                    // Particle 0 gets momentum m1 * k_L, particle 1 gets momentum m2 * k_L
+                    R_new(0) = Cd(0.0, static_cast<double>(m1) * k_L / b_val);
+                    R_new(1) = Cd(0.0, static_cast<double>(m2) * k_L / b_val);
+                    // Higher particles (N>2) get zero momentum
+                    // (extend this for N>2 if needed)
+
+                    int label = 1000 * m1 + m2;
+                    candidates.push_back(BasisParams::from_arrays(
+                        Cd(0.0, 0.0), A_new, B_new, R_new, label));
+                }
+            }
         }
     }
 
+    std::cout << "  Candidate pool: " << candidates.size()
+              << " (" << widths.size() << " widths × momentum pairs)" << std::endl;
+
     // Greedy selection: add candidates one-by-one, checking S condition number.
     // Only keep those that don't make S too ill-conditioned.
-    double max_cond = 1e6;  // keep S well-conditioned for accurate kick projection
     PermutationSet perms = PermutationSet::generate(N);
 
     int added = 0;
