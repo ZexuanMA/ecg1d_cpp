@@ -39,3 +39,25 @@ add_executable(ecg1d
 target_include_directories(ecg1d PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(ecg1d PRIVATE Eigen3::Eigen)
 target_compile_options(ecg1d PRIVATE -O2 -march=native)
+
+# Step B test: orthogonalized subspace prototype
+add_executable(stepb_test
+    stepb_test.cpp
+    src/basis_params.cpp
+    src/permutation.cpp
+    src/pair_cache.cpp
+    src/interaction_kernels.cpp
+    src/hamiltonian.cpp
+    src/derivatives.cpp
+    src/observable_derivatives.cpp
+    src/hamiltonian_gradient.cpp
+    src/tdvp_solver.cpp
+    src/svm.cpp
+    src/kicked_evolution.cpp
+    src/kicked_exact.cpp
+    src/kick_operator.cpp
+    src/observables.cpp
+)
+target_include_directories(stepb_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(stepb_test PRIVATE Eigen3::Eigen)
+target_compile_options(stepb_test PRIVATE -O2 -march=native)

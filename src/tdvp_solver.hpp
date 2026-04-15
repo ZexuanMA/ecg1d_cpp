@@ -20,9 +20,10 @@ struct HamiltonianTerms {
     bool delta    = true;
     bool gaussian = true;
     bool kicking  = true;
+    double kicking_scale = 1.0;  // multiplier for kicking potential (1/T_pulse for finite-pulse kicks)
 
-    static HamiltonianTerms all() { return {true, true, true, true, true}; }
-    static HamiltonianTerms kinetic_harmonic() { return {true, true, false, false, false}; }
+    static HamiltonianTerms all() { return {true, true, true, true, true, 1.0}; }
+    static HamiltonianTerms kinetic_harmonic() { return {true, true, false, false, false, 1.0}; }
 };
 
 // Solver configuration

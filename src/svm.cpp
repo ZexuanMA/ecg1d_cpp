@@ -49,7 +49,7 @@ std::pair<Cd, Cd> compute_HS_ij(const BasisParams& bi, const BasisParams& bj,
             Cd q_sum(0.0, 0.0);
             for (int a = 0; a < N; a++)
                 q_sum += compute_Q_Mija(c, a);
-            kernel += hbar * kappa * q_sum;
+            kernel += terms.kicking_scale * hbar * kappa * q_sum;
         }
 
         h_ij += sign * c.M_G * kernel;

@@ -70,25 +70,36 @@ RealtimeStepResult realtime_tdvp_step(
     // For imaginary time, u is excluded and re-solved as eigenstate.
     int updata_constant = 0;  // include u in the update
 
-    // --- RK2 Midpoint method (symplectic for oscillatory problems) ---
-    // 1. Compute dz at current point (dz includes du and dA/dB/dR)
+    // --- Classical RK4 method ---
+    // k1 = f(t, y)
     TdvpDiagnostics diag;
-    VectorXcd dz1 = compute_realtime_dz(alpha_z_list, basis, terms, config,
-                                          updata_constant, &diag);
+    VectorXcd k1 = compute_realtime_dz(alpha_z_list, basis, terms, config,
+                                        updata_constant, &diag);
 
-    // 2. Half step to midpoint
-    std::vector<BasisParams> basis_mid = basis;
-    update_basis_function(basis_mid, dz1, dt * 0.5, alpha_z_list, updata_constant);
+    // k2 = f(t + dt/2, y + dt/2 * k1)
+    std::vector<BasisParams> basis_s2 = basis;
+    update_basis_function(basis_s2, k1, dt * 0.5, alpha_z_list, updata_constant);
+    VectorXcd k2 = compute_realtime_dz(alpha_z_list, basis_s2, terms, config,
+                                        updata_constant);
 
-    // 3. Compute dz at midpoint
-    VectorXcd dz2 = compute_realtime_dz(alpha_z_list, basis_mid, terms, config,
-                                          updata_constant);
+    // k3 = f(t + dt/2, y + dt/2 * k2)
+    std::vector<BasisParams> basis_s3 = basis;
+    update_basis_function(basis_s3, k2, dt * 0.5, alpha_z_list, updata_constant);
+    VectorXcd k3 = compute_realtime_dz(alpha_z_list, basis_s3, terms, config,
+                                        updata_constant);
 
-    // 4. Full step from original point using midpoint derivative
+    // k4 = f(t + dt, y + dt * k3)
+    std::vector<BasisParams> basis_s4 = basis;
+    update_basis_function(basis_s4, k3, dt, alpha_z_list, updata_constant);
+    VectorXcd k4 = compute_realtime_dz(alpha_z_list, basis_s4, terms, config,
+                                        updata_constant);
+
+    // y_{n+1} = y_n + (dt/6)(k1 + 2*k2 + 2*k3 + k4)
+    VectorXcd dz_rk4 = (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;
     std::vector<BasisParams> basis_new = basis;
-    update_basis_function(basis_new, dz2, dt, alpha_z_list, updata_constant);
+    update_basis_function(basis_new, dz_rk4, dt, alpha_z_list, updata_constant);
 
-    double norm_dz = dz2.norm();
+    double norm_dz = dz_rk4.norm();
 
     Cd E_new = compute_total_energy(basis_new, terms);
     return {basis_new, E_new, norm_dz, dt, diag};

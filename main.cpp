@@ -8,10 +8,14 @@
 #include "kicked_evolution.hpp"
 #include "kick_operator.hpp"
 #include "observables.hpp"
+#include "physical_constants.hpp"
 #include <iostream>
 #include <iomanip>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <vector>
 #include <string>
 #include <chrono>
@@ -65,6 +69,316 @@ static std::vector<BasisParams> load_basis_from_csv(const std::string& filename,
 
 static void print_complex(const std::string& label, Cd v) {
     std::cout << label << ": " << v.real() << " + " << v.imag() << "i" << std::endl;
+}
+
+class NullBuffer : public std::streambuf {
+protected:
+    int overflow(int c) override { return c; }
+};
+
+class ScopedSilence {
+public:
+    explicit ScopedSilence(bool enabled) : enabled_(enabled) {
+        if (enabled_) {
+            old_ = std::cout.rdbuf(&null_);
+        }
+    }
+
+    ~ScopedSilence() {
+        if (enabled_) {
+            std::cout.rdbuf(old_);
+        }
+    }
+
+private:
+    bool enabled_ = false;
+    NullBuffer null_;
+    std::streambuf* old_ = nullptr;
+};
+
+static VectorXcd collect_u(const std::vector<BasisParams>& basis) {
+    VectorXcd u(static_cast<int>(basis.size()));
+    for (int i = 0; i < u.size(); i++) {
+        u(i) = basis[i].u;
+    }
+    return u;
+}
+
+static MatrixXcd build_cross_overlap_matrix(const std::vector<BasisParams>& left,
+                                            const std::vector<BasisParams>& right,
+                                            const PermutationSet& perms) {
+    HamiltonianTerms terms_none;
+    terms_none.kinetic = false;
+    terms_none.harmonic = false;
+    terms_none.delta = false;
+    terms_none.gaussian = false;
+    terms_none.kicking = false;
+
+    MatrixXcd C = MatrixXcd::Zero(static_cast<int>(left.size()), static_cast<int>(right.size()));
+    for (int i = 0; i < static_cast<int>(left.size()); i++) {
+        for (int j = 0; j < static_cast<int>(right.size()); j++) {
+            auto [h_ij, s_ij] = compute_HS_ij(left[i], right[j], perms, terms_none);
+            (void)h_ij;
+            C(i, j) = s_ij;
+        }
+    }
+    return C;
+}
+
+static double normalized_state_fidelity(const VectorXcd& u_left, const MatrixXcd& S_left,
+                                        const VectorXcd& u_right, const MatrixXcd& S_right,
+                                        const MatrixXcd& cross) {
+    double norm_left = (u_left.adjoint() * S_left * u_left)(0).real();
+    double norm_right = (u_right.adjoint() * S_right * u_right)(0).real();
+    if (norm_left <= 1e-15 || norm_right <= 1e-15) return 0.0;
+
+    Cd ov = (u_left.adjoint() * cross * u_right)(0);
+    return std::norm(ov) / (norm_left * norm_right);
+}
+
+struct StateSummary {
+    double norm = 0.0;
+    double energy = 0.0;
+    double kinetic = 0.0;
+    double harmonic = 0.0;
+    double x2 = 0.0;
+    double p2 = 0.0;
+};
+
+static StateSummary summarize_state(const std::vector<BasisParams>& basis,
+                                    const HamiltonianTerms& terms) {
+    Cd S = overlap(basis);
+    Cd T = kinetic_energy_functional(basis);
+    Cd V = Harmonic_functional(basis);
+
+    StateSummary out;
+    out.norm = S.real();
+    out.energy = compute_total_energy(basis, terms).real();
+    out.kinetic = (T / S).real();
+    out.harmonic = (V / S).real();
+    out.p2 = 2.0 * mass * out.kinetic;
+    out.x2 = (mass * omega * omega > 0.0) ? (2.0 * out.harmonic / (mass * omega * omega)) : 0.0;
+    return out;
+}
+
+struct FirstKickTarget {
+    double energy = 0.0;
+    double x2 = 0.0;
+    double p2 = 0.0;
+};
+
+struct FirstKickDiagnostic {
+    double proj_fidelity = 1.0;
+    double energy = 0.0;
+    double x2 = 0.0;
+    double p2 = 0.0;
+    double dE = 0.0;
+    double dx2 = 0.0;
+    double dp2 = 0.0;
+    double objective = 0.0;
+};
+
+struct RepairCandidate {
+    BasisParams basis;
+    std::string tag;
+};
+
+struct RepairPacket {
+    std::vector<BasisParams> basis;
+    std::string tag;
+};
+
+static double overlap_condition_number(const MatrixXcd& S) {
+    Eigen::SelfAdjointEigenSolver<MatrixXcd> es(S);
+    if (es.info() != Eigen::Success) {
+        return std::numeric_limits<double>::infinity();
+    }
+    double w_min = es.eigenvalues()(0);
+    double w_max = es.eigenvalues()(S.rows() - 1);
+    if (w_min <= 0.0) return std::numeric_limits<double>::infinity();
+    return w_max / w_min;
+}
+
+static FirstKickDiagnostic compute_first_kick_diagnostic(
+    const std::vector<BasisParams>& basis,
+    const PermutationSet& perms,
+    const HamiltonianTerms& terms_free,
+    double kappa_val, double k_L_val,
+    const FirstKickTarget& target) {
+
+    std::vector<BasisParams> kicked = basis;
+    FirstKickDiagnostic diag;
+    diag.proj_fidelity = apply_analytic_kick(kicked, perms, kappa_val, k_L_val, 20, false);
+    StateSummary summary = summarize_state(kicked, terms_free);
+    diag.energy = summary.energy;
+    diag.x2 = summary.x2;
+    diag.p2 = summary.p2;
+    diag.dE = diag.energy - target.energy;
+    diag.dx2 = diag.x2 - target.x2;
+    diag.dp2 = diag.p2 - target.p2;
+    return diag;
+}
+
+static double first_kick_objective(const FirstKickDiagnostic& diag,
+                                   double gs_penalty,
+                                   double cond_ratio) {
+    double rel_E = std::abs(diag.dE) / std::max(std::abs(diag.energy - diag.dE), 1e-12);
+    double rel_x2 = std::abs(diag.dx2);
+    double rel_p2 = std::abs(diag.dp2) / std::max(std::abs(diag.p2 - diag.dp2), 1e-12);
+    double fid_penalty = std::abs(1.0 - diag.proj_fidelity);
+    return rel_E + 3.0 * rel_x2 + rel_p2 + 0.25 * fid_penalty + 5.0 * gs_penalty + 0.05 * cond_ratio;
+}
+
+static std::vector<std::vector<int>> select_repair_momentum_labels(int N, int n_mom,
+                                                                   double kappa_val,
+                                                                   int max_labels) {
+    (void)kappa_val;
+    std::vector<std::vector<int>> result;
+    if (N == 1) {
+        std::vector<int> preferred = {1, -1, 2, -2, 3, -3, 4, -4};
+        for (int n : preferred) {
+            if (std::abs(n) > n_mom) continue;
+            result.push_back({n});
+            if (static_cast<int>(result.size()) >= max_labels) break;
+        }
+    } else {
+        std::vector<std::vector<int>> preferred = {
+            {-1, 0},
+            {0, 1},
+            {-1, 1},
+            {0, 2},
+            {-2, 0},
+            {1, 1},
+            {-2, 1},
+            {-1, 2},
+            {0, -1},
+            {1, 0},
+            {-2, 2},
+            {0, 3},
+            {-3, 0},
+            {1, 2},
+            {-1, 3},
+            {2, 2},
+            {0, 4},
+            {-4, 0},
+            {1, 3},
+            {-3, 1},
+            {2, 3},
+            {-2, 4},
+            {1, 4},
+            {3, 3}
+        };
+        for (const auto& label : preferred) {
+            int max_abs = 0;
+            for (int v : label) max_abs = std::max(max_abs, std::abs(v));
+            if (max_abs > n_mom) continue;
+            result.push_back(label);
+            if (static_cast<int>(result.size()) >= max_labels) break;
+        }
+    }
+    return result;
+}
+
+static RepairCandidate make_first_kick_image_candidate(const BasisParams& base,
+                                                       const std::vector<int>& labels,
+                                                       double k_L, double b_val) {
+    int N = base.N();
+    MatrixXcd A_new = base.A;
+    MatrixXcd B_new = base.B;
+    VectorXcd R_new = base.R;
+
+    for (int a = 0; a < N; a++) {
+        if (labels[a] == 0) continue;
+        Cd delta_b(b_val, 0.0);
+        A_new(a, a) -= delta_b;
+        B_new(a, a) += delta_b;
+        Cd q_a(0.0, 2.0 * static_cast<double>(labels[a]) * k_L);
+        Cd old_linear = 2.0 * base.B(a, a) * base.R(a);
+        R_new(a) = (old_linear + q_a) / (2.0 * B_new(a, a));
+    }
+
+    int name = 100000 * base.name;
+    std::ostringstream tag;
+    tag << "base=" << base.name << ", m=(";
+    for (int a = 0; a < N; a++) {
+        if (a) tag << ",";
+        tag << labels[a];
+        name += static_cast<int>(std::pow(100.0, a)) * (labels[a] + 50);
+    }
+    tag << ")";
+
+    RepairCandidate cand;
+    cand.basis = BasisParams::from_arrays(Cd(0.0, 0.0), A_new, B_new, R_new, name);
+    cand.tag = tag.str();
+    return cand;
+}
+
+static std::vector<RepairCandidate> generate_repair_candidates(const std::vector<BasisParams>& source_basis,
+                                                               double kappa_val, double k_L,
+                                                               double b_val, int n_mom,
+                                                               int max_source_basis = 3,
+                                                               int max_labels = 6) {
+    std::vector<int> order(static_cast<int>(source_basis.size()));
+    for (int i = 0; i < static_cast<int>(source_basis.size()); i++) order[i] = i;
+    std::sort(order.begin(), order.end(),
+              [&](int lhs, int rhs) {
+                  return std::abs(source_basis[lhs].u) > std::abs(source_basis[rhs].u);
+              });
+    if (static_cast<int>(order.size()) > max_source_basis) {
+        order.resize(max_source_basis);
+    }
+
+    std::vector<std::vector<int>> labels = select_repair_momentum_labels(
+        source_basis[0].N(), n_mom, kappa_val, max_labels);
+
+    std::vector<RepairCandidate> candidates;
+    for (int idx : order) {
+        for (const auto& label : labels) {
+            candidates.push_back(make_first_kick_image_candidate(source_basis[idx], label, k_L, b_val));
+        }
+    }
+    return candidates;
+}
+
+static std::vector<RepairPacket> generate_repair_packets(const std::vector<BasisParams>& source_basis,
+                                                         double kappa_val, double k_L,
+                                                         double b_val, int n_mom,
+                                                         int max_source_basis = 6,
+                                                         int max_labels = 20) {
+    std::vector<int> order(static_cast<int>(source_basis.size()));
+    for (int i = 0; i < static_cast<int>(source_basis.size()); i++) order[i] = i;
+    std::sort(order.begin(), order.end(),
+              [&](int lhs, int rhs) {
+                  return std::abs(source_basis[lhs].u) > std::abs(source_basis[rhs].u);
+              });
+    if (static_cast<int>(order.size()) > max_source_basis) {
+        order.resize(max_source_basis);
+    }
+
+    std::vector<std::vector<int>> labels = select_repair_momentum_labels(
+        source_basis[0].N(), n_mom, kappa_val, max_labels);
+
+    std::vector<int> packet_sizes;
+    for (int size : {4, 8, 12, 16}) {
+        if (size <= static_cast<int>(labels.size())) packet_sizes.push_back(size);
+    }
+    if (packet_sizes.empty() && !labels.empty()) packet_sizes.push_back(static_cast<int>(labels.size()));
+
+    std::vector<RepairPacket> packets;
+    for (int idx : order) {
+        for (int packet_size : packet_sizes) {
+            RepairPacket packet;
+            std::ostringstream tag;
+            tag << "base=" << source_basis[idx].name << ", packet=" << packet_size;
+            packet.tag = tag.str();
+            for (int i = 0; i < packet_size; i++) {
+                packet.basis.push_back(
+                    make_first_kick_image_candidate(source_basis[idx], labels[i], k_L, b_val).basis);
+            }
+            packets.push_back(std::move(packet));
+        }
+    }
+    return packets;
 }
 
 static void run_phase1(const std::vector<BasisParams>& basis, int N) {
@@ -609,6 +923,12 @@ static void run_kicked_gamma0_test(int n_kicks = 50,
     int N = 2;
     int K_max = 10;    // ground state basis
     double b_val = 0.5; // B value for momentum basis functions
+    bool quiet_setup = true;
+
+    std::cout << "Params: n_kicks=" << n_kicks
+              << ", n_mom=" << n_mom
+              << ", max_cond=" << std::scientific << max_cond
+              << std::defaultfloat << std::endl;
 
     // Free Hamiltonian: kinetic + harmonic only (no interaction)
     HamiltonianTerms terms_free;
@@ -619,38 +939,54 @@ static void run_kicked_gamma0_test(int n_kicks = 50,
     terms_free.kicking  = false;
 
     // --- Phase 1: SVM basis construction (static mode: B=0, R=0) ---
-    std::cout << "\n--- Phase 1: SVM basis (B=0, R=0) ---" << std::endl;
     double E_lower = N * 0.5;  // harmonic ground state
-    auto svm = svm_build_basis(N, K_max, 8000, terms_free, 42, E_lower);
+    auto svm = [&]() {
+        ScopedSilence silence(quiet_setup);
+        return svm_build_basis(N, K_max, 8000, terms_free, 42, E_lower);
+    }();
     double E_svm = lowest_energy(svm.H, svm.S);
-    std::cout << "SVM ground state E = " << std::setprecision(10) << E_svm
-              << "  (exact = " << N * 0.5 << ")" << std::endl;
 
     // --- Phase 1.5: Refinement ---
     PermutationSet perms = PermutationSet::generate(N);
-    auto refined = stochastic_refine(svm.basis, svm.H, svm.S,
-                                      perms, N, terms_free, 500, 5, 123, E_lower);
+    auto refined = [&]() {
+        ScopedSilence silence(quiet_setup);
+        return stochastic_refine(svm.basis, svm.H, svm.S,
+                                 perms, N, terms_free, 500, 5, 123, E_lower);
+    }();
     set_u_from_eigenvector(refined.basis, refined.H, refined.S);
     double E_ref = lowest_energy(refined.H, refined.S);
-    std::cout << "Refined ground state E = " << std::setprecision(10) << E_ref << std::endl;
 
     // --- Phase 2: Imaginary-time TDVP polish (static mode) ---
     SolverConfig static_config = SolverConfig::defaults();
     int basis_n = static_cast<int>(refined.basis.size());
     auto alpha_z_static = build_alpha_z_list(basis_n, N, static_config);
 
-    std::cout << "\n--- Phase 2: Imaginary-time TDVP polish ---" << std::endl;
-    evolution(alpha_z_static, refined.basis, 1, 50, 1e-10, terms_free, static_config, &perms);
+    {
+        ScopedSilence silence(quiet_setup);
+        evolution(alpha_z_static, refined.basis, 1, 50, 1e-10, terms_free, static_config, &perms);
+    }
 
     auto [H_check, S_check] = build_HS(refined.basis, perms, terms_free);
-    double E_polished = lowest_energy(H_check, S_check);
-    std::cout << "Polished ground state E = " << std::setprecision(10) << E_polished << std::endl;
+    auto eig_polished = lowest_energy_full(H_check, S_check);
+    set_u_from_eigenvector(refined.basis, H_check, S_check);
+    double E_polished = eig_polished.energy;
+    std::cout << "Ground state: E_svm=" << std::setprecision(10) << E_svm
+              << ", E_refined=" << E_ref
+              << ", E_polished=" << E_polished << std::endl;
+    StateSummary refined_summary = summarize_state(refined.basis, terms_free);
 
     // --- Phase 3: Real-time kicked evolution ---
     // Strategy: augmented basis (ground state + momentum harmonics) + exact propagation
     double T_period = 1.0;
     double kappa_val = 1.0;
     double k_L_val = 0.5;
+    auto exact = kicked_exact_1particle(1.0, 1.0, k_L_val, kappa_val,
+                                         T_period, n_kicks);
+    FirstKickTarget first_target;
+    first_target.energy = 2.0 * exact.kick_energies[1];
+    first_target.x2 = static_cast<double>(N) * hbar / (2.0 * mass * omega);
+    double exact_V1 = 0.5 * mass * omega * omega * first_target.x2;
+    first_target.p2 = 2.0 * mass * (first_target.energy - exact_V1);
 
     // Augment basis with momentum-carrying functions
     std::cout << "\n--- Phase 2.5: Augmenting basis with momentum harmonics ---" << std::endl;
@@ -670,18 +1006,190 @@ static void run_kicked_gamma0_test(int n_kicks = 50,
               << std::defaultfloat << std::endl;
 
     // Set u from ground state eigenvector
+    auto eig_aug = lowest_energy_full(H_aug, S_aug);
     set_u_from_eigenvector(aug_basis, H_aug, S_aug);
-    double E_aug = lowest_energy(H_aug, S_aug);
+    double E_aug = eig_aug.energy;
     std::cout << "Augmented basis: K=" << K_total << ", E=" << std::setprecision(10) << E_aug << std::endl;
 
-    std::cout << "\n--- Phase 3: Real-time kicked evolution (analytic kick + fixed basis) ---" << std::endl;
+    FirstKickDiagnostic first_kick_diag = compute_first_kick_diagnostic(
+        aug_basis, perms, terms_free, kappa_val, k_L_val, first_target);
+    double first_obj = first_kick_objective(
+        first_kick_diag, 0.0, std::min((w_max_aug / std::max(w_min_aug, 1e-30)) / max_cond, 1.0));
+    std::cout << "Baseline first-kick objective = " << std::setprecision(8) << first_obj
+              << "  [dE=" << std::scientific << first_kick_diag.dE
+              << ", dx2=" << first_kick_diag.dx2
+              << ", dp2=" << first_kick_diag.dp2
+              << std::defaultfloat << "]" << std::endl;
+
+    // Scheme A prototype: keep the stable heuristic basis as the backbone, and
+    // try a small number of packet-like repair blocks that approximate a
+    // truncated kick image of important source basis functions.
+    {
+        std::cout << "\n--- First-Kick Packet Search ---" << std::endl;
+        auto repair_packets = generate_repair_packets(
+            refined.basis, kappa_val, k_L_val, b_val, n_mom,
+            /*max_source_basis=*/8, /*max_labels=*/20);
+        std::cout << "  packet count = " << repair_packets.size() << std::endl;
+
+        const int max_packet_accept = 2;
+        const double min_obj_improve = 1e-4;
+        std::vector<char> used(repair_packets.size(), false);
+        VectorXcd refined_u = collect_u(refined.basis);
+
+        for (int round = 0; round < max_packet_accept; round++) {
+            int best_idx = -1;
+            double best_obj = first_obj;
+            double best_cond = std::numeric_limits<double>::infinity();
+            double best_gs_fid = 0.0;
+            FirstKickDiagnostic best_diag;
+            std::vector<BasisParams> best_basis;
+            MatrixXcd best_H, best_S;
+
+            for (int i = 0; i < static_cast<int>(repair_packets.size()); i++) {
+                if (used[i]) continue;
+
+                std::vector<BasisParams> trial_basis = aug_basis;
+                trial_basis.insert(trial_basis.end(),
+                                   repair_packets[i].basis.begin(),
+                                   repair_packets[i].basis.end());
+                auto [H_trial, S_trial] = build_HS(trial_basis, perms, terms_free);
+                int old_size = static_cast<int>(aug_basis.size());
+                bool reject_packet = false;
+                for (int k = old_size; k < static_cast<int>(trial_basis.size()); k++) {
+                    if (has_excessive_overlap(S_trial, k, 0.995)) {
+                        reject_packet = true;
+                        break;
+                    }
+                }
+                if (reject_packet) {
+                    continue;
+                }
+
+                double cond_trial = overlap_condition_number(S_trial);
+                if (!std::isfinite(cond_trial) || cond_trial > max_cond) {
+                    continue;
+                }
+
+                set_u_from_eigenvector(trial_basis, H_trial, S_trial);
+                MatrixXcd cross_trial = build_cross_overlap_matrix(refined.basis, trial_basis, perms);
+                double gs_fid_trial = normalized_state_fidelity(
+                    refined_u, S_check, collect_u(trial_basis), S_trial, cross_trial);
+                FirstKickDiagnostic diag_trial = compute_first_kick_diagnostic(
+                    trial_basis, perms, terms_free, kappa_val, k_L_val, first_target);
+                double obj_trial = first_kick_objective(
+                    diag_trial, std::max(0.0, 1.0 - gs_fid_trial),
+                    std::min(cond_trial / max_cond, 1.0));
+
+                if (obj_trial + min_obj_improve < best_obj) {
+                    best_idx = i;
+                    best_obj = obj_trial;
+                    best_cond = cond_trial;
+                    best_gs_fid = gs_fid_trial;
+                    best_diag = diag_trial;
+                    best_basis = std::move(trial_basis);
+                    best_H = std::move(H_trial);
+                    best_S = std::move(S_trial);
+                }
+            }
+
+            if (best_idx < 0) {
+                std::cout << "  no improving repair packet found after " << round
+                          << " accepted packets" << std::endl;
+                break;
+            }
+
+            used[best_idx] = true;
+            aug_basis = std::move(best_basis);
+            H_aug = std::move(best_H);
+            S_aug = std::move(best_S);
+            first_kick_diag = best_diag;
+            first_obj = best_obj;
+
+            std::cout << "  accept " << repair_packets[best_idx].tag
+                      << "  -> objective=" << std::setprecision(8) << first_obj
+                      << ", cond=" << std::scientific << best_cond
+                      << ", gs_fid=" << std::defaultfloat << best_gs_fid
+                      << ", dE=" << std::scientific << first_kick_diag.dE
+                      << ", dx2=" << first_kick_diag.dx2
+                      << ", dp2=" << first_kick_diag.dp2
+                      << std::defaultfloat << std::endl;
+        }
+
+        Eigen::SelfAdjointEigenSolver<MatrixXcd> es_S_repair(S_aug);
+        K_total = static_cast<int>(aug_basis.size());
+        w_min_aug = es_S_repair.eigenvalues()(0);
+        w_max_aug = es_S_repair.eigenvalues()(K_total - 1);
+        eig_aug = lowest_energy_full(H_aug, S_aug);
+        E_aug = eig_aug.energy;
+        std::cout << "Post-repair basis: K=" << K_total
+                  << ", cond=" << std::scientific << w_max_aug / std::max(w_min_aug, 1e-30)
+                  << std::defaultfloat
+                  << ", E=" << std::setprecision(10) << E_aug
+                  << ", first-kick objective=" << std::setprecision(8) << first_obj
+                  << std::endl;
+    }
+
+    // --- Ground-state consistency checks after augmentation ---
+    MatrixXcd S_cross = build_cross_overlap_matrix(refined.basis, aug_basis, perms);
+    double gs_fidelity = normalized_state_fidelity(
+        collect_u(refined.basis), S_check,
+        collect_u(aug_basis), S_aug,
+        S_cross);
+    StateSummary aug_summary = summarize_state(aug_basis, terms_free);
+
+    std::vector<BasisParams> aug_free_test = aug_basis;
+    double free_test_time = 5.0 * T_period;
+    free_evolve_fixed_basis(aug_free_test, H_aug, S_aug, free_test_time);
+    StateSummary free_test_summary = summarize_state(aug_free_test, terms_free);
+    double free_test_fidelity = normalized_state_fidelity(
+        collect_u(aug_basis), S_aug,
+        collect_u(aug_free_test), S_aug,
+        S_aug);
+
+    std::cout << "\n--- Ground-State Consistency Checks ---" << std::endl;
+    std::cout << "Cross-basis fidelity (refined vs augmented ground state) = "
+              << std::setprecision(10) << gs_fidelity << std::endl;
+    std::cout << "Variance: refined=" << std::scientific << eig_polished.variance
+              << ", augmented=" << eig_aug.variance
+              << std::defaultfloat << std::endl;
+    std::cout << "Refined moments:   E=" << std::setprecision(10) << refined_summary.energy
+              << ", <x^2>=" << refined_summary.x2
+              << ", <p^2>=" << refined_summary.p2 << std::endl;
+    std::cout << "Augmented moments: E=" << aug_summary.energy
+              << ", <x^2>=" << aug_summary.x2
+              << ", <p^2>=" << aug_summary.p2 << std::endl;
+    std::cout << "No-kick free test (" << free_test_time
+              << " periods): fidelity=" << free_test_fidelity
+              << ", dE=" << std::scientific << (free_test_summary.energy - aug_summary.energy)
+              << ", d<x^2>=" << (free_test_summary.x2 - aug_summary.x2)
+              << ", d<p^2>=" << (free_test_summary.p2 - aug_summary.p2)
+              << std::defaultfloat << std::endl;
+
+    std::cout << "\n--- Phase 3: Real-time kicked evolution ---" << std::endl;
     std::cout << "T_period=" << T_period
-              << ", n_kicks=" << n_kicks
               << ", kappa=" << kappa_val
               << ", k_L=" << k_L_val
               << ", K=" << K_total
-              << " (augmented fixed basis, exact propagation)"
               << std::endl;
+
+    if (n_kicks >= 1) {
+        std::cout << "\n--- First Kick Instantaneous Diagnostic ---" << std::endl;
+        std::cout << "Projection fidelity = " << std::setprecision(10) << first_kick_diag.proj_fidelity
+                  << "  (|1-fid|=" << std::scientific << std::abs(1.0 - first_kick_diag.proj_fidelity)
+                  << std::defaultfloat << ")" << std::endl;
+        std::cout << "E after kick:    ECG=" << std::setprecision(10) << first_kick_diag.energy
+                  << ", exact=" << first_target.energy
+                  << ", dE=" << std::scientific << first_kick_diag.dE
+                  << std::defaultfloat << std::endl;
+        std::cout << "<x^2> after kick: ECG=" << std::setprecision(10) << first_kick_diag.x2
+                  << ", exact=" << first_target.x2
+                  << ", dx2=" << std::scientific << first_kick_diag.dx2
+                  << std::defaultfloat << std::endl;
+        std::cout << "<p^2> after kick: ECG=" << std::setprecision(10) << first_kick_diag.p2
+                  << ", exact=" << first_target.p2
+                  << ", dp2=" << std::scientific << first_kick_diag.dp2
+                  << std::defaultfloat << std::endl;
+    }
 
     // Collect observables
     struct Obs { double time, energy, kinetic, norm; };
@@ -695,14 +1203,18 @@ static void run_kicked_gamma0_test(int n_kicks = 50,
         Cd T = kinetic_energy_functional(aug_basis);
         double norm = S_val.real();
         obs.push_back({0.0, E.real(), (T/S_val).real(), norm});
-        std::cout << "Kick  0: t=0, E=" << std::setprecision(8) << E.real()
-                  << ", T=" << (T/S_val).real() << ", norm=" << std::setprecision(6) << norm << std::endl;
+        double E_ex = 2.0 * exact.kick_energies[0];
+        double rel = std::abs(E.real() - E_ex) / std::abs(E_ex);
+        std::cout << "Kick  0: E_ECG=" << std::setprecision(8) << E.real()
+                  << ", E_exact=" << E_ex
+                  << ", rel_error=" << std::scientific << rel
+                  << std::defaultfloat << std::endl;
     }
 
     double current_time = 0.0;
     for (int n = 0; n < n_kicks; n++) {
         // 1. Apply analytic kick (instantaneous, exact projection onto basis)
-        double fid = apply_analytic_kick(aug_basis, perms, kappa_val, k_L_val);
+        double fid = apply_analytic_kick(aug_basis, perms, kappa_val, k_L_val, 20, false);
         kick_fidelities.push_back(fid);
 
         // 2. Free evolution: exact propagation in fixed augmented basis
@@ -715,26 +1227,17 @@ static void run_kicked_gamma0_test(int n_kicks = 50,
         Cd T = kinetic_energy_functional(aug_basis);
         double norm = S_val.real();
         obs.push_back({current_time, E.real(), (T/S_val).real(), norm});
+        double E_ex = 2.0 * exact.kick_energies[n + 1];
+        double rel = std::abs(E.real() - E_ex) / std::abs(E_ex);
+        const char* status = (std::abs(fid - 1.0) < 0.05) ? "PASS" : "FAIL";
         std::cout << "Kick " << std::setw(2) << (n+1)
-                  << ": t=" << std::setprecision(4) << current_time
-                  << ", E=" << std::setprecision(8) << E.real()
-                  << ", T=" << std::setprecision(8) << (T/S_val).real()
-                  << ", norm=" << std::setprecision(6) << norm << std::endl;
+                  << ": fidelity=" << std::setprecision(6) << fid
+                  << " (" << status << ")"
+                  << ", E_ECG=" << std::setprecision(8) << E.real()
+                  << ", E_exact=" << E_ex
+                  << ", rel_error=" << std::scientific << rel
+                  << std::defaultfloat << std::endl;
     }
-
-    // --- Also run exact for comparison ---
-    std::cout << "\n--- Exact reference (finite difference) ---" << std::endl;
-    auto exact = kicked_exact_1particle(1.0, 1.0, k_L_val, kappa_val,
-                                         T_period, n_kicks);
-
-    // --- Comparison table ---
-    std::cout << "\n--- Comparison: ECG vs Exact ---" << std::endl;
-    std::cout << std::setw(6) << "kick"
-              << std::setw(14) << "E_ECG"
-              << std::setw(14) << "E_exact"
-              << std::setw(14) << "error"
-              << std::setw(14) << "rel_error"
-              << std::setw(12) << "norm" << std::endl;
 
     double max_rel_err = 0.0;
     for (int n = 0; n <= n_kicks; n++) {
@@ -743,13 +1246,6 @@ static void run_kicked_gamma0_test(int n_kicks = 50,
         double err = E_ecg - E_ex;
         double rel = std::abs(err) / std::abs(E_ex);
         if (rel > max_rel_err) max_rel_err = rel;
-        std::cout << std::setw(6) << n
-                  << std::setw(14) << std::setprecision(8) << E_ecg
-                  << std::setw(14) << std::setprecision(8) << E_ex
-                  << std::setw(14) << std::scientific << err
-                  << std::setw(14) << rel
-                  << std::setw(12) << std::fixed << std::setprecision(6) << obs[n].norm
-                  << std::defaultfloat << std::endl;
     }
 
     // --- Kick fidelity summary ---
@@ -781,33 +1277,210 @@ static void run_kicked_gamma0_test(int n_kicks = 50,
               << std::defaultfloat << std::endl;
 }
 
-int main(int argc, char* argv[]) {
-    std::cout << std::setprecision(18);
+// TDVP kick convergence test: compare TDVP finite-pulse kicks with exact solution.
+// As T_pulse → 0, the TDVP-kicked energy should converge to the exact instantaneous kick.
+static void run_kick_convergence_test(int n_kicks = 10) {
+    std::cout << "\n=== Kick Convergence Test: TDVP pulse vs exact ===" << std::endl;
+    std::cout << "n_kicks=" << n_kicks << std::endl;
 
-    std::vector<BasisParams> basis;
-    int N = 2, basis_n = 2;
+    int N = 1;
+    PermutationSet perms = PermutationSet::generate(N);
 
-    if (argc >= 5 && std::string(argv[1]) == "--csv") {
-        std::string filename = argv[2];
-        N = std::stoi(argv[3]);
-        basis_n = std::stoi(argv[4]);
-        basis = load_basis_from_csv(filename, N, basis_n);
-        if (basis.empty()) return 1;
-    } else {
-        for (int t = 0; t < basis_n; t++) {
-            basis.push_back(BasisParams::randoman(N, t, t));
+    HamiltonianTerms terms_free;
+    terms_free.kinetic  = true;
+    terms_free.harmonic = true;
+    terms_free.delta    = false;
+    terms_free.gaussian = false;
+    terms_free.kicking  = false;
+
+    // --- Step A: Build N=1 ground state basis ---
+    std::cout << "\n--- Step A: Ground State (N=1) ---" << std::endl;
+    std::vector<double> a_vals = {0.2, 0.5, 2.0};
+    int K = static_cast<int>(a_vals.size());
+    std::vector<BasisParams> basis_gs;
+    for (int k = 0; k < K; k++) {
+        MatrixXcd A = MatrixXcd::Zero(N, N);
+        A(0, 0) = Cd(a_vals[k], 0.0);
+        MatrixXcd B = MatrixXcd::Zero(N, N);
+        VectorXcd R = VectorXcd::Zero(N);
+        basis_gs.push_back(BasisParams::from_arrays(Cd(1.0, 0.0), A, B, R, k));
+    }
+
+    auto [H_gs, S_gs] = build_HS(basis_gs, perms, terms_free);
+    auto eig_gs = lowest_energy_full(H_gs, S_gs, 1e10, 0.0);
+    set_u_from_eigenvector(basis_gs, H_gs, S_gs, 1e10);
+    double E_gs = eig_gs.energy;
+    std::cout << "Ground state: K=" << K << ", E = " << std::setprecision(10) << E_gs
+              << " (exact = 0.5, error = " << std::scientific << (E_gs - 0.5)
+              << std::defaultfloat << ")" << std::endl;
+
+    // --- Sanity check: TDVP free evolution (no kick) ---
+    std::cout << "\n--- Sanity Check: TDVP Free Evolution (5 periods) ---" << std::endl;
+    {
+        auto basis_test = basis_gs;
+        SolverConfig test_config = SolverConfig::dynamics();
+        test_config.lambda_C = 1e-6;
+        test_config.rcond    = 1e-4;
+        int bn = static_cast<int>(basis_test.size());
+        auto alpha_z_test = build_alpha_z_list(bn, N, test_config);
+
+        Cd E0 = compute_total_energy(basis_test, terms_free);
+        Cd S0 = overlap(basis_test);
+        std::cout << "  t=0: E=" << std::setprecision(10) << E0.real()
+                  << ", norm=" << S0.real() << std::endl;
+
+        for (int p = 0; p < 5; p++) {
+            free_evolve(basis_test, alpha_z_test, 0.005, 1.0,
+                        terms_free, test_config, nullptr);
+            Cd E = compute_total_energy(basis_test, terms_free);
+            Cd S = overlap(basis_test);
+            std::cout << "  t=" << (p+1) << ": E=" << std::setprecision(10) << E.real()
+                      << ", norm=" << std::setprecision(6) << S.real()
+                      << ", dE=" << std::scientific << (E.real() - E0.real())
+                      << std::defaultfloat << std::endl;
         }
     }
 
-    std::cout << "N=" << N << ", K=" << basis_n << std::endl;
+    // --- Step B: Exact reference ---
+    std::cout << "\n--- Step B: Exact Reference ---" << std::endl;
+    double T_period = 1.0;
+    auto exact = kicked_exact_1particle(omega, mass, k_L, kappa, T_period, n_kicks);
+    std::cout << "Exact kick  0: E = " << std::setprecision(10) << exact.kick_energies[0] << std::endl;
+    std::cout << "Exact kick " << std::setw(2) << n_kicks << ": E = "
+              << std::setprecision(10) << exact.kick_energies[n_kicks] << std::endl;
 
-    run_phase1(basis, N);
+    // --- Step C: Direct multiplication baseline (skip for K=1, not useful) ---
+    std::vector<double> direct_energies;
+    if (K > 1) {
+        std::cout << "\n--- Step C: Direct Multiplication Baseline ---" << std::endl;
+        auto basis_direct = basis_gs;
+        auto [H_dir, S_dir] = build_HS(basis_direct, perms, terms_free);
 
-    if (basis_n >= 2) {
-        run_phase2(basis, N);
+        Cd E0 = compute_total_energy(basis_direct, terms_free);
+        direct_energies.push_back(E0.real());
+
+        for (int n = 0; n < n_kicks; n++) {
+            apply_analytic_kick(basis_direct, perms, kappa, k_L, 20, false);
+            free_evolve_fixed_basis(basis_direct, H_dir, S_dir, T_period);
+
+            Cd E = compute_total_energy(basis_direct, terms_free);
+            direct_energies.push_back(E.real());
+            std::cout << "  kick " << std::setw(2) << (n+1) << ": E = "
+                      << std::setprecision(8) << E.real() << std::endl;
+        }
+    } else {
+        std::cout << "\n--- Step C: Skipped (K=1, direct multiplication not useful) ---" << std::endl;
+        for (int n = 0; n <= n_kicks; n++) direct_energies.push_back(0.0);
     }
 
-    run_phase3_gradient(basis, N);
+    // --- Step D: Sweep T_pulse values ---
+    // dt_kick is chosen so that dt * (kappa/T_pulse) stays bounded (~0.05),
+    // ensuring the RK4 integrator resolves the strong kick potential.
+    std::vector<double> T_pulse_vals = {0.5, 0.2, 0.1, 0.05, 0.02, 0.01};
+    std::vector<double> tdvp_final_energies;
+
+    SolverConfig dyn_config = SolverConfig::dynamics();
+    dyn_config.lambda_C = 1e-6;
+    dyn_config.rcond    = 1e-4;
+
+    double dt_free = 0.005;
+
+    for (double T_pulse : T_pulse_vals) {
+        double scale = 1.0 / T_pulse;
+        // Keep dt * scale * kappa ≈ 0.05 for stability
+        double dt_kick = std::min(T_pulse / 50.0, 0.05 / (scale * kappa));
+        if (dt_kick < 1e-6) dt_kick = 1e-6;
+        int n_kick_steps = static_cast<int>(std::ceil(T_pulse / dt_kick));
+
+        std::cout << "\n--- T_pulse = " << T_pulse
+                  << ", scale=" << scale
+                  << ", dt_kick=" << std::scientific << dt_kick
+                  << ", n_kick_steps=" << n_kick_steps
+                  << std::defaultfloat << " ---" << std::endl;
+
+        auto basis_tdvp = basis_gs;
+        int bn = static_cast<int>(basis_tdvp.size());
+        auto alpha_z_dyn = build_alpha_z_list(bn, N, dyn_config);
+
+        HamiltonianTerms terms_kick = terms_free;
+        terms_kick.kicking = true;
+        terms_kick.kicking_scale = scale;
+
+        for (int n = 0; n < n_kicks; n++) {
+            double T_free = T_period - T_pulse;
+            if (T_free > 0.0) {
+                free_evolve(basis_tdvp, alpha_z_dyn, dt_free, T_free,
+                            terms_free, dyn_config, nullptr);
+            }
+
+            free_evolve(basis_tdvp, alpha_z_dyn, dt_kick, T_pulse,
+                        terms_kick, dyn_config, nullptr);
+
+            Cd E = compute_total_energy(basis_tdvp, terms_free);
+            Cd S_val = overlap(basis_tdvp);
+            std::cout << "  kick " << std::setw(2) << (n+1) << ": E = "
+                      << std::setprecision(8) << E.real()
+                      << ", norm=" << std::setprecision(6) << S_val.real()
+                      << std::endl;
+        }
+
+        Cd E_final = compute_total_energy(basis_tdvp, terms_free);
+        tdvp_final_energies.push_back(E_final.real());
+    }
+
+    // --- Step E: Print convergence table ---
+    double E_exact_final = exact.kick_energies[n_kicks];
+
+    std::cout << "\n=== Convergence Table (after " << n_kicks << " kicks) ===" << std::endl;
+    std::cout << std::setw(10) << "T_pulse"
+              << std::setw(16) << "E(final)"
+              << std::setw(16) << "E_exact"
+              << std::setw(16) << "rel_error"
+              << std::setw(10) << "order" << std::endl;
+    std::cout << std::string(68, '-') << std::endl;
+
+    double prev_err = 0.0;
+    double prev_T = 0.0;
+    for (size_t i = 0; i < T_pulse_vals.size(); i++) {
+        double rel_err = std::abs(tdvp_final_energies[i] - E_exact_final)
+                         / std::abs(E_exact_final);
+
+        std::string order_str = "---";
+        if (i > 0 && prev_err > 1e-15 && rel_err > 1e-15) {
+            double order = std::log(rel_err / prev_err)
+                         / std::log(T_pulse_vals[i] / prev_T);
+            std::ostringstream oss;
+            oss << std::fixed << std::setprecision(2) << order;
+            order_str = oss.str();
+        }
+
+        std::cout << std::setw(10) << std::fixed << std::setprecision(3) << T_pulse_vals[i]
+                  << std::setw(16) << std::fixed << std::setprecision(8) << tdvp_final_energies[i]
+                  << std::setw(16) << std::fixed << std::setprecision(8) << E_exact_final
+                  << std::setw(16) << std::scientific << rel_err
+                  << std::defaultfloat
+                  << std::setw(10) << order_str << std::endl;
+
+        prev_err = rel_err;
+        prev_T = T_pulse_vals[i];
+    }
+
+    double direct_rel_err = std::abs(direct_energies[n_kicks] - E_exact_final)
+                            / std::abs(E_exact_final);
+    std::cout << std::setw(10) << "direct"
+              << std::setw(16) << std::fixed << std::setprecision(8) << direct_energies[n_kicks]
+              << std::setw(16) << std::fixed << std::setprecision(8) << E_exact_final
+              << std::setw(16) << std::scientific << direct_rel_err
+              << std::defaultfloat
+              << std::setw(10) << "(baseline)" << std::endl;
+}
+
+int main(int argc, char* argv[]) {
+    std::cout << std::setprecision(18);
+
+    int N = 2, basis_n = 2;
+    bool use_csv = false;
+    std::string csv_filename;
 
     // If invoked with --tdvp flag, run TDVP evolution
     bool run_tdvp = false;
@@ -818,6 +1491,7 @@ int main(int argc, char* argv[]) {
     bool run_kicked = false;
     bool run_kicked_exact = false;
     bool run_kicked_gamma0 = false;
+    bool run_kick_convergence = false;
     int kicked_n_kicks = 50;
     int kicked_n_mom = 4;
     double kicked_max_cond = 1e10;
@@ -831,6 +1505,17 @@ int main(int argc, char* argv[]) {
     };
 
     for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--csv") {
+            if (i + 3 >= argc) {
+                std::cerr << "Usage: --csv <file> <N> <basis_n>" << std::endl;
+                return 1;
+            }
+            use_csv = true;
+            csv_filename = std::string(argv[++i]);
+            N = std::stoi(argv[++i]);
+            basis_n = std::stoi(argv[++i]);
+            continue;
+        }
         if (std::string(argv[i]) == "--tdvp") run_tdvp = true;
         if (std::string(argv[i]) == "--tdvp-only") tdvp_only = true;
         if (std::string(argv[i]) == "--delta") run_delta = true;
@@ -839,6 +1524,7 @@ int main(int argc, char* argv[]) {
         if (std::string(argv[i]) == "--kicked") run_kicked = true;
         if (std::string(argv[i]) == "--kicked-exact") run_kicked_exact = true;
         if (std::string(argv[i]) == "--kicked-gamma0") run_kicked_gamma0 = true;
+        if (std::string(argv[i]) == "--kick-convergence") run_kick_convergence = true;
         if (std::string(argv[i]) == "--n-kicks") {
             kicked_n_kicks = std::stoi(require_value(i, "--n-kicks"));
         }
@@ -863,6 +1549,30 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    bool any_mode = run_tdvp || tdvp_only || run_delta || run_gaussian ||
+                    run_kicking || run_kicked || run_kicked_exact || run_kicked_gamma0 ||
+                    run_kick_convergence;
+
+    if (!any_mode) {
+        std::vector<BasisParams> basis;
+        if (use_csv) {
+            basis = load_basis_from_csv(csv_filename, N, basis_n);
+            if (basis.empty()) return 1;
+        } else {
+            for (int t = 0; t < basis_n; t++) {
+                basis.push_back(BasisParams::randoman(N, t, t));
+            }
+        }
+
+        std::cout << "N=" << N << ", K=" << basis_n << std::endl;
+
+        run_phase1(basis, N);
+        if (basis_n >= 2) {
+            run_phase2(basis, N);
+        }
+        run_phase3_gradient(basis, N);
+    }
+
     if (run_tdvp || tdvp_only) {
         run_phase3_tdvp();
     }
@@ -883,6 +1593,9 @@ int main(int argc, char* argv[]) {
     }
     if (run_kicked_gamma0) {
         run_kicked_gamma0_test(kicked_n_kicks, kicked_n_mom, kicked_max_cond);
+    }
+    if (run_kick_convergence) {
+        run_kick_convergence_test(kicked_n_kicks);
     }
 
     return 0;

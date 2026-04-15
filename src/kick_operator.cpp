@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include <iomanip>
+#include <algorithm>
 
 namespace ecg1d {
 
@@ -86,7 +87,8 @@ MatrixXcd build_kick_matrix(const std::vector<BasisParams>& basis,
 double apply_analytic_kick(std::vector<BasisParams>& basis,
                            const PermutationSet& perms,
                            double kappa, double k_L,
-                           int n_bessel) {
+                           int n_bessel,
+                           bool print_diag) {
     int K = static_cast<int>(basis.size());
 
     // Build kick matrix and overlap matrix
@@ -126,11 +128,13 @@ double apply_analytic_kick(std::vector<BasisParams>& basis,
     // Check unitarity: kick should preserve norm
     double fidelity = norm_after.real() / norm_before.real();
     double s_cond = svd.singularValues()(0) / svd.singularValues()(K-1);
-    const char* status = (std::abs(fidelity - 1.0) < 0.05) ? "PASS" : "FAIL";
-    std::cout << "  [kick] fidelity=" << std::setprecision(6) << fidelity
-              << " (" << status << ")"
-              << ", S_cond=" << std::scientific << s_cond
-              << std::defaultfloat << std::endl;
+    if (print_diag) {
+        const char* status = (std::abs(fidelity - 1.0) < 0.05) ? "PASS" : "FAIL";
+        std::cout << "  [kick] fidelity=" << std::setprecision(6) << fidelity
+                  << " (" << status << ")"
+                  << ", S_cond=" << std::scientific << s_cond
+                  << std::defaultfloat << std::endl;
+    }
 
     // Renormalize u so that u'†S u' = u†S u (preserve norm)
     // This doesn't change the physical wave function (just a global factor),
@@ -237,7 +241,6 @@ std::vector<BasisParams> augment_basis_with_momentum(
         for (int a = 0; a < N; a++) {
             double a_diag = bp.A(a, a).real();
             if (a_diag > 0.05 && a_diag < 20.0) {
-                // Check not already in list (within 10% tolerance)
                 bool duplicate = false;
                 for (double w : widths) {
                     if (std::abs(a_diag - w) / w < 0.1) { duplicate = true; break; }
@@ -248,13 +251,8 @@ std::vector<BasisParams> augment_basis_with_momentum(
     }
     std::sort(widths.begin(), widths.end());
 
-    // Generate candidate basis functions with all unordered momentum pairs.
-    // For N=2: pairs (m1, m2) with m1 <= m2, skipping (0,0).
-    // For N=1: just single momentum index m, skipping m=0.
     std::vector<BasisParams> candidates;
-
     if (N == 1) {
-        // Single-particle case: momentum n * 2k_L
         for (double w : widths) {
             for (int n = -n_mom; n <= n_mom; n++) {
                 if (n == 0) continue;
@@ -269,9 +267,6 @@ std::vector<BasisParams> augment_basis_with_momentum(
             }
         }
     } else {
-        // N >= 2: generate all unordered momentum pairs (m1, m2) with m1 <= m2.
-        // Each particle independently gets momentum mi * 2k_L.
-        // Skip (0,0) since that's covered by the ground state basis.
         for (double w : widths) {
             for (int m1 = -n_mom; m1 <= n_mom; m1++) {
                 for (int m2 = m1; m2 <= n_mom; m2++) {
@@ -285,17 +280,13 @@ std::vector<BasisParams> augment_basis_with_momentum(
                         A_new(a, a) = Cd(w, 0.0);
                         B_new(a, a) = Cd(b_val, 0.0);
                     }
-                    // Small off-diagonal coupling (10% of diagonal)
                     if (N >= 2) {
                         A_new(0, 1) = Cd(0.1 * w, 0.0);
                         A_new(1, 0) = Cd(0.1 * w, 0.0);
                     }
 
-                    // Particle 0 gets momentum m1 * k_L, particle 1 gets momentum m2 * k_L
                     R_new(0) = Cd(0.0, static_cast<double>(m1) * k_L / b_val);
                     R_new(1) = Cd(0.0, static_cast<double>(m2) * k_L / b_val);
-                    // Higher particles (N>2) get zero momentum
-                    // (extend this for N>2 if needed)
 
                     int label = 1000 * m1 + m2;
                     candidates.push_back(BasisParams::from_arrays(

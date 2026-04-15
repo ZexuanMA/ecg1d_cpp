@@ -44,7 +44,7 @@ Cd grad_H_for_alpha(const AlphaIndex& alpha, bool Real,
         result += calculate_Hamiltonian_gaussian_partial(alpha.a1, alpha.a2, alpha.a3, alpha.a4,
                                                          Real, basis);
     if (terms.kicking)
-        result += calculate_Hamiltonian_kicking_partial(alpha.a1, alpha.a2, alpha.a3, alpha.a4,
+        result += terms.kicking_scale * calculate_Hamiltonian_kicking_partial(alpha.a1, alpha.a2, alpha.a3, alpha.a4,
                                                          Real, basis);
 
     return result;
@@ -70,9 +70,13 @@ void update_basis_function(std::vector<BasisParams>& basis,
     for (int i = 0; i < length; i++) {
         const auto& idx = alpha_z_list[i];
         int dz_idx = i - updata_constant;
-        if (idx.a1 == 1 || dz_idx < 0 || dz_idx >= dz.size()) continue;
+        if (dz_idx < 0 || dz_idx >= dz.size()) continue;
 
-        if (idx.a1 == 2) {
+        if (idx.a1 == 1) {
+            // u coefficients: updated in real-time TDVP (updata_constant=0)
+            // but skipped in imaginary-time (updata_constant>0, caught by dz_idx<0 above)
+            basis[idx.a2].u += dz(dz_idx) * dtao;
+        } else if (idx.a1 == 2) {
             basis[idx.a2].B(idx.a3, idx.a3) += dz(dz_idx) * dtao;
         } else if (idx.a1 == 3) {
             basis[idx.a2].R(idx.a3) += dz(dz_idx) * dtao;
@@ -96,7 +100,7 @@ Cd compute_total_energy(const std::vector<BasisParams>& basis,
     if (terms.harmonic) E_num += Harmonic_functional(basis);
     if (terms.delta && N >= 2)    E_num += Delta_contact_functional(basis);
     if (terms.gaussian && N >= 2) E_num += Gaussian_interaction_functional(basis);
-    if (terms.kicking)  E_num += kicking_term_functional(basis);
+    if (terms.kicking)  E_num += terms.kicking_scale * kicking_term_functional(basis);
 
     return E_num / S;
 }
