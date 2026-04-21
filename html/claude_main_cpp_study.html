@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ECG1D main.cpp — Line-by-Line Code Study (C++)</title>
+<style>
+  :root {
+    --bg: #f4efe6;
+    --paper: #fffcf6;
+    --paper-2: #faf4e8;
+    --ink: #15202b;
+    --muted: #58677a;
+    --line: rgba(21, 32, 43, 0.12);
+    --accent: #0f5b78;
+    --accent-2: #9a5a16;
+    --good: #215c3a;
+    --warn: #935b00;
+    --bad: #9f2f2f;
+    --code-bg: #0d1117;
+    --code-fg: #e6edf3;
+    --mono: "Berkeley Mono", "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+    --serif: "Charter", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --sans: "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top left, rgba(154, 90, 22, 0.14), transparent 26rem),
+      radial-gradient(circle at 85% 10%, rgba(15, 91, 120, 0.12), transparent 22rem),
+      linear-gradient(180deg, #f8f2ea 0%, var(--bg) 46%, #f2ebdf 100%);
+    font-family: var(--sans);
+    line-height: 1.7;
+  }
+  .shell { width: min(1180px, calc(100vw - 28px)); margin: 24px auto 64px; }
+  .hero, .section {
+    background: var(--paper);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    box-shadow: 0 18px 48px rgba(34,44,56,0.08);
+    border-radius: 22px;
+    padding: 30px 34px;
+    margin-bottom: 24px;
+  }
+  h1, h2, h3, h4 { font-family: var(--serif); letter-spacing: -0.01em; margin: 0; }
+  h1 { font-size: clamp(2rem, 3.5vw, 3.2rem); line-height: 1.1; }
+  h2 { font-size: 1.7rem; color: var(--accent); border-bottom: 2px solid rgba(15,91,120,0.22); padding-bottom: 8px; margin-top: 8px; margin-bottom: 16px; }
+  h3 { font-size: 1.2rem; color: var(--accent-2); margin: 22px 0 10px; }
+  h4 { font-size: 1.02rem; color: #333; margin: 14px 0 6px; }
+  .eyebrow {
+    letter-spacing: 0.16em; text-transform: uppercase;
+    font-size: 0.74rem; color: var(--accent); font-weight: 700; margin-bottom: 10px;
+  }
+  .lead { color: var(--muted); max-width: 80ch; font-size: 1.03rem; }
+  nav {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 18px; padding: 12px 16px; margin-bottom: 24px;
+    box-shadow: 0 12px 32px rgba(34,44,56,0.06);
+    position: sticky; top: 8px; z-index: 10;
+  }
+  nav a {
+    color: var(--accent); text-decoration: none;
+    font-size: 0.86rem; font-weight: 600;
+    padding: 6px 10px; border-radius: 10px;
+    background: rgba(15, 91, 120, 0.07);
+  }
+  nav a:hover { background: rgba(15, 91, 120, 0.16); }
+  code, .mono { font-family: var(--mono); font-size: 0.94em; }
+  p code, li code, td code { background: rgba(15,91,120,0.09); padding: 1px 6px; border-radius: 4px; color: #0b4765; }
+  pre {
+    background: var(--code-bg); color: var(--code-fg);
+    padding: 14px 18px; border-radius: 10px;
+    overflow-x: auto; font-family: var(--mono); font-size: 0.88rem;
+    line-height: 1.55; margin: 10px 0;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+  pre .kw   { color: #ff7b72; }
+  pre .cmt  { color: #8b949e; font-style: italic; }
+  pre .str  { color: #a5d6ff; }
+  pre .num  { color: #79c0ff; }
+  pre .fn   { color: #d2a8ff; }
+  pre .ty   { color: #ffa657; }
+  pre .op   { color: #ff7b72; }
+  pre .hl   { background: rgba(255,215,0,0.18); display: inline-block; padding: 0 3px; border-radius: 3px; }
+  pre .ln   { color: #484f58; user-select: none; display: inline-block; width: 3em; text-align: right; margin-right: 1em; }
+  .box { border-radius: 12px; padding: 14px 18px; margin: 14px 0; border: 1px solid var(--line); background: var(--paper-2); }
+  .box.info { border-left: 4px solid var(--accent); background: #e8f3f8; }
+  .box.good { border-left: 4px solid var(--good); background: #e8f5ec; }
+  .box.warn { border-left: 4px solid var(--warn); background: #fdf4e0; }
+  .box.bad  { border-left: 4px solid var(--bad);  background: #fbe8e8; }
+  .tag {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; margin-right: 4px;
+  }
+  .tag-cpp   { background: #0a3a5e; color: #dceefb; }
+  .tag-eigen { background: #5d2c5f; color: #f5d8f8; }
+  .tag-phys  { background: #6b4a00; color: #ffe2a1; }
+  .tag-note  { background: #1f5a3d; color: #cfeedb; }
+  .tag-fixed { background: #8e2424; color: #ffd8d6; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.93rem; background: var(--paper); }
+  th, td { padding: 10px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { background: rgba(15,91,120,0.06); color: var(--accent); font-size: 0.84rem; letter-spacing: 0.05em; text-transform: uppercase; }
+  tr:last-child td { border-bottom: none; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+  .callout-title { font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+  .chip {
+    display: inline-block; padding: 1px 8px; border-radius: 10px;
+    font-size: 0.78rem; background: rgba(15,91,120,0.1); color: #0b4765;
+    font-family: var(--mono); margin: 0 2px;
+  }
+  ul, ol { padding-left: 1.4em; }
+  li { margin: 6px 0; }
+  .lineref { color: var(--muted); font-family: var(--mono); font-size: 0.82em; }
+  dfn { font-style: normal; color: var(--accent-2); font-weight: 700; }
+</style>
+</head>
+<body>
+<main class="shell">
+
+<section class="hero">
+  <div class="eyebrow">Code Study · C++ Deep Dive</div>
+  <h1><code>main.cpp</code> Line-by-Line — a Study Guide</h1>
+  <p class="lead">
+    This document is a <b>companion</b> to <code>ecg1d_main_principle.html</code>. That one explains
+    the <em>mathematics</em>; this one explains the <em>C++ code</em>. You will find every helper,
+    every lambda, every Eigen call and every idiom walked through. Read it in order or use the table of contents.
+    Targeted at someone who knows C++ basics and wants to see how a real scientific computing project uses them.
+  </p>
+</section>
+
+<nav>
+  <a href="#orient">0. Orientation</a>
+  <a href="#preamble">1. Preamble</a>
+  <a href="#helpers">2. Helpers</a>
+  <a href="#structs">3. Data structs</a>
+  <a href="#repair">4. Repair machinery</a>
+  <a href="#phase12">5. Phase 1/2</a>
+  <a href="#phase3">6. Phase 3 TDVP</a>
+  <a href="#alpha">7. alpha_z_list</a>
+  <a href="#svm-tdvp">8. SVM+TDVP</a>
+  <a href="#kicked">9. Kicked evolution</a>
+  <a href="#gamma0">10. Kicked γ=0</a>
+  <a href="#converge">11. Convergence test</a>
+  <a href="#main">12. main()</a>
+  <a href="#edits">13. Recent edits</a>
+  <a href="#cpp-ref">14. C++ reference</a>
+  <a href="#eigen-ref">15. Eigen reference</a>
+</nav>
+
+<!-- =========================================================== -->
+<section class="section" id="orient">
+<h2>0. Orientation: what is in this file?</h2>
+
+<p><code>main.cpp</code> is <b>1602 lines</b> of orchestration. It does not define physics — it
+<em>consumes</em> the library in <code>src/*.hpp</code> to run experiments. Mentally split the file
+into <b>three strata</b>:</p>
+
+<table>
+<tr><th>Stratum</th><th>Lines (approx)</th><th>Purpose</th></tr>
+<tr><td>Utilities & helpers</td><td>25–382</td><td>File I/O, pretty-printing, state summaries, repair candidates</td></tr>
+<tr><td>Experiment routines (<code>run_*</code>)</td><td>384–1476</td><td>Each function = one CLI mode</td></tr>
+<tr><td><code>main()</code> dispatcher</td><td>1478–1602</td><td>Parses CLI flags and calls the right <code>run_*</code></td></tr>
+</table>
+
+<div class="box info">
+<div class="callout-title">Reading strategy</div>
+Start at <code>main()</code> at the bottom to see the entry points, then read the <code>run_*</code>
+function for each mode you care about. Shared helpers are at the top — skim them first, but don't
+try to memorize; come back when a <code>run_*</code> calls them.
+</div>
+
+<h3>High-level call graph</h3>
+<pre><span class="cmt">// CLI flag        run_* function               key helpers</span>
+<span class="cmt">// (default)       run_phase1 + run_phase2 +    load_basis_from_csv</span>
+<span class="cmt">//                 run_phase3_gradient</span>
+<span class="cmt">// --tdvp          run_phase3_tdvp              build_alpha_z_list, evolution</span>
+<span class="cmt">// --delta         run_phase3_tdvp_delta   -\</span>
+<span class="cmt">// --gaussian      run_phase3_tdvp_gaussian --> run_svm_tdvp  (shared pipeline)</span>
+<span class="cmt">// --kicking       run_phase3_tdvp_kicking -/</span>
+<span class="cmt">// --kicked        run_kicked_evolution_test    kicked_evolution() in src/</span>
+<span class="cmt">// --kicked-gamma0 run_kicked_gamma0_test       augment_basis_with_momentum, apply_analytic_kick,</span>
+<span class="cmt">//                                              free_evolve_fixed_basis, repair packets</span>
+<span class="cmt">// --kick-converge run_kick_convergence_test    Trotter-split TDVP (now kick-only in pulse)</span></pre>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="preamble">
+<h2>1. Preamble — includes, namespaces, aliases <span class="lineref">(lines 1–23)</span></h2>
+
+<pre><span class="ln"> 1</span><span class="kw">#include</span> <span class="str">"basis_params.hpp"</span>
+<span class="ln"> 2</span><span class="kw">#include</span> <span class="str">"hamiltonian.hpp"</span>
+<span class="ln"> 3</span><span class="kw">#include</span> <span class="str">"derivatives.hpp"</span>
+<span class="ln"> 4</span><span class="kw">#include</span> <span class="str">"hamiltonian_gradient.hpp"</span>
+<span class="ln"> 5</span><span class="kw">#include</span> <span class="str">"tdvp_solver.hpp"</span>
+<span class="ln"> 6</span><span class="kw">#include</span> <span class="str">"svm.hpp"</span>
+<span class="ln"> 7</span><span class="kw">#include</span> <span class="str">"kicked_exact.hpp"</span>
+<span class="ln"> 8</span><span class="kw">#include</span> <span class="str">"kicked_evolution.hpp"</span>
+<span class="ln"> 9</span><span class="kw">#include</span> <span class="str">"kick_operator.hpp"</span>
+<span class="ln">10</span><span class="kw">#include</span> <span class="str">"observables.hpp"</span>
+<span class="ln">11</span><span class="kw">#include</span> <span class="str">"physical_constants.hpp"</span>
+<span class="ln">12</span><span class="kw">#include</span> <span class="str">&lt;iostream&gt;</span>     <span class="cmt">// std::cout, std::cerr</span>
+<span class="ln">13</span><span class="kw">#include</span> <span class="str">&lt;iomanip&gt;</span>      <span class="cmt">// std::setw, std::setprecision, std::scientific</span>
+<span class="ln">14</span><span class="kw">#include</span> <span class="str">&lt;fstream&gt;</span>      <span class="cmt">// std::ifstream (reading CSV)</span>
+<span class="ln">15</span><span class="kw">#include</span> <span class="str">&lt;sstream&gt;</span>      <span class="cmt">// std::stringstream, std::ostringstream</span>
+<span class="ln">16</span><span class="kw">#include</span> <span class="str">&lt;algorithm&gt;</span>    <span class="cmt">// std::sort, std::min, std::max</span>
+<span class="ln">17</span><span class="kw">#include</span> <span class="str">&lt;cmath&gt;</span>        <span class="cmt">// std::sqrt, std::log, std::ceil, std::abs</span>
+<span class="ln">18</span><span class="kw">#include</span> <span class="str">&lt;limits&gt;</span>       <span class="cmt">// std::numeric_limits&lt;double&gt;::infinity()</span>
+<span class="ln">19</span><span class="kw">#include</span> <span class="str">&lt;vector&gt;</span>       <span class="cmt">// std::vector</span>
+<span class="ln">20</span><span class="kw">#include</span> <span class="str">&lt;string&gt;</span>       <span class="cmt">// std::string, std::to_string, std::stoi, std::stod</span>
+<span class="ln">21</span><span class="kw">#include</span> <span class="str">&lt;chrono&gt;</span>       <span class="cmt">// std::chrono::steady_clock</span>
+<span class="ln">22</span>
+<span class="ln">23</span><span class="kw">using namespace</span> ecg1d;</pre>
+
+<div class="box info">
+<span class="tag tag-cpp">C++</span>
+<b>Quoted vs angle-bracket includes.</b> <code>#include "foo.hpp"</code> searches the project's own
+include path first (it is a local project header). <code>#include &lt;foo&gt;</code> goes straight to
+the system/standard library. Mixing both is idiomatic.
+</div>
+
+<div class="box info">
+<span class="tag tag-cpp">C++</span>
+<b><code>using namespace ecg1d;</code></b> pulls every name from the <code>ecg1d</code> namespace
+into this file so you can write <code>BasisParams</code> instead of <code>ecg1d::BasisParams</code>.
+This is acceptable <em>inside a</em> <code>.cpp</code> file. It is a bad practice in a header because
+it pollutes the namespace for every file that includes it.
+</div>
+
+<h3>Types you will see everywhere (from <code>src/types.hpp</code>)</h3>
+<table>
+<tr><th>Alias</th><th>Underlying type</th><th>What it is</th></tr>
+<tr><td><code>Cd</code></td><td><code>std::complex&lt;double&gt;</code></td><td>One complex number</td></tr>
+<tr><td><code>VectorXcd</code></td><td><code>Eigen::Matrix&lt;Cd, Dynamic, 1&gt;</code></td><td>Column vector, complex, dynamic size</td></tr>
+<tr><td><code>MatrixXcd</code></td><td><code>Eigen::Matrix&lt;Cd, Dynamic, Dynamic&gt;</code></td><td>Dense matrix, complex</td></tr>
+</table>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="helpers">
+<h2>2. Utility helpers <span class="lineref">(lines 25–97)</span></h2>
+
+<h3>2.1 <code>load_basis_from_csv</code> <span class="lineref">(lines 28–68)</span></h3>
+<p>Reads a basis from disk. Each basis function serializes as
+<code>u</code>, then <code>N×N</code> complex entries of <code>A</code>, then <code>N×N</code> of <code>B</code>,
+then <code>N</code> entries of <code>R</code>, then a single integer <code>name</code>.</p>
+
+<pre><span class="kw">static</span> <span class="ty">std::vector</span>&lt;<span class="ty">BasisParams</span>&gt; <span class="fn">load_basis_from_csv</span>(
+    <span class="kw">const</span> <span class="ty">std::string</span>&amp; filename, <span class="kw">int</span> N, <span class="kw">int</span> basis_n) {
+    <span class="ty">std::ifstream</span> fin(filename);
+    <span class="kw">if</span> (!fin.is_open()) { <span class="cmt">/* error */</span> <span class="kw">return</span> {}; }
+
+    <span class="kw">auto</span> read_complex = [&amp;]() -&gt; <span class="ty">Cd</span> {            <span class="cmt">// lambda, captures fin by reference</span>
+        <span class="ty">std::string</span> line; <span class="ty">std::getline</span>(fin, line);
+        <span class="ty">std::stringstream</span> ss(line);
+        <span class="kw">double</span> re, im; <span class="kw">char</span> comma;
+        ss &gt;&gt; re &gt;&gt; comma &gt;&gt; im;
+        <span class="kw">return</span> <span class="ty">Cd</span>(re, im);
+    };
+    <span class="cmt">// ... uses read_complex() for u, A, B, R</span>
+}</pre>
+
+<div class="box info">
+<span class="tag tag-cpp">C++</span>
+<b>Anatomy of <code>auto read_complex = [&amp;]() -&gt; Cd { ... };</code></b>
+<ul>
+  <li><code>[&amp;]</code> is the <b>capture list</b>. <code>&amp;</code> means "capture all enclosing
+  variables by reference" — so the lambda sees the same <code>fin</code> the outer function has.
+  If you used <code>[=]</code> that would copy <code>fin</code>, which is forbidden for <code>ifstream</code>.</li>
+  <li><code>() -&gt; Cd</code> is the parameter list and explicit return type. The return type can be
+  omitted (the compiler deduces it), but stating it here documents intent.</li>
+  <li>The lambda is stored in a variable via <code>auto</code>. Its actual type is an unnamed
+  compiler-generated struct with <code>operator()</code> — you can't spell it, but <code>auto</code> can.</li>
+  <li><code>static</code> on the free function means <i>internal linkage</i>: the symbol is only
+  visible in this <code>.cpp</code> file. It prevents link-time name clashes and lets the compiler
+  inline more aggressively.</li>
+</ul>
+</div>
+
+<div class="box warn">
+<span class="tag tag-cpp">Subtle</span>
+The code parses with <code>ss &gt;&gt; re &gt;&gt; comma &gt;&gt; im</code>. That only works because
+each line has the form <code>"3.14,1.59"</code>. If the CSV ever gains a space after the comma,
+this still works (stream <code>&gt;&gt;</code> skips whitespace). If it gains multiple commas, it will silently break.
+</div>
+
+<h3>2.2 <code>print_complex</code> <span class="lineref">(lines 70–72)</span></h3>
+<pre><span class="kw">static</span> <span class="kw">void</span> <span class="fn">print_complex</span>(<span class="kw">const</span> <span class="ty">std::string</span>&amp; label, <span class="ty">Cd</span> v) {
+    <span class="ty">std::cout</span> &lt;&lt; label &lt;&lt; <span class="str">": "</span> &lt;&lt; v.real() &lt;&lt; <span class="str">" + "</span> &lt;&lt; v.imag() &lt;&lt; <span class="str">"i"</span> &lt;&lt; <span class="ty">std::endl</span>;
+}</pre>
+<p>Trivial. The only thing worth noting: the string is passed as <code>const std::string&amp;</code>
+(by const reference) so no copy is made when you call it with a <code>std::string</code>. For a
+short C string literal like <code>"Overlap"</code> an implicit <code>std::string</code> is built once;
+that temporary is fine.</p>
+
+<h3>2.3 <code>NullBuffer</code> + <code>ScopedSilence</code> <span class="lineref">(lines 74–97)</span></h3>
+<pre><span class="kw">class</span> <span class="ty">NullBuffer</span> : <span class="kw">public</span> <span class="ty">std::streambuf</span> {
+<span class="kw">protected</span>:
+    <span class="kw">int</span> overflow(<span class="kw">int</span> c) <span class="kw">override</span> { <span class="kw">return</span> c; }   <span class="cmt">// swallow all output</span>
+};
+
+<span class="kw">class</span> <span class="ty">ScopedSilence</span> {
+<span class="kw">public</span>:
+    <span class="kw">explicit</span> <span class="fn">ScopedSilence</span>(<span class="kw">bool</span> enabled) : enabled_(enabled) {
+        <span class="kw">if</span> (enabled_) { old_ = <span class="ty">std::cout</span>.rdbuf(&amp;null_); }
+    }
+    ~<span class="fn">ScopedSilence</span>() { <span class="kw">if</span> (enabled_) { <span class="ty">std::cout</span>.rdbuf(old_); } }
+<span class="kw">private</span>:
+    <span class="kw">bool</span> enabled_ = <span class="kw">false</span>;
+    <span class="ty">NullBuffer</span> null_;
+    <span class="ty">std::streambuf</span>* old_ = <span class="kw">nullptr</span>;
+};</pre>
+
+<div class="box good">
+<div class="callout-title"><span class="tag tag-cpp">RAII</span> — Resource Acquisition Is Initialization</div>
+This is the single most important C++ idiom. A <b>constructor</b> grabs a resource; the matching
+<b>destructor</b> releases it. You can never forget to release, because the compiler inserts the
+destructor call at every scope exit (normal return, exception, <code>break</code>).
+<br><br>
+Here, the "resource" is the redirection of <code>std::cout</code>. Inside a
+<code>{ ScopedSilence silence(true); ... }</code> block, <code>std::cout</code> prints to nowhere.
+When the block ends, the destructor restores the original buffer automatically.
+Used in <code>run_kicked_gamma0_test</code> to silence verbose SVM output.
+</div>
+
+<div class="box info">
+<span class="tag tag-cpp">C++</span>
+<b>Why <code>explicit</code>?</b> Without <code>explicit</code>, a line like
+<code>ScopedSilence s = true;</code> would compile and silently create one. With <code>explicit</code>,
+the caller must write <code>ScopedSilence s(true);</code>. Always mark single-argument constructors
+<code>explicit</code> unless you really want implicit conversion.
+</div>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="structs">
+<h2>3. State-summary utilities <span class="lineref">(lines 99–200)</span></h2>
+
+<h3>3.1 <code>collect_u</code> and <code>build_cross_overlap_matrix</code></h3>
+<pre><span class="kw">static</span> <span class="ty">VectorXcd</span> <span class="fn">collect_u</span>(<span class="kw">const</span> <span class="ty">std::vector</span>&lt;<span class="ty">BasisParams</span>&gt;&amp; basis) {
+    <span class="ty">VectorXcd</span> u(<span class="kw">static_cast</span>&lt;<span class="kw">int</span>&gt;(basis.size()));
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; u.size(); i++) u(i) = basis[i].u;
+    <span class="kw">return</span> u;
+}</pre>
+<p>Builds an Eigen column vector of linear coefficients from a basis. <code>static_cast&lt;int&gt;</code>
+is used because <code>.size()</code> returns <code>std::size_t</code> (unsigned), and mixing signed/unsigned
+triggers warnings — be explicit about the narrowing.</p>
+
+<pre><span class="kw">static</span> <span class="ty">MatrixXcd</span> <span class="fn">build_cross_overlap_matrix</span>(
+    <span class="kw">const</span> <span class="ty">std::vector</span>&lt;<span class="ty">BasisParams</span>&gt;&amp; left,
+    <span class="kw">const</span> <span class="ty">std::vector</span>&lt;<span class="ty">BasisParams</span>&gt;&amp; right,
+    <span class="kw">const</span> <span class="ty">PermutationSet</span>&amp; perms) {
+    <span class="ty">HamiltonianTerms</span> terms_none;                   <span class="cmt">// default init → all true!</span>
+    terms_none.kinetic = <span class="kw">false</span>;                    <span class="cmt">// flip them all off</span>
+    terms_none.harmonic = <span class="kw">false</span>;
+    terms_none.delta = <span class="kw">false</span>;
+    terms_none.gaussian = <span class="kw">false</span>;
+    terms_none.kicking = <span class="kw">false</span>;
+    <span class="ty">MatrixXcd</span> C = <span class="ty">MatrixXcd</span>::Zero(left.size(), right.size());
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; ...)
+        <span class="kw">for</span> (<span class="kw">int</span> j = 0; ...) {
+            <span class="kw">auto</span> [h_ij, s_ij] = compute_HS_ij(left[i], right[j], perms, terms_none);
+            (<span class="kw">void</span>)h_ij;                           <span class="cmt">// explicitly ignore</span>
+            C(i, j) = s_ij;                          <span class="cmt">// keep only overlap</span>
+        }
+    <span class="kw">return</span> C;
+}</pre>
+
+<div class="box info">
+<span class="tag tag-cpp">Trick</span>
+<b>Using <code>HamiltonianTerms</code> to ask for "overlap only".</b> Because <code>compute_HS_ij</code>
+always returns <i>both</i> the Hamiltonian matrix element and the overlap, turning every
+Hamiltonian term off leaves <code>s_ij</code> as the overlap and <code>h_ij</code> as zero. This is an
+elegant way to reuse one code path for two tasks.
+</div>
+
+<div class="box info">
+<span class="tag tag-cpp">C++17</span>
+<b>Structured bindings</b>: <code>auto [h_ij, s_ij] = ...;</code> unpacks a <code>std::pair</code>
+(or any struct with public fields) into two named variables. Equivalent to
+<code>auto tmp = ...; auto h_ij = tmp.first; auto s_ij = tmp.second;</code>.
+</div>
+
+<div class="box info">
+<span class="tag tag-cpp">Idiom</span>
+<b><code>(void)h_ij;</code></b> is a C-era trick to tell the compiler "I know I'm not using this variable, don't warn". In modern C++ you could also write <code>auto [_, s_ij] = ...</code> with a stub name.
+</div>
+
+<h3>3.2 <code>normalized_state_fidelity</code> <span class="lineref">(lines 128–137)</span></h3>
+<pre><span class="kw">static</span> <span class="kw">double</span> <span class="fn">normalized_state_fidelity</span>(
+    <span class="kw">const</span> <span class="ty">VectorXcd</span>&amp; u_L, <span class="kw">const</span> <span class="ty">MatrixXcd</span>&amp; S_L,
+    <span class="kw">const</span> <span class="ty">VectorXcd</span>&amp; u_R, <span class="kw">const</span> <span class="ty">MatrixXcd</span>&amp; S_R,
+    <span class="kw">const</span> <span class="ty">MatrixXcd</span>&amp; cross) {
+    <span class="kw">double</span> nL = (u_L.adjoint() * S_L * u_L)(0).real();
+    <span class="kw">double</span> nR = (u_R.adjoint() * S_R * u_R)(0).real();
+    <span class="kw">if</span> (nL &lt;= 1e-15 || nR &lt;= 1e-15) <span class="kw">return</span> 0.0;
+    <span class="ty">Cd</span> ov = (u_L.adjoint() * cross * u_R)(0);
+    <span class="kw">return</span> <span class="ty">std::norm</span>(ov) / (nL * nR);   <span class="cmt">// |&lt;ψL|ψR&gt;|² / (&lt;ψL|ψL&gt; &lt;ψR|ψR&gt;)</span>
+}</pre>
+
+<div class="box info">
+<span class="tag tag-eigen">Eigen</span>
+<b><code>u.adjoint()</code></b> is the conjugate transpose (Hermitian conjugate), the right thing
+for complex inner products. <code>u.transpose()</code> would only transpose, and would give you
+<span class="chip">u<sup>T</sup>Au</span> rather than <span class="chip">u<sup>†</sup>Au</span>.
+<br><br>
+The expression <code>u.adjoint() * S * u</code> is a <code>1×1</code> Eigen matrix. You extract its
+single element with <code>(0)</code>, then take <code>.real()</code> because the inner product of a
+Hermitian form is real up to roundoff.
+</div>
+
+<div class="box info">
+<span class="tag tag-cpp">C++</span>
+<b><code>std::norm(z)</code></b> returns <code>|z|²</code>, <i>not</i> the norm (absolute value).
+For |z| use <code>std::abs(z)</code>. A common source of bugs for C++ beginners.
+</div>
+
+<h3>3.3 <code>StateSummary</code> + <code>summarize_state</code> <span class="lineref">(lines 139–162)</span></h3>
+<pre><span class="kw">struct</span> <span class="ty">StateSummary</span> {
+    <span class="kw">double</span> norm = 0.0, energy = 0.0, kinetic = 0.0, harmonic = 0.0, x2 = 0.0, p2 = 0.0;
+};
+<span class="kw">static</span> <span class="ty">StateSummary</span> <span class="fn">summarize_state</span>(<span class="kw">const</span> <span class="ty">std::vector</span>&lt;<span class="ty">BasisParams</span>&gt;&amp; basis,
+                                    <span class="kw">const</span> <span class="ty">HamiltonianTerms</span>&amp; terms) {
+    <span class="ty">Cd</span> S = overlap(basis);
+    <span class="ty">Cd</span> T = kinetic_energy_functional(basis);
+    <span class="ty">Cd</span> V = Harmonic_functional(basis);
+    <span class="ty">StateSummary</span> out;
+    out.norm     = S.real();
+    out.energy   = compute_total_energy(basis, terms).real();
+    out.kinetic  = (T / S).real();
+    out.harmonic = (V / S).real();
+    out.p2 = 2.0 * mass * out.kinetic;       <span class="cmt">// ⟨p²⟩ = 2m·T  (hbar=1)</span>
+    out.x2 = ...                             <span class="cmt">// ⟨x²⟩ = 2V/(mω²)</span>
+    <span class="kw">return</span> out;
+}</pre>
+
+<div class="box info">
+<span class="tag tag-cpp">C++</span>
+<b>Default member initializers</b> (<code>double norm = 0.0</code>) make <code>StateSummary out;</code>
+safe — every field starts at 0. Without them, fields hold garbage from the stack.
+</div>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="repair">
+<h2>4. First-kick repair machinery <span class="lineref">(lines 163–382)</span></h2>
+
+<p>These functions exist only for <code>--kicked-gamma0</code>. They build additional basis
+functions that better represent a post-kick state. You can skip this section on first reading
+and come back when you study <code>run_kicked_gamma0_test</code>.</p>
+
+<h3>4.1 Diagnostic and target structs <span class="lineref">(lines 163–189)</span></h3>
+<pre><span class="kw">struct</span> <span class="ty">FirstKickTarget</span>     { <span class="kw">double</span> energy, x2, p2; };       <span class="cmt">// what exact answer says</span>
+<span class="kw">struct</span> <span class="ty">FirstKickDiagnostic</span> { <span class="kw">double</span> proj_fidelity,
+                                  energy, x2, p2,
+                                  dE, dx2, dp2,
+                                  objective; };                <span class="cmt">// ECG vs target, with residuals</span>
+<span class="kw">struct</span> <span class="ty">RepairCandidate</span>     { <span class="ty">BasisParams</span> basis; <span class="ty">std::string</span> tag; };
+<span class="kw">struct</span> <span class="ty">RepairPacket</span>        { <span class="ty">std::vector</span>&lt;<span class="ty">BasisParams</span>&gt; basis; <span class="ty">std::string</span> tag; };</pre>
+<p>These are <dfn>POD structs</dfn> — plain old data. No constructor, no methods. A
+<code>RepairCandidate</code> holds one candidate basis function plus a human-readable tag for logs.
+A <code>RepairPacket</code> holds a <em>group</em> of candidates: the code learned that accepting
+<i>bundles</i> of momentum-harmonic basis functions together is more stable than one at a time.</p>
+
+<h3>4.2 <code>overlap_condition_number</code> <span class="lineref">(lines 191–200)</span></h3>
+<pre><span class="kw">static</span> <span class="kw">double</span> <span class="fn">overlap_condition_number</span>(<span class="kw">const</span> <span class="ty">MatrixXcd</span>&amp; S) {
+    <span class="ty">Eigen::SelfAdjointEigenSolver</span>&lt;<span class="ty">MatrixXcd</span>&gt; es(S);
+    <span class="kw">if</span> (es.info() != <span class="ty">Eigen::Success</span>) <span class="kw">return</span> <span class="ty">std::numeric_limits</span>&lt;<span class="kw">double</span>&gt;::infinity();
+    <span class="kw">double</span> wmin = es.eigenvalues()(0);
+    <span class="kw">double</span> wmax = es.eigenvalues()(S.rows() - 1);
+    <span class="kw">if</span> (wmin &lt;= 0.0) <span class="kw">return</span> <span class="ty">std::numeric_limits</span>&lt;<span class="kw">double</span>&gt;::infinity();
+    <span class="kw">return</span> wmax / wmin;
+}</pre>
+
+<div class="box info">
+<span class="tag tag-eigen">Eigen</span>
+<b><code>SelfAdjointEigenSolver</code></b> is specialized for Hermitian matrices — faster and more
+accurate than the general solver. Eigenvalues are returned in ascending order, so
+<code>(0)</code> is smallest, <code>(n-1)</code> is largest.
+<br><br>
+The ratio <span class="chip">λ<sub>max</sub>/λ<sub>min</sub></span> is the condition number of
+<code>S</code>. A large condition number means some basis functions are nearly linearly dependent
+and numerical inversion of <code>S</code> will amplify round-off.
+</div>
+
+<h3>4.3 <code>compute_first_kick_diagnostic</code> / <code>first_kick_objective</code> <span class="lineref">(lines 202–230)</span></h3>
+<p>Apply one analytic kick to the basis, summarize observables, compare to the exact target, and
+reduce to a scalar "objective" to minimize via basis search. The objective is a weighted sum:</p>
+<pre>J = rel(E) + 3·|Δ⟨x²⟩| + rel(⟨p²⟩) + 0.25·|1 − fidelity| + 5·gs_penalty + 0.05·cond_ratio</pre>
+<p>This is <em>literally</em> the acceptance criterion in the packet search — the weights were
+hand-tuned to favor dynamical fidelity while still punishing ill-conditioned bases.</p>
+
+<h3>4.4 Momentum-label generator <span class="lineref">(lines 232–280)</span></h3>
+<p>Returns a curated list of integer labels <code>(m_1, m_2, ..., m_N)</code>. Each label will later
+become a basis function with momentum <code>2·m_a·k_L</code> on particle <code>a</code>. The list is
+hand-picked (preferred) rather than generated exhaustively — reflects physical intuition about
+which momentum sectors a first kick excites.</p>
+
+<h3>4.5 <code>make_first_kick_image_candidate</code> <span class="lineref">(lines 282–314)</span> <span class="tag tag-phys">physics-critical</span></h3>
+<pre><span class="kw">static</span> <span class="ty">RepairCandidate</span> <span class="fn">make_first_kick_image_candidate</span>(
+    <span class="kw">const</span> <span class="ty">BasisParams</span>&amp; base, <span class="kw">const</span> <span class="ty">std::vector</span>&lt;<span class="kw">int</span>&gt;&amp; labels,
+    <span class="kw">double</span> k_L, <span class="kw">double</span> b_val) {
+    <span class="kw">int</span> N = base.N();
+    <span class="ty">MatrixXcd</span> A_new = base.A;
+    <span class="ty">MatrixXcd</span> B_new = base.B;
+    <span class="ty">VectorXcd</span> R_new = base.R;
+    <span class="kw">for</span> (<span class="kw">int</span> a = 0; a &lt; N; a++) {
+        <span class="kw">if</span> (labels[a] == 0) <span class="kw">continue</span>;
+        <span class="ty">Cd</span> delta_b(b_val, 0.0);
+        A_new(a,a) -= delta_b;                         <span class="cmt">// shift width from A into B</span>
+        B_new(a,a) += delta_b;
+        <span class="ty">Cd</span> q_a(0.0, 2.0 * labels[a] * k_L);         <span class="cmt">// purely imaginary → momentum phase</span>
+        <span class="ty">Cd</span> old_linear = 2.0 * base.B(a,a) * base.R(a);
+        R_new(a) = (old_linear + q_a) / (2.0 * B_new(a,a));
+    }
+    ...
+}</pre>
+<p>This implements the identity (see principle doc §2): a Gaussian times
+<span class="chip">exp(i·q·x)</span> can be reabsorbed into the Gaussian by shifting <code>R</code>
+to a complex value such that <code>2BR</code> acquires the imaginary part <code>iq</code>.
+The kick operator multiplies the wavefunction by <code>exp(i·2m·k_L·x)</code>, and this function
+constructs a basis function that represents exactly that momentum image.</p>
+
+<h3>4.6 <code>generate_repair_candidates</code>, <code>generate_repair_packets</code> <span class="lineref">(lines 316–382)</span></h3>
+<p>Both pick a few "parent" basis functions (those with the largest |u|) and cross them with a
+curated list of momentum labels. <code>_candidates</code> returns individual entries;
+<code>_packets</code> returns bundles of 4/8/12/16 candidates because rank-deficient single-entry
+additions often fail the conditioning gate, but a full packet covers the right momentum subspace.</p>
+
+<div class="box info">
+<span class="tag tag-cpp">C++</span>
+<b><code>std::sort</code> with a lambda comparator</b>:
+<pre><span class="ty">std::sort</span>(order.begin(), order.end(),
+          [&amp;](<span class="kw">int</span> lhs, <span class="kw">int</span> rhs) {
+              <span class="kw">return</span> <span class="ty">std::abs</span>(source[lhs].u) &gt; <span class="ty">std::abs</span>(source[rhs].u);
+          });</pre>
+The lambda defines a <i>strict weak ordering</i>. Returning <code>a &gt; b</code> sorts descending.
+Capturing by reference (<code>[&amp;]</code>) gives the lambda access to <code>source</code>.
+</div>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="phase12">
+<h2>5. Phase 1 & 2 diagnostics <span class="lineref">(lines 384–479)</span></h2>
+
+<h3>5.1 <code>run_phase1</code> — functional sanity checks</h3>
+<p>For a provided basis, compute all the bare functionals
+(<code>overlap</code>, <code>kinetic</code>, <code>Harmonic</code>, <code>Delta</code>,
+<code>Gaussian</code>, <code>kicking</code>) and print them. Used to cross-check against the
+Python reference.</p>
+
+<h3>5.2 <code>run_phase2</code> — variational derivative tests</h3>
+<p>Calls <code>partial_z_first</code>, <code>partial_z_second</code>, and <code>calculate_C</code>
+for a hand-picked set of indices <code>(a1 ∈ {1,2,3,4}, basis index, i, j)</code>. Each line
+prints one complex number the Python reference also prints, and you eyeball-compare or use
+<code>validate_phase2.py</code>.</p>
+
+<h3>5.3 <code>run_phase3_gradient</code> <span class="lineref">(lines 481–581)</span></h3>
+<p>Computes the Hamiltonian-gradient entries
+<code>calculate_Hamiltonian_*_partial(a1, a2, i, j, real_flag, basis)</code> for every term
+(kinetic / harmonic / delta / gaussian / kicking) across a matrix of
+<code>(a1, basis-index, real/imag)</code> choices.</p>
+
+<div class="box info">
+<span class="tag tag-cpp">C++11</span>
+<b>Range-based <code>for</code> with initializer list</b>:
+<pre><span class="kw">for</span> (<span class="kw">int</span> a1 : {1, 2, 3}) { ... }
+<span class="kw">for</span> (<span class="kw">bool</span> real_flag : {<span class="kw">true</span>, <span class="kw">false</span>}) { ... }</pre>
+Equivalent to a nested <code>for (int i = 0; i &lt; 3; i++) { int a1 = arr[i]; ... }</code> without
+the index bookkeeping.
+</div>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="phase3">
+<h2>6. <code>run_phase3_tdvp</code> — one-particle harmonic TDVP <span class="lineref">(lines 583–636)</span></h2>
+
+<p>The simplest real TDVP test. One basis function, one particle, harmonic trap,
+imaginary-time evolution should converge to the exact ground state <span class="chip">E = 0.5</span>.</p>
+
+<pre><span class="kw">int</span> N = 1;
+<span class="ty">std::vector</span>&lt;<span class="ty">BasisParams</span>&gt; basis;
+basis.push_back(<span class="ty">BasisParams</span>::from_arrays(
+    <span class="ty">Cd</span>(1.0, 0.0),
+    (<span class="ty">MatrixXcd</span>(1,1) &lt;&lt; <span class="ty">Cd</span>(0.1, 0.1)).finished(),     <span class="cmt">// A</span>
+    (<span class="ty">MatrixXcd</span>(1,1) &lt;&lt; <span class="ty">Cd</span>(0.3, 0.1)).finished(),     <span class="cmt">// B</span>
+    (<span class="ty">VectorXcd</span>(1)   &lt;&lt; <span class="ty">Cd</span>(0.2, 0.1)).finished(),     <span class="cmt">// R</span>
+    0));                                              <span class="cmt">// name</span></pre>
+
+<div class="box info">
+<span class="tag tag-eigen">Eigen</span>
+<b>The <code>&lt;&lt;</code> initializer trick</b>: Eigen lets you stream values into a matrix with
+the overloaded <code>operator&lt;&lt;</code>, but the expression is only valid after
+<code>.finished()</code>. Without that call, you get a temporary "comma initializer" object.
+</div>
+
+<h3>6.1 Building the <code>alpha_z_list</code> manually</h3>
+<pre><span class="ty">std::vector</span>&lt;<span class="ty">AlphaIndex</span>&gt; alpha_z_list;
+<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; basis_n; i++) alpha_z_list.push_back({1, i, 0, 0});   <span class="cmt">// u</span>
+<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; basis_n; i++)
+    <span class="kw">for</span> (<span class="kw">int</span> j = 0; j &lt; N; j++) alpha_z_list.push_back({2, i, j, 0});        <span class="cmt">// B</span>
+<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; basis_n; i++)
+    <span class="kw">for</span> (<span class="kw">int</span> j = 0; j &lt; N; j++) alpha_z_list.push_back({3, i, j, 0});        <span class="cmt">// R</span></pre>
+<p>An <code>AlphaIndex</code> is a 4-tuple <code>(a1, a2, a3, a4)</code>:</p>
+<ul>
+  <li><code>a1 = 1</code>: index into <code>u</code> (the linear coefficient)</li>
+  <li><code>a1 = 2</code>: index into <code>B[basis, particle]</code></li>
+  <li><code>a1 = 3</code>: index into <code>R[basis, particle]</code></li>
+  <li><code>a1 = 4</code>: index into <code>A[basis, i, j]</code> (the upper-triangular entries)</li>
+</ul>
+<p>This list tells the TDVP solver which variational parameters are dynamical coordinates. The
+later function <code>build_alpha_z_list</code> (§7) automates building this list based on the
+<code>SolverConfig</code>.</p>
+
+<h3>6.2 The core call — <code>evolution</code></h3>
+<pre>evolution(alpha_z_list, basis, 1e-3, 5000, 1e-12, terms);</pre>
+<table>
+<tr><th>Argument</th><th>Meaning</th></tr>
+<tr><td><code>alpha_z_list</code></td><td>Which parameters to evolve</td></tr>
+<tr><td><code>basis</code></td><td>In/out: updated by the solver in place</td></tr>
+<tr><td><code>1e-3</code></td><td>Initial step size <code>dtao</code></td></tr>
+<tr><td><code>5000</code></td><td>Max iterations</td></tr>
+<tr><td><code>1e-12</code></td><td>Convergence tolerance on energy change</td></tr>
+<tr><td><code>terms</code></td><td>Which pieces of H are active</td></tr>
+</table>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="alpha">
+<h2>7. <code>build_alpha_z_list</code> <span class="lineref">(lines 638–664)</span></h2>
+<pre><span class="kw">static</span> <span class="ty">std::vector</span>&lt;<span class="ty">AlphaIndex</span>&gt; <span class="fn">build_alpha_z_list</span>(
+    <span class="kw">int</span> basis_n, <span class="kw">int</span> N, <span class="kw">const</span> <span class="ty">SolverConfig</span>&amp; cfg) {
+    <span class="ty">std::vector</span>&lt;<span class="ty">AlphaIndex</span>&gt; out;
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; basis_n; i++) out.push_back({1, i, 0, 0});   <span class="cmt">// u always</span>
+    <span class="kw">if</span> (cfg.optimize_B) <span class="kw">for</span>(...) out.push_back({2, i, j, 0});
+    <span class="kw">if</span> (cfg.optimize_R) <span class="kw">for</span>(...) out.push_back({3, i, j, 0});
+    <span class="kw">if</span> (cfg.optimize_A)
+        <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; basis_n; i++)
+            <span class="kw">for</span> (<span class="kw">int</span> j = 0; j &lt; N; j++)
+                <span class="kw">for</span> (<span class="kw">int</span> k = j; k &lt; N; k++) <span class="cmt">// upper-triangular only</span>
+                    out.push_back({4, i, j, k});
+    <span class="kw">return</span> out;
+}</pre>
+<div class="box info">
+<span class="tag tag-phys">Why upper-triangular A?</span>
+<code>A</code> is symmetric, so <code>A(i,j) = A(j,i)</code>. Treating both as independent would
+double-count gradient components and make <code>C</code> rank-deficient.
+</div>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="svm-tdvp">
+<h2>8. SVM + TDVP pipeline (<code>run_svm_tdvp</code>) <span class="lineref">(lines 666–782)</span></h2>
+
+<p>A single generic function is reused for <code>--delta</code>, <code>--gaussian</code>,
+<code>--kicking</code>. The three <code>run_phase3_tdvp_*</code> wrappers just fill different
+<code>HamiltonianTerms</code> and target energies, then delegate.</p>
+
+<h3>8.1 Phase 1: SVM basis construction</h3>
+<pre><span class="kw">auto</span> svm = svm_build_basis(N, K_max, svm_trials, terms, 42, E_lower_bound);
+<span class="kw">double</span> E_svm = lowest_energy(svm.H, svm.S);</pre>
+<p><code>auto</code> hides the return type <code>SvmResult</code>, which contains
+<code>{ H, S, basis }</code>. The <i>seed</i> <code>42</code> is the RNG seed for reproducibility.</p>
+
+<h3>8.2 Timing with <code>std::chrono</code></h3>
+<pre><span class="kw">auto</span> t0 = <span class="ty">std::chrono::steady_clock</span>::now();
+<span class="cmt">// ... work ...</span>
+<span class="kw">auto</span> t1 = <span class="ty">std::chrono::steady_clock</span>::now();
+<span class="kw">double</span> dt = <span class="ty">std::chrono::duration</span>&lt;<span class="kw">double</span>&gt;(t1 - t0).count();</pre>
+<div class="box info">
+<span class="tag tag-cpp">C++11</span>
+<b>Steady clock</b> never goes backwards even if the wall clock is adjusted. Use it for intervals.
+For wall-clock time use <code>system_clock</code>.
+</div>
+
+<h3>8.3 Phase 1.5: stochastic refinement</h3>
+<pre><span class="ty">PermutationSet</span> perms = <span class="ty">PermutationSet</span>::generate(N);
+<span class="ty">SvmResult</span> refined = svm;                          <span class="cmt">// copy — will be overwritten</span>
+<span class="kw">double</span> E_refine = E_svm;
+<span class="kw">if</span> (refine_rounds &gt; 0) {
+    refined = stochastic_refine(svm.basis, svm.H, svm.S, perms, N, terms, ...);
+    E_refine = lowest_energy(refined.H, refined.S);
+}</pre>
+
+<h3>8.4 Phase 2: real TDVP polish</h3>
+<pre>set_u_from_eigenvector(refined.basis, refined.H, refined.S);
+
+<span class="ty">SolverConfig</span> config;
+config.lambda_C          = 1e-8;      <span class="cmt">// Tikhonov regularization</span>
+config.rcond             = 1e-4;      <span class="cmt">// SVD truncation</span>
+config.resolve_u         = <span class="kw">true</span>;     <span class="cmt">// re-solve u eigen every step</span>
+config.dtao_grow         = 1.5;
+config.dtao_max          = 10.0;
+config.energy_tol        = 1e-12;
+config.stagnation_window = 50;
+config.adaptive_lambda   = <span class="kw">true</span>;
+config.lambda_max        = 1e-4;
+<span class="kw">auto</span> alpha_z_list = build_alpha_z_list(basis_n, N, config);
+evolution(alpha_z_list, refined.basis, 1, tdvp_steps, 1e-10, terms, config, &amp;perms);</pre>
+
+<h3>8.5 Final variance diagnostic</h3>
+<pre><span class="kw">auto</span> [H_final, S_final] = build_HS(refined.basis, perms, terms);
+<span class="kw">auto</span> final_res = lowest_energy_full(H_final, S_final);
+<span class="kw">double</span> E_final = final_res.energy;
+<span class="kw">if</span> (final_res.variance &gt;= 0) {
+    <span class="kw">double</span> sigma = <span class="ty">std::sqrt</span>(<span class="ty">std::max</span>(0.0, final_res.variance));
+    ...
+}</pre>
+<p>The variance <span class="chip">σ² = ⟨H²⟩ − E²</span> is a quality certificate: ideally zero for
+an exact eigenstate. A small positive σ means the basis is good; a large σ means the basis is
+incomplete.</p>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="kicked">
+<h2>9. <code>run_kicked_evolution_test</code> — TDVP kicked dynamics <span class="lineref">(lines 831–915)</span></h2>
+
+<h3>9.1 Overview</h3>
+<ol>
+  <li>Build N=2 delta-interacting ground state via SVM + refine + imaginary-time TDVP.</li>
+  <li>Define a <code>KickParams</code> struct: period, pulse width, strength, lattice wavevector, # kicks.</li>
+  <li>Call <code>kicked_evolution(...)</code> (defined in <code>src/kicked_evolution.cpp</code>).</li>
+  <li>Print the observable table.</li>
+</ol>
+
+<h3>9.2 The edit applied today <span class="tag tag-fixed">Edit B</span></h3>
+<div class="box bad">
+<b>Before:</b>
+<pre><span class="ty">HamiltonianTerms</span> terms_kick = terms_free;     <span class="cmt">// inherits kinetic+harmonic+delta</span>
+terms_kick.kicking = <span class="kw">true</span>;                      <span class="cmt">// adds kicking</span></pre>
+</div>
+<div class="box good">
+<b>After:</b>
+<pre><span class="cmt">// Pulse window: kick operator only (no kinetic/harmonic/delta/gaussian).</span>
+<span class="ty">HamiltonianTerms</span> terms_kick;
+terms_kick.kinetic  = <span class="kw">false</span>;
+terms_kick.harmonic = <span class="kw">false</span>;
+terms_kick.delta    = <span class="kw">false</span>;
+terms_kick.gaussian = <span class="kw">false</span>;
+terms_kick.kicking  = <span class="kw">true</span>;</pre>
+</div>
+<p>Now, when <code>kicked_evolution</code> invokes <code>apply_kick</code> → <code>free_evolve</code>
+during the pulse, it uses the pure kick Hamiltonian only.</p>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="gamma0">
+<h2>10. <code>run_kicked_gamma0_test</code> <span class="lineref">(lines 918–1278)</span></h2>
+
+<p>This is the most intricate function in the file. It assembles a <b>non-TDVP</b> real-time
+pipeline that gives better long-time stability than raw TDVP for the γ=0 (non-interacting) kicked
+rotor benchmark. Outline:</p>
+
+<ol>
+  <li><b>Phase 1 (silenced)</b>: SVM → stochastic refine → imaginary-time TDVP for the ground state.
+      A <code>ScopedSilence</code> suppresses the verbose output.</li>
+  <li><b>Phase 2 (basis augmentation)</b>: call <code>augment_basis_with_momentum</code> to add
+      momentum-carrying basis functions indexed by <code>m ∈ {-n_mom, ..., n_mom}</code>.</li>
+  <li><b>Phase 2.5 (packet repair)</b>: try bundles of additional basis functions — each bundle
+      approximates a truncated kick image of a source basis function. Accept at most two bundles
+      that improve the first-kick objective <code>J</code>.</li>
+  <li><b>Ground-state consistency checks</b>: cross-basis fidelity (does the augmented basis still
+      represent the ground state?), variance sanity, and a "no-kick free test" (propagate free in
+      the fixed basis for 5 periods and verify no drift).</li>
+  <li><b>Phase 3 (kicked dynamics)</b>: loop <code>n_kicks</code> times:
+      <br>&nbsp;&nbsp;(a) <code>apply_analytic_kick</code> — instantaneous basis-projection kick (no TDVP, no finite <code>T_pulse</code>).
+      <br>&nbsp;&nbsp;(b) <code>free_evolve_fixed_basis</code> — exact generalized-eigenbasis propagation over one period.</li>
+  <li>Collect observables, print a per-kick comparison against <code>kicked_exact_1particle</code>, emit a PASS/FAIL summary.</li>
+</ol>
+
+<div class="box info">
+<div class="callout-title">Why this path exists</div>
+TDVP drifts over long evolution because every step carries roundoff. In contrast, the
+augmented-basis approach keeps the basis <i>fixed</i> after initial construction and propagates
+only the coefficient vector <code>u</code>. Inside the fixed finite-dimensional subspace, free
+propagation and kick are each implemented as exact operators, so the only error is the
+basis-truncation error — it does not accumulate over time.
+</div>
+
+<h3>10.1 Instructive C++ patterns in this function</h3>
+<h4>(a) Lambda with immediate invocation for scoped side effects <span class="lineref">(line 943)</span></h4>
+<pre><span class="kw">auto</span> svm = [&amp;]() {
+    <span class="ty">ScopedSilence</span> silence(quiet_setup);
+    <span class="kw">return</span> svm_build_basis(N, K_max, 8000, terms_free, 42, E_lower);
+}();</pre>
+<p>This is an <dfn>IIFE</dfn> (Immediately Invoked Function Expression). The lambda runs exactly once,
+creates a <code>ScopedSilence</code> locally (so silencing is scoped to the SVM call only), and
+returns the result. As soon as the lambda finishes, <code>silence</code> destructs and
+<code>std::cout</code> is restored. The <code>auto svm</code> then captures the return value.</p>
+
+<h4>(b) <code>std::move</code> for ownership transfer <span class="lineref">(line 1089–1091)</span></h4>
+<pre>best_basis = <span class="ty">std::move</span>(trial_basis);
+best_H     = <span class="ty">std::move</span>(H_trial);
+best_S     = <span class="ty">std::move</span>(S_trial);</pre>
+<div class="box info">
+<span class="tag tag-cpp">C++11</span>
+<b><code>std::move</code></b> casts its argument to an rvalue, enabling move semantics:
+the destination <code>steals</code> the internal storage (pointers) instead of copying.
+After <code>std::move</code>, the moved-from object is in a valid-but-unspecified state —
+the rule is "you may destroy or assign to it; don't read its value".
+For large <code>MatrixXcd</code> copies this saves gigabytes of memory traffic.
+</div>
+
+<h4>(c) Tolerance gating via lambdas is <i>not</i> used here, but manual filters are</h4>
+<pre><span class="kw">for</span> (<span class="kw">int</span> k = old_size; k &lt; trial_basis.size(); k++) {
+    <span class="kw">if</span> (has_excessive_overlap(S_trial, k, 0.995)) {
+        reject_packet = <span class="kw">true</span>;
+        <span class="kw">break</span>;
+    }
+}
+<span class="kw">if</span> (reject_packet) <span class="kw">continue</span>;</pre>
+<p>Two-stage filter: skip any packet with a near-duplicate function inside (fidelity > 0.995),
+then skip any packet pushing condition number over <code>max_cond</code>.</p>
+
+<h4>(d) <code>std::setw</code>, <code>std::setprecision</code>, format manipulators</h4>
+<pre><span class="ty">std::cout</span> &lt;&lt; <span class="ty">std::setw</span>(6) &lt;&lt; i
+          &lt;&lt; <span class="ty">std::setw</span>(12) &lt;&lt; <span class="ty">std::setprecision</span>(4) &lt;&lt; obs[i].time
+          &lt;&lt; <span class="ty">std::setw</span>(16) &lt;&lt; <span class="ty">std::setprecision</span>(8) &lt;&lt; obs[i].energy
+          &lt;&lt; <span class="ty">std::scientific</span> &lt;&lt; rel
+          &lt;&lt; <span class="ty">std::defaultfloat</span>;</pre>
+<p>Key iomanip rules:</p>
+<ul>
+  <li><code>setw(n)</code> affects only the <i>next</i> item (sticky off).</li>
+  <li><code>setprecision(n)</code> is sticky (applies until changed).</li>
+  <li><code>std::scientific</code> / <code>std::fixed</code> / <code>std::defaultfloat</code> are sticky format modes — always pair scientific with a later <code>defaultfloat</code> to restore.</li>
+</ul>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="converge">
+<h2>11. <code>run_kick_convergence_test</code> — Trotter split <span class="lineref">(lines 1282–1476)</span></h2>
+
+<p>Studies how TDVP-approximated kicks converge to the exact instantaneous-kick answer as
+<code>T_pulse → 0</code>. Steps:</p>
+<ol>
+  <li><b>Step A:</b> build a small hand-picked N=1 ground-state basis (three Gaussians with widths 0.2, 0.5, 2.0).</li>
+  <li><b>Sanity:</b> evolve freely for 5 periods and check energy/norm drift.</li>
+  <li><b>Step B:</b> compute exact reference kick energies via <code>kicked_exact_1particle</code>.</li>
+  <li><b>Step C:</b> direct baseline — apply analytic kick + exact propagation, no TDVP.</li>
+  <li><b>Step D:</b> sweep <code>T_pulse ∈ {0.5, 0.2, 0.1, 0.05, 0.02, 0.01}</code>. For each, TDVP-evolve:
+    (free window, <code>T_period − T_pulse</code>) then (pulse window, <code>T_pulse</code>) × <code>n_kicks</code>.</li>
+  <li><b>Step E:</b> print a convergence table with apparent order-of-accuracy, comparing with Step C.</li>
+</ol>
+
+<h3>11.1 The edit applied today <span class="tag tag-fixed">Edit A</span></h3>
+<p>The pulse-window <code>terms_kick</code> used to inherit kinetic + harmonic from
+<code>terms_free</code>. Now it is pure kick:</p>
+<div class="box good">
+<pre><span class="cmt">// Pulse window: kick operator only (no kinetic/harmonic/delta/gaussian).</span>
+<span class="ty">HamiltonianTerms</span> terms_kick;
+terms_kick.kinetic       = <span class="kw">false</span>;
+terms_kick.harmonic      = <span class="kw">false</span>;
+terms_kick.delta         = <span class="kw">false</span>;
+terms_kick.gaussian      = <span class="kw">false</span>;
+terms_kick.kicking       = <span class="kw">true</span>;
+terms_kick.kicking_scale = scale;</pre>
+</div>
+<p>Inside the loop (unchanged logic, just cleaner now):</p>
+<pre><span class="kw">for</span> (<span class="kw">int</span> n = 0; n &lt; n_kicks; n++) {
+    <span class="kw">double</span> T_free = T_period - T_pulse;
+    <span class="kw">if</span> (T_free &gt; 0.0) {
+        free_evolve(basis_tdvp, alpha_z_dyn, dt_free, T_free,
+                    terms_free, dyn_config, <span class="kw">nullptr</span>);   <span class="cmt">// kinetic + harmonic only</span>
+    }
+    free_evolve(basis_tdvp, alpha_z_dyn, dt_kick, T_pulse,
+                terms_kick, dyn_config, <span class="kw">nullptr</span>);       <span class="cmt">// kicking only (post-edit)</span>
+    ...
+}</pre>
+
+<h3>11.2 <code>dt_kick</code> selection</h3>
+<pre><span class="kw">double</span> scale = 1.0 / T_pulse;
+<span class="kw">double</span> dt_kick = <span class="ty">std::min</span>(T_pulse / 50.0, 0.05 / (scale * kappa));
+<span class="kw">if</span> (dt_kick &lt; 1e-6) dt_kick = 1e-6;
+<span class="kw">int</span> n_kick_steps = <span class="kw">static_cast</span>&lt;<span class="kw">int</span>&gt;(<span class="ty">std::ceil</span>(T_pulse / dt_kick));</pre>
+<p>The constraint <code>dt·scale·kappa ≈ 0.05</code> keeps the RK4 integrator stable during the
+strong kick pulse. Without it, for small <code>T_pulse</code>, the effective strength
+<code>kappa·scale = kappa/T_pulse</code> blows up and RK4 diverges.</p>
+
+<h3>11.3 Apparent order-of-accuracy computation</h3>
+<pre><span class="kw">if</span> (i &gt; 0 &amp;&amp; prev_err &gt; 1e-15 &amp;&amp; rel_err &gt; 1e-15) {
+    <span class="kw">double</span> order = <span class="ty">std::log</span>(rel_err / prev_err)
+                 / <span class="ty">std::log</span>(T_pulse_vals[i] / prev_T);
+    <span class="ty">std::ostringstream</span> oss;
+    oss &lt;&lt; <span class="ty">std::fixed</span> &lt;&lt; <span class="ty">std::setprecision</span>(2) &lt;&lt; order;
+    order_str = oss.str();
+}</pre>
+<p>For errors scaling like <span class="chip">err ∝ T_pulse<sup>p</sup></span>,
+<span class="chip">p = log(e₂/e₁) / log(T₂/T₁)</span>. Expect p≈1 for first-order Trotter.</p>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="main">
+<h2>12. <code>main()</code> — CLI dispatch <span class="lineref">(lines 1478–1602)</span></h2>
+
+<h3>12.1 Argument-parsing lambda</h3>
+<pre><span class="kw">auto</span> require_value = [&amp;](<span class="kw">int</span>&amp; i, <span class="kw">const</span> <span class="kw">char</span>* opt) -&gt; <span class="ty">std::string</span> {
+    <span class="kw">if</span> (i + 1 &gt;= argc) {
+        <span class="ty">std::cerr</span> &lt;&lt; <span class="str">"Missing value after "</span> &lt;&lt; opt &lt;&lt; <span class="ty">std::endl</span>;
+        <span class="ty">std::exit</span>(1);
+    }
+    <span class="kw">return</span> <span class="ty">std::string</span>(argv[++i]);       <span class="cmt">// advance i, read next arg</span>
+};</pre>
+<p>This captures <code>i</code> by reference from the calling scope. Writing
+<code>i + 1 &gt;= argc</code> in a lambda that also mutates <code>i</code> is the classic C-style
+option-parsing pattern compressed to one call.</p>
+
+<h3>12.2 Mode flags</h3>
+<pre><span class="kw">for</span> (<span class="kw">int</span> i = 1; i &lt; argc; i++) {
+    <span class="kw">if</span> (<span class="ty">std::string</span>(argv[i]) == <span class="str">"--csv"</span>)           { use_csv = <span class="kw">true</span>; ... }
+    <span class="kw">if</span> (<span class="ty">std::string</span>(argv[i]) == <span class="str">"--tdvp"</span>)          run_tdvp = <span class="kw">true</span>;
+    <span class="kw">if</span> (<span class="ty">std::string</span>(argv[i]) == <span class="str">"--delta"</span>)         run_delta = <span class="kw">true</span>;
+    ...
+    <span class="kw">if</span> (<span class="ty">std::string</span>(argv[i]) == <span class="str">"--n-kicks"</span>) {
+        kicked_n_kicks = <span class="ty">std::stoi</span>(require_value(i, <span class="str">"--n-kicks"</span>));
+    }
+}</pre>
+<p>Constructing a <code>std::string</code> from <code>argv[i]</code> inside the comparison makes
+<code>==</code> a real string compare (not a pointer compare).</p>
+
+<h3>12.3 Dispatch block</h3>
+<pre><span class="kw">if</span> (run_tdvp || tdvp_only)       run_phase3_tdvp();
+<span class="kw">if</span> (run_delta)                   run_phase3_tdvp_delta();
+<span class="kw">if</span> (run_gaussian)                run_phase3_tdvp_gaussian();
+<span class="kw">if</span> (run_kicking)                 run_phase3_tdvp_kicking();
+<span class="kw">if</span> (run_kicked)                  run_kicked_evolution_test();
+<span class="kw">if</span> (run_kicked_exact)            run_kicked_exact_test(kicked_n_kicks);
+<span class="kw">if</span> (run_kicked_gamma0)           run_kicked_gamma0_test(kicked_n_kicks, kicked_n_mom, kicked_max_cond);
+<span class="kw">if</span> (run_kick_convergence)        run_kick_convergence_test(kicked_n_kicks);
+<span class="kw">return</span> 0;</pre>
+<p>Modes are independent flags — in principle you can pass <code>--delta --kicking</code> to run
+both. The "default path" (no mode flag) runs <code>run_phase1</code>, <code>run_phase2</code>,
+<code>run_phase3_gradient</code> on a basis loaded from CSV or generated randomly.</p>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="edits">
+<h2>13. Summary of today's edits</h2>
+
+<table>
+<tr><th>Edit</th><th>Where</th><th>What changed</th></tr>
+<tr>
+  <td>A <span class="tag tag-fixed">applied</span></td>
+  <td><code>main.cpp</code> ≈ line 1410 (was 1405)</td>
+  <td>In <code>run_kick_convergence_test</code>, pulse-window terms now pure kick (was inheriting kinetic+harmonic).</td>
+</tr>
+<tr>
+  <td>B <span class="tag tag-fixed">applied</span></td>
+  <td><code>main.cpp</code> ≈ line 876</td>
+  <td>In <code>run_kicked_evolution_test</code>, pulse-window terms now pure kick (delta also off, per your instruction).</td>
+</tr>
+<tr>
+  <td>Build</td>
+  <td><code>build/</code></td>
+  <td>Compiled clean with <code>-O2 -march=native</code>.</td>
+</tr>
+</table>
+
+<div class="box info">
+Because <code>free_evolve</code> and <code>realtime_tdvp_step</code> are both agnostic to
+<code>HamiltonianTerms</code> content (they just pass it to <code>assemble_grad</code>, which
+respects the booleans), no other file required modification.
+</div>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="cpp-ref">
+<h2>14. C++ idiom reference card</h2>
+
+<h3>14.1 Keywords and syntax you see in this file</h3>
+<table>
+<tr><th>Keyword / syntax</th><th>Meaning in context</th></tr>
+<tr><td><code>static</code> (free function)</td><td>Internal linkage — symbol only visible in this .cpp.</td></tr>
+<tr><td><code>const T&amp;</code></td><td>Pass by const reference — no copy, cannot modify.</td></tr>
+<tr><td><code>auto</code></td><td>Type deduced by the compiler. Hides verbose template types.</td></tr>
+<tr><td><code>auto [a, b] = expr;</code></td><td>Structured binding. Works on pairs, tuples, and POD structs.</td></tr>
+<tr><td><code>[&amp;](...) { ... }</code></td><td>Lambda with by-reference capture of all enclosing vars.</td></tr>
+<tr><td><code>[=](...) { ... }</code></td><td>Lambda with by-value capture of all enclosing vars.</td></tr>
+<tr><td><code>explicit</code></td><td>Disables implicit conversion through a single-arg constructor.</td></tr>
+<tr><td><code>override</code></td><td>Asserts that a method overrides a base-class virtual. Compile error if not.</td></tr>
+<tr><td><code>std::move</code></td><td>Cast to rvalue — enables move-constructor / move-assignment.</td></tr>
+<tr><td><code>static_cast&lt;T&gt;(x)</code></td><td>Checked static cast (signed/unsigned, narrow conversions).</td></tr>
+<tr><td><code>(void)x;</code></td><td>Suppress unused-variable warning.</td></tr>
+<tr><td><code>for (auto&amp; x : v)</code></td><td>Range-for. <code>&amp;</code> avoids copy; <code>const auto&amp;</code> for read-only.</td></tr>
+<tr><td><code>for (T x : {v1, v2})</code></td><td>Range-for over initializer list — compact way to loop a fixed small set.</td></tr>
+<tr><td><code>std::numeric_limits&lt;double&gt;::infinity()</code></td><td>A guaranteed-infinite double.</td></tr>
+</table>
+
+<h3>14.2 RAII summary</h3>
+<pre><span class="kw">class</span> <span class="ty">ResourceGuard</span> {
+    <span class="ty">Resource</span> r_;
+<span class="kw">public</span>:
+    <span class="fn">ResourceGuard</span>()  { r_ = acquire(); }
+    ~<span class="fn">ResourceGuard</span>() { release(r_); }
+    <span class="fn">ResourceGuard</span>(<span class="kw">const</span> <span class="ty">ResourceGuard</span>&amp;) = <span class="kw">delete</span>;   <span class="cmt">// no copy</span>
+    <span class="ty">ResourceGuard</span>&amp; <span class="fn">operator=</span>(<span class="kw">const</span> <span class="ty">ResourceGuard</span>&amp;) = <span class="kw">delete</span>;
+};</pre>
+<p>Pattern examples in the C++ standard library: <code>std::unique_ptr</code>, <code>std::lock_guard</code>,
+<code>std::ifstream</code>. Our <code>ScopedSilence</code> follows the same shape.</p>
+
+<h3>14.3 Move vs copy</h3>
+<table>
+<tr><th>Expression</th><th>What happens</th></tr>
+<tr><td><code>A b = a;</code></td><td>Copy.</td></tr>
+<tr><td><code>A b = std::move(a);</code></td><td>Move. <code>a</code> left empty-but-valid.</td></tr>
+<tr><td><code>v.push_back(a);</code></td><td>Copy <code>a</code> into the vector.</td></tr>
+<tr><td><code>v.push_back(std::move(a));</code></td><td>Move <code>a</code> into the vector.</td></tr>
+<tr><td><code>return local_var;</code></td><td>Implicit move (NRVO/return-value optimization).</td></tr>
+</table>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="eigen-ref">
+<h2>15. Eigen reference card</h2>
+
+<h3>15.1 Types</h3>
+<table>
+<tr><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>MatrixXd</code></td><td>Real dense matrix, dynamic size.</td></tr>
+<tr><td><code>MatrixXcd</code></td><td>Complex dense matrix, dynamic size.</td></tr>
+<tr><td><code>VectorXd</code> / <code>VectorXcd</code></td><td>Column vector variants.</td></tr>
+<tr><td><code>Matrix&lt;T, R, C&gt;</code></td><td>Fixed-size if R, C are compile-time.</td></tr>
+</table>
+
+<h3>15.2 Frequently used operations</h3>
+<table>
+<tr><th>Call</th><th>Produces</th></tr>
+<tr><td><code>MatrixXcd::Zero(n, m)</code></td><td>n×m matrix of zeros.</td></tr>
+<tr><td><code>MatrixXcd::Identity(n, n)</code></td><td>n×n identity matrix.</td></tr>
+<tr><td><code>A.adjoint()</code></td><td>Conjugate transpose (use for complex inner products).</td></tr>
+<tr><td><code>A.transpose()</code></td><td>Transpose only (no conjugation).</td></tr>
+<tr><td><code>A.conjugate()</code></td><td>Element-wise conjugate.</td></tr>
+<tr><td><code>A * B</code></td><td>Matrix product.</td></tr>
+<tr><td><code>A(i, j)</code></td><td>Element access (read/write).</td></tr>
+<tr><td><code>A.row(i)</code> / <code>A.col(j)</code></td><td>Single row/column view.</td></tr>
+<tr><td><code>A.block(i, j, rows, cols)</code></td><td>Sub-block view.</td></tr>
+<tr><td><code>A.bottomRightCorner(r, c)</code></td><td>Trailing r×c block.</td></tr>
+<tr><td><code>A.tail(n)</code> / <code>A.head(n)</code></td><td>Last/first n entries of a vector.</td></tr>
+<tr><td><code>A.norm()</code></td><td>Frobenius norm (ℓ² for vectors).</td></tr>
+<tr><td><code>A.rows()</code> / <code>A.cols()</code> / <code>A.size()</code></td><td>Integers.</td></tr>
+</table>
+
+<h3>15.3 Solvers used in this project</h3>
+<pre><span class="ty">Eigen::SelfAdjointEigenSolver</span>&lt;<span class="ty">MatrixXcd</span>&gt; es(H);            <span class="cmt">// Hermitian eigen</span>
+es.eigenvalues();                                        <span class="cmt">// VectorXd ascending</span>
+es.eigenvectors();                                       <span class="cmt">// columns are eigvecs</span>
+
+<span class="ty">Eigen::JacobiSVD</span>&lt;<span class="ty">MatrixXcd</span>&gt; svd(C, <span class="ty">Eigen::ComputeThinU</span> | <span class="ty">Eigen::ComputeThinV</span>);
+svd.singularValues();                                    <span class="cmt">// descending</span>
+svd.matrixU(); svd.matrixV();</pre>
+
+<h3>15.4 The aliasing trap <span class="tag tag-eigen">pitfall</span></h3>
+<div class="box bad">
+<b>Wrong</b> (found in our own codebase history, see <code>EXPERIMENT_S_CONDITIONING.zh.md</code>):
+<pre>A = 0.5 * (A + A.transpose());                    <span class="cmt">// does NOT symmetrize!</span></pre>
+<b>Right</b>:
+<pre>A = (0.5 * (A + A.transpose())).eval();</pre>
+Eigen evaluates expressions lazily. Without <code>.eval()</code>, <code>A</code> is being read from
+and written to simultaneously, producing wrong entries. The fix forces evaluation into a temporary
+before assignment.
+</div>
+
+<h3>15.5 Comma initializer</h3>
+<pre><span class="ty">MatrixXcd</span> A(2, 2);
+A &lt;&lt; <span class="ty">Cd</span>(1,0), <span class="ty">Cd</span>(0,1),
+     <span class="ty">Cd</span>(0,-1), <span class="ty">Cd</span>(1,0);
+<span class="cmt">// or chained:</span>
+<span class="kw">auto</span> M = (<span class="ty">MatrixXcd</span>(1,1) &lt;&lt; <span class="ty">Cd</span>(0.1, 0.1)).finished();   <span class="cmt">// .finished() closes the init</span></pre>
+</section>
+
+<!-- =========================================================== -->
+<section class="section" id="closing">
+<h2>Closing notes</h2>
+
+<div class="box good">
+<b>Where to go from here:</b>
+<ul>
+  <li>Read <code>src/tdvp_solver.cpp</code> — that is where <code>evolution</code>,
+      <code>tdvp_step</code>, <code>assemble_C</code>, <code>assemble_grad</code> actually live.</li>
+  <li>Read <code>src/kicked_evolution.cpp</code> — understand how <code>realtime_tdvp_step</code>
+      does RK4 integration on the TDVP ODE.</li>
+  <li>Read <code>src/pair_cache.cpp</code> and <code>src/interaction_kernels.cpp</code> — the
+      analytic kernels that make all this possible.</li>
+  <li>Look at <code>EXPERIMENT_S_CONDITIONING.zh.md</code> for a real debugging story about the
+      Eigen aliasing bug.</li>
+</ul>
+</div>
+
+<p style="color: var(--muted); font-size: 0.9rem; margin-top: 18px;">
+Companion to <code>ecg1d_main_principle.html</code> (mathematics) and
+<code>claude_edit_suggestion.html</code> (edit plan). Generated at the user's request to aid
+<code>main.cpp</code> study and C++ learning.
+</p>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,1443 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>ECG1D — Kick TDVP 失败诊断与改进策略</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --fg: #1f2328;
+    --accent: #0b4fb3;
+    --accent2: #7f5000;
+    --good: #1f883d;
+    --bad: #cf222e;
+    --warn: #d29922;
+    --mono: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+    max-width: 1180px;
+    margin: 2em auto;
+    padding: 0 2em;
+    line-height: 1.7;
+    color: var(--fg);
+    background: var(--bg);
+  }
+  h1 {
+    border-bottom: 3px solid var(--accent);
+    padding-bottom: 0.3em;
+    color: var(--accent);
+    font-size: 1.9em;
+  }
+  h2 {
+    border-bottom: 1px solid #d0d7de;
+    padding-bottom: 0.2em;
+    margin-top: 2.2em;
+    color: #24292f;
+  }
+  h3 { color: #24292f; margin-top: 1.6em; }
+  h4 { color: var(--accent2); margin-top: 1.2em; margin-bottom: 0.4em; }
+  code, pre { font-family: var(--mono); font-size: 0.92em; }
+  code { background: #eaeef2; padding: 2px 5px; border-radius: 4px; }
+  pre {
+    background: #0d1117;
+    color: #e6edf3;
+    padding: 1em;
+    border-radius: 6px;
+    overflow-x: auto;
+    line-height: 1.45;
+  }
+  pre .cmt    { color: #8b949e; font-style: italic; }
+  pre .kw     { color: #ff7b72; }
+  pre .str    { color: #a5d6ff; }
+  pre .fn     { color: #d2a8ff; }
+  pre .num    { color: #79c0ff; }
+  pre .ty     { color: #ffa657; }
+  .box {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 1em 1.5em;
+    margin: 1em 0;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .warn  { border-left: 4px solid var(--warn); background: #fff8c5; }
+  .ok    { border-left: 4px solid var(--good); background: #dafbe1; }
+  .bad   { border-left: 4px solid var(--bad);  background: #ffebe9; }
+  .info  { border-left: 4px solid var(--accent); background: #ddf4ff; }
+  .math-block {
+    background: #fff;
+    border: 1px solid #e1e4e8;
+    border-left: 3px solid var(--accent);
+    padding: 0.8em 1.2em;
+    margin: 0.8em 0;
+    font-family: "Cambria Math", "STIX", Cambria, Georgia, serif;
+    font-size: 1.05em;
+    overflow-x: auto;
+  }
+  .math { font-family: "Cambria Math", "STIX", Cambria, Georgia, serif;
+          font-style: italic; padding: 0 3px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    background: #fff;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid #d0d7de;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #f6f8fa; font-weight: 600; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.8em;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .tag-good { background: #dafbe1; color: var(--good); }
+  .tag-bad  { background: #ffebe9; color: var(--bad); }
+  .tag-mid  { background: #fef4d8; color: var(--accent2); }
+  .tag-low  { background: #dafbe1; color: var(--good); }
+  .tag-high { background: #ffebe9; color: var(--bad); }
+  .tag-med  { background: #fef4d8; color: var(--accent2); }
+  .toc {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 0.5em 1.5em;
+  }
+  .toc ul { list-style: none; padding-left: 1em; }
+  .toc li { margin: 0.25em 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .strategy-card {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 10px;
+    padding: 1.2em 1.8em;
+    margin: 1.5em 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+  }
+  .strategy-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5em;
+    flex-wrap: wrap;
+  }
+  .strategy-title { font-size: 1.2em; font-weight: 700; color: var(--accent); }
+  .strategy-meta { font-size: 0.9em; }
+  .strategy-meta .tag { margin-left: 6px; }
+  hr { border: none; border-top: 2px dashed #d0d7de; margin: 2.5em 0; }
+  .callout-q {
+    background: #fbf3ff;
+    border-left: 4px solid #8250df;
+    padding: 0.8em 1.2em;
+    margin: 1em 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .small { font-size: 0.88em; color: #57606a; }
+  .highlight { background: #fff3b3; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1>ECG1D — Kick Operator TDVP 失败诊断与改进策略</h1>
+
+<div class="box info">
+<b>文档定位。</b> 这是一份 <em>思路</em> 文档，不是实施方案。目标是：
+(1) 把当前 kick-TDVP 路径失败的 <b>根因</b> 讲清楚，
+(2) 把 <b>ECG 高斯基底</b> 与 <b>kick 算符</b> 之间的数学冲突讲清楚，
+(3) 罗列 <b>7 条改进路线</b>，每条给出数学原理、预期稳定性、实现成本与物理代价。
+读完你应该可以判断"Trial 2"走哪条路。
+</div>
+
+<div class="toc">
+<b>目录</b>
+<ul>
+  <li><a href="#part1">Part 1 — 诊断：为什么现在不行</a></li>
+  <li><a href="#part2">Part 2 — ECG 基底 × Kick 算符：结构性冲突</a></li>
+  <li><a href="#part3">Part 3 — 7 条改进策略（逐个点评）</a>
+    <ul>
+      <li><a href="#s-a">A. 解析 kick + TDVP free（已 partially 实现）</a></li>
+      <li><a href="#s-b">B. 预先动量增广 + TDVP pulse</a></li>
+      <li><a href="#s-c">C. 解析 boost — 在每次 kick 把 R 参数做虚位移</a></li>
+      <li><a href="#s-d">D. 隐式 / 指数积分器替换 RK4</a></li>
+      <li><a href="#s-e">E. Magnus 展开 —— 把 pulse 整窗解析化</a></li>
+      <li><a href="#s-f">F. Strang 分裂 + 动态基底再增广</a></li>
+      <li><a href="#s-g">G. 流形扩展：把 R_im、A_off-diag 全放进 TDVP 变量</a></li>
+    </ul>
+  </li>
+  <li><a href="#part4">Part 4 — 决策矩阵与推荐路径</a></li>
+  <li><a href="#part5">Part 5 — 附录：关键公式速查</a></li>
+  <li><a href="#qa">Part 6 — Q&amp;A（聊天记录）</a>
+    <ul>
+      <li><a href="#qa-1">Q1. δ(t) 里的 1/T_pulse 到底在说什么？kick 应该表达成什么？</a></li>
+      <li><a href="#qa-2">Q2. 这个哈密顿量定义本身是否合理？能被薛定谔方程正确推动吗？</a></li>
+      <li><a href="#qa-3">Q3. 空间 δ(x) 不违和，但时间 δ(t) 让 H 在那一点无穷大？</a></li>
+    </ul>
+  </li>
+</ul>
+</div>
+
+<!-- ====================================================================== -->
+<h2 id="part1">Part 1 — 诊断：为什么现在不行</h2>
+
+<h3>1.1 物理背景与当前配置</h3>
+
+<p>要模拟的是 Lieb-Liniger 量子踢转子（QKR）：</p>
+
+<div class="math-block">
+H(t) = ∑<sub>a</sub>[ −½ ∂<sub>x<sub>a</sub></sub>² + ½ ω² x<sub>a</sub>² ]
+     + g ∑<sub>a&lt;b</sub> δ(x<sub>a</sub>−x<sub>b</sub>)
+     + κ ∑<sub>a</sub> cos(2k<sub>L</sub>x<sub>a</sub>) · ∑<sub>n</sub> δ(t − nT)
+</div>
+
+<p>你的代码里把这个 Floquet 演化做 Trotter 分裂：</p>
+
+<div class="math-block">
+U(T) ≈ U<sub>free</sub>(T − T<sub>pulse</sub>) · U<sub>kick</sub>(T<sub>pulse</sub>)<br>
+U<sub>kick</sub>(T<sub>pulse</sub>) = exp[−i · (κ/T<sub>pulse</sub>) ∑<sub>a</sub> cos(2k<sub>L</sub>x<sub>a</sub>) · T<sub>pulse</sub>]
+                               = exp[−i κ ∑<sub>a</sub> cos(2k<sub>L</sub>x<sub>a</sub>)]
+</div>
+
+<p>所以 pulse 窗口的 "kicking_scale = 1/T_pulse" 是在模拟 <span class="math">T<sub>pulse</sub> → 0</span> 极限下的瞬时 δ-kick。现在的 <code>run_kick_convergence_test</code> 在 pulse 窗口用 <b>RK4 + TDVP</b> 积这个高幅值短脉冲。</p>
+
+<h3>1.2 Trial 1 的实际数据</h3>
+
+<table>
+<tr><th><span class="math">T<sub>pulse</sub></span></th><th>E<sub>final</sub>(TDVP)</th><th>E<sub>exact</sub></th><th>相对误差</th><th>norm 终值</th></tr>
+<tr><td>0.5  </td><td>5.699                </td><td>0.547</td><td>9.4×10⁰ </td><td>4.5×10³</td></tr>
+<tr><td>0.2  </td><td>−4.83×10⁹⁸          </td><td>0.547</td><td>8.8×10⁹⁸</td><td>−1.75×10¹⁴⁵</td></tr>
+<tr><td>0.1  </td><td>4.551                </td><td>0.547</td><td>7.3×10⁰ </td><td>—</td></tr>
+<tr><td>0.05 </td><td>6.442                </td><td>0.547</td><td>1.1×10¹ </td><td>—</td></tr>
+<tr><td>0.02 </td><td>236.9                </td><td>0.547</td><td>4.3×10² </td><td>—</td></tr>
+<tr><td>0.01 </td><td>178.2                </td><td>0.547</td><td>3.2×10² </td><td>3.9×10⁶</td></tr>
+<tr style="background:#dafbe1;"><td><b>direct (解析 kick)</b></td><td><b>0.630</b></td><td>0.547</td><td><b>0.15</b></td><td>1.00</td></tr>
+</table>
+
+<p>关键事实：<span class="highlight">唯一不 TDVP 的那一行是唯一稳定的</span>。所有走 RK4-TDVP pulse 的行都发散。</p>
+
+<h3>1.3 发散的三个协同原因（按严重程度排列）</h3>
+
+<h4>原因一 · 基底表达能力不足（最根本）</h4>
+
+<p>Kick 算符通过 Jacobi–Anger 展开作用到波函数上：</p>
+
+<div class="math-block">
+e<sup>−iκ cos(2k<sub>L</sub>x)</sup> = ∑<sub>n=−∞</sub><sup>+∞</sup> (−i)<sup>n</sup> J<sub>n</sub>(κ) · e<sup>i·2nk<sub>L</sub>x</sup>
+</div>
+
+<p>也就是说，一次 kick 把波函数<b>同时</b>乘上无穷多个动量平面波 <span class="math">e<sup>i·2nk<sub>L</sub>x</sup></span>，权重由 Bessel 函数 <span class="math">J<sub>n</sub>(κ)</span> 给出。当 κ=1 时权重衰减得还算快：</p>
+
+<div class="math-block">
+J<sub>0</sub>(1)=0.765, J<sub>1</sub>(1)=0.440, J<sub>2</sub>(1)=0.115, J<sub>3</sub>(1)=0.020, J<sub>4</sub>(1)=0.0025
+</div>
+
+<p>即使截断到 |n|≤4，也需要至少 <b>9 个不同动量扇区</b>的基态。但你的 K=3 基底只有三个 <span class="math">R=0</span> 的实高斯函数——这三个高斯只能构造 <b>中心在零动量附近</b> 的态：</p>
+
+<div class="math-block">
+ψ<sub>base</sub>(x) = ∑<sub>i=1</sub><sup>3</sup> u<sub>i</sub> · e<sup>−A<sub>i</sub>x²</sup>  ⟹  ⟨p⟩ = 0, ⟨p²⟩ ≲ max(A<sub>i</sub>)
+</div>
+
+<p>一次 κ=1 的 kick 产生的真实态里有至少 30% 的概率在 <span class="math">|p| ≥ 2k<sub>L</sub></span> 的动量扇区。K=3 基底表示这个态的投影保真度 <b>≪ 1</b>。</p>
+
+<div class="box bad">
+<b>这是 "流形不兼容" 问题。</b> TDVP 在变分流形 <span class="math">M</span> 上演化，但 <span class="math">U<sub>kick</sub>|ψ⟩ ∉ M</span>。TDVP 只能返回 <span class="math">M</span> 内对 <span class="math">U<sub>kick</sub>|ψ⟩</span> 的最佳近似（关于某个度量）。如果 <span class="math">M</span> 根本不含被踢态的主要成分，这个最佳近似和真实态差得没边。
+</div>
+
+<h4>原因二 · 短脉冲的刚性（stiffness）</h4>
+
+<p>为了让有限脉冲极限逼近理想 δ-kick，代码让 <code>kicking_scale = 1/T_pulse</code>。这导致 pulse 窗口的哈密顿量：</p>
+
+<div class="math-block">
+H<sub>pulse</sub> = (κ/T<sub>pulse</sub>) ∑<sub>a</sub> cos(2k<sub>L</sub>x<sub>a</sub>)
+</div>
+
+<p>幅值随 <span class="math">T<sub>pulse</sub> → 0</span> <b>发散</b>。TDVP 方程是</p>
+
+<div class="math-block">
+C(z) · ż = −i · g(z),   其中 g<sub>α</sub> = ∂⟨H⟩/∂z<sub>α</sub><sup>*</sup>
+</div>
+
+<p>当 <span class="math">H ∝ 1/T<sub>pulse</sub></span>，<span class="math">g ∝ 1/T<sub>pulse</sub></span>，而 <span class="math">C</span> 只是基函数几何的 Gram 矩阵（与 <span class="math">T<sub>pulse</sub></span> 无关）。所以</p>
+
+<div class="math-block">
+ż ∝ 1/T<sub>pulse</sub>
+</div>
+
+<p>RK4 的稳定性要求 <span class="math">Δt · ‖ż‖ ≲ O(1)</span>，即需要 <span class="math">Δt ≲ T<sub>pulse</sub></span>。代码里 <code>dt_kick = min(T_pulse/50, 0.05/(scale·κ)) = min(T_pulse/50, 0.05 T_pulse/κ)</code>，本意就是保证这一点。</p>
+
+<p>但这只保证了 "每步 Δz 是小量"，<b>没有</b>保证 "整个 pulse 的累积 Δz 是小量"——累积量 <span class="math">∫<sub>0</sub><sup>T<sub>pulse</sub></sup> ‖ż‖ dt ∝ (1/T<sub>pulse</sub>) · T<sub>pulse</sub> = O(1)</span>，<b>与</b> <span class="math">T<sub>pulse</sub></span> <b>无关</b>。问题就是这个 O(1) 的位移往哪里去——原因一说了，它往流形外面去。</p>
+
+<h4>原因三 · 失去回拉力（加速了原因一、二的灾难）</h4>
+
+<p>按 Edit A 的"纯 Trotter"策略，pulse 窗口只留 kicking 项，把 kinetic、harmonic 全关掉。此时 pulse 窗口的 TDVP 方程里：</p>
+
+<ul>
+  <li>只有一个 <span class="math">cos(2k<sub>L</sub>x)</span> 型势能</li>
+  <li>没有任何项惩罚 "高斯变宽" / "中心漂移" / "动能爆炸"</li>
+</ul>
+
+<p>具体地，<span class="math">g = ∂⟨ψ|cos(2k<sub>L</sub>x)|ψ⟩/∂A*</span> 对高斯宽度参数 A 的梯度并不小，而且 <b>没有对偶项把 A 拉回来</b>。一旦 RK4 把 A 推到负的实部，基函数 <span class="math">e<sup>−Ax²</sup></span> 爆炸，后续计算就失效。</p>
+
+<div class="box warn">
+<b>原因一是必要条件，原因二、三是放大器。</b> 即使你解决了原因二（把 <span class="math">T<sub>pulse</sub></span> 设成 O(1)，让刚性消失）、三（保留 kinetic+harmonic），只要基底没有动量谐波，TDVP 也只是"慢性中毒"——前几步看起来稳、几十个 kick 后一定崩。
+</div>
+
+<h3>1.4 失败模式对照表</h3>
+
+<table>
+<tr><th>症状</th><th>根因</th><th>证据</th></tr>
+<tr><td>1 步 kick 后 norm ≠ 1</td><td>基底不够 → 投影丢信息</td><td>direct baseline fidelity=0.85（K=3 时）</td></tr>
+<tr><td>norm 越变越大（不是越变越小）</td><td>基底病态 → <span class="math">S⁻¹</span> 放大噪声</td><td><code>S_cond</code> 随 kick 次数线性增长</td></tr>
+<tr><td>能量远超物理范围</td><td>高斯宽度崩坏 → ⟨p²⟩ 假性放大</td><td>E → 10⁹⁸ 代表数值溢出</td></tr>
+<tr><td>T<sub>pulse</sub> 越小越崩</td><td>刚性 + 基底同时破</td><td>T<sub>pulse</sub>=0.5 崩得最慢</td></tr>
+</table>
+
+<!-- ====================================================================== -->
+<h2 id="part2">Part 2 — ECG 基底 × Kick 算符：结构性冲突</h2>
+
+<h3>2.1 ECG 基底能表达什么</h3>
+
+<p>单个 ECG 基函数：</p>
+
+<div class="math-block">
+φ(x) = exp[−x<sup>T</sup>(A+B)x + 2R<sup>T</sup>Bx − R<sup>T</sup>BR]
+</div>
+
+<p>关键参数：</p>
+<ul>
+  <li><span class="math">A</span>：实对称正定（通常），决定高斯<b>宽度</b>和<b>粒子间关联</b>（off-diagonal）。</li>
+  <li><span class="math">B</span>：对角实矩阵，与 R 一起定义<b>中心位置</b>。</li>
+  <li><span class="math">R</span>：N 维复向量。<b>实部</b>是高斯中心（实空间位移），<b>虚部</b>是动量相位 <span class="math">e<sup>i·2B·Im(R)·x</sup></span>。</li>
+  <li><span class="math">u</span>：线性系数（CI-style）。</li>
+</ul>
+
+<div class="box ok">
+<b>关键事实 1：一个 <span class="math">R</span> 虚部非零的 ECG 就是一个"动量谐波 × 高斯"。</b>
+把 <span class="math">R = R<sub>r</sub> + i·R<sub>i</sub></span> 代入：<br>
+<span class="math">φ(x) = e<sup>−(x−R<sub>r</sub>)<sup>T</sup>(A+B)(x−R<sub>r</sub>) + 2i R<sub>i</sub><sup>T</sup>B(x−R<sub>r</sub>)</sup> · (const)</span><br>
+这是中心在 <span class="math">R<sub>r</sub></span>、动量为 <span class="math">2B·R<sub>i</sub></span> 的高斯波包。
+</div>
+
+<div class="box ok">
+<b>关键事实 2（最重要）：kick 算符作用在 ECG 上仍然是 ECG 的线性组合。</b><br>
+<span class="math">e<sup>i·2nk<sub>L</sub>x</sup> · e<sup>−(A+B)x² + 2R<sup>T</sup>Bx − R<sup>T</sup>BR</sup></span>
+= <span class="math">e<sup>−(A+B)x² + 2(R<sup>T</sup>B + i·nk<sub>L</sub>e<sup>T</sup>)x − R<sup>T</sup>BR</sup></span><br>
+也就是 <b>同样的 A、B，R 被替换成</b> <span class="math">R' = R + i·nk<sub>L</sub>·B⁻¹·e</span>。
+这说明 ECG 流形 <b>在 "乘以动量平面波" 这一操作下封闭</b>——而 <span class="math">U<sub>kick</sub></span> 正是这些平面波的 <b>Bessel 加权叠加</b>。
+</div>
+
+<h3>2.2 为什么一个 ECG 不够、但"扩大的 ECG 流形"够</h3>
+
+<p>一次 kick 后：</p>
+
+<div class="math-block">
+U<sub>kick</sub>|φ<sub>R</sub>⟩ = ∑<sub>n=−∞</sub><sup>+∞</sup> (−i)<sup>n</sup> J<sub>n</sub>(κ) |φ<sub>R + inkₗB⁻¹</sub>⟩
+</div>
+
+<p>这是对 <b>无穷多</b> 个 ECG 的加权求和。但两件事救场：</p>
+
+<ol>
+  <li><b>Bessel 截断。</b> 当 n 大于某个阈值（取决于 κ），<span class="math">J<sub>n</sub>(κ)</span> 指数衰减。κ=1 时 |n|≤4 足够；κ=10 时大概 |n|≤15。实用上有限维就够。</li>
+  <li><b>高斯 damping 因子。</b> 代码里 <code>single_particle_kick_kernel</code> 里的 <span class="math">exp(−n²k<sub>L</sub>²·K<sub>inv</sub>(a,a))</span> 表明重叠 <span class="math">⟨φ<sub>R</sub>|φ<sub>R+inkₗ</sub>⟩</span> 高斯衰减；基底两两间的"远距离"动量扇区耦合指数小。</li>
+</ol>
+
+<div class="box info">
+<b>所以 ECG 和 kick 的关系不是"根本不相容"，而是"单个 ECG 不够、但覆盖 |n|≲n<sub>max</sub> 动量扇区的 ECG 集合刚好够"。</b>
+这正是 <code>augment_basis_with_momentum</code> 和 <code>--kicked-gamma0</code> 路径的哲学。
+</div>
+
+<h3>2.3 ECG 相对于其他基底的优劣</h3>
+
+<table>
+<tr><th>基底</th><th>优势</th><th>劣势（对 kick）</th></tr>
+<tr>
+  <td><b>ECG（你现在用的）</b></td>
+  <td>
+    <ul>
+      <li>所有算符矩阵元 <b>闭式解析</b>（高斯积分）</li>
+      <li>粒子间关联通过 off-diagonal A 自然编码，不需要 CI 展开</li>
+      <li>对称化通过 N! permutation sum，规模可控到 N≲6</li>
+      <li>在 R 虚部自由度下已经能表达任意动量高斯</li>
+    </ul>
+  </td>
+  <td>
+    <ul>
+      <li>一个 ECG 只覆盖 <b>一个</b> 动量扇区</li>
+      <li>动量多扇区必须通过 K 个基函数覆盖 → 基底尺寸线性膨胀</li>
+      <li>非正交基，S 矩阵条件数可能很坏</li>
+    </ul>
+  </td>
+</tr>
+<tr>
+  <td><b>平面波（Fourier）</b></td>
+  <td>
+    <ul>
+      <li>kick 是 <b>对角矩阵</b>（只移动 n → n+m）</li>
+      <li>动能也是对角</li>
+      <li>可以做 split-step FFT</li>
+    </ul>
+  </td>
+  <td>
+    <ul>
+      <li>delta 相互作用难处理（需要正则化）</li>
+      <li>粒子数 N 多时指数膨胀</li>
+      <li>空间局域化（如 harmonic trap 基态）需要大量 k 点</li>
+    </ul>
+  </td>
+</tr>
+<tr>
+  <td><b>谐振子本征基</b></td>
+  <td>
+    <ul>
+      <li>free evolution 是对角相位</li>
+      <li>matrix elements 已知</li>
+    </ul>
+  </td>
+  <td>
+    <ul>
+      <li>kick matrix element 需要 Hermite 积分，涉及 Hermite-Gauss 正交</li>
+      <li>N 粒子多体反对称化复杂</li>
+      <li>delta 同样麻烦</li>
+    </ul>
+  </td>
+</tr>
+<tr>
+  <td><b>MPS / DMRG</b></td>
+  <td>
+    <ul>
+      <li>纠缠结构可调、bond dim 控制精度</li>
+      <li>对 1D 局部哈密顿量高效</li>
+    </ul>
+  </td>
+  <td>
+    <ul>
+      <li>连续空间要先离散化（lattice）</li>
+      <li>long-range delta 在连续空间里没有自然 MPO 表示</li>
+      <li>完全不同的代码基础</li>
+    </ul>
+  </td>
+</tr>
+</table>
+
+<p><b>结论</b>：ECG 对 kick 不是最好（平面波最好），但对 "kick + delta + harmonic" 联合是 <b>最平衡</b> 的选择。关键是要把 R 虚部自由度用起来。</p>
+
+<!-- ====================================================================== -->
+<h2 id="part3">Part 3 — 改进策略（7 条，逐个点评）</h2>
+
+<p>下面 7 条按"改动量从小到大、物理代价从低到高"排列。每条给出：数学原理、预期稳定性、实现成本、物理代价。</p>
+
+<!-- ============================== Strategy A ============================== -->
+<div class="strategy-card" id="s-a">
+  <div class="strategy-header">
+    <div class="strategy-title">A. 解析 kick + TDVP free（已部分实现）</div>
+    <div class="strategy-meta">
+      <span class="tag tag-low">实现：极易</span>
+      <span class="tag tag-good">稳定性：高</span>
+      <span class="tag tag-mid">物理代价：中</span>
+    </div>
+  </div>
+
+  <h4>思路</h4>
+  <p>完全绕开"pulse 窗口 TDVP"。pulse 视为<b>瞬时</b>，用 <code>apply_analytic_kick</code> 完成；free 窗口用 <code>realtime_tdvp_step</code>（或者固定基的 <code>free_evolve_fixed_basis</code>）。</p>
+
+  <h4>数学原理</h4>
+  <p>利用 Jacobi-Anger 解析展开，直接在基底上构造 kick 矩阵元：</p>
+  <div class="math-block">
+  K<sub>ij</sub> = ⟨φ<sub>i</sub>|e<sup>−iκ∑<sub>a</sub>cos(2k<sub>L</sub>x<sub>a</sub>)</sup>|φ<sub>j</sub>⟩
+     = ∑<sub>n<sub>1</sub>...n<sub>N</sub></sub> ∏<sub>a</sub>[(−i)<sup>n<sub>a</sub></sup>J<sub>n<sub>a</sub></sub>(κ)] · ⟨φ<sub>i</sub>|e<sup>i·2∑<sub>a</sub>n<sub>a</sub>k<sub>L</sub>x<sub>a</sub></sup>|φ<sub>j</sub>⟩
+  </div>
+  <p>每个 <span class="math">⟨φ<sub>i</sub>|e<sup>i·2nk<sub>L</sub>x<sub>a</sub></sup>|φ<sub>j</sub>⟩</span> 是高斯积分，有闭式。这就是 <code>src/kick_operator.cpp:18-51</code> 的 <code>single_particle_kick_kernel</code>。</p>
+  <p>然后通过广义线性代数 <span class="math">u' = S⁻¹ K u</span> 把 kick 作用到线性系数 u 上（<b>不动 A、B、R 参数</b>）。</p>
+
+  <h4>优点</h4>
+  <ul>
+    <li>Kick 本身 <b>精确</b>（到 Jacobi 截断阶 n_bessel）</li>
+    <li>Kick fidelity 可量化，直接告诉你基底够不够</li>
+    <li>没有刚性问题（不做 ODE 积分）</li>
+    <li>代码已经完整，只差在 <code>run_kick_convergence_test</code> 里调用</li>
+  </ul>
+
+  <h4>缺点</h4>
+  <ul>
+    <li><b>基底必须预先扩大。</b> 如果基底只 K=3，fidelity 会很低（~0.85），误差直接从第一次 kick 就固定下来。</li>
+    <li>无法回答"有限脉冲 TDVP 是否收敛到理想 kick"这个学术问题——它 <b>跳过</b> 了这个问题。</li>
+    <li>每次 kick 之间基函数不变，但 u 可能把 weight 集中到少数基函数 → 长时间 norm drift 可能累积。</li>
+  </ul>
+
+  <h4>实施难度：</h4>
+  <p>5 分钟。把 <code>run_kick_convergence_test</code> 里 <code>apply_kick</code> 的 TDVP 分支替换成 <code>apply_analytic_kick</code>。已有的 <code>run_kicked_gamma0_test</code> 就是这样做的。</p>
+
+  <h4>推荐用法</h4>
+  <p>作为 <b>生产路径</b>，尤其是想算 MBDL 长时间（n_kicks ≥ 100）动力学时。Kick 误差被 <b>基底</b> 控制，不被 <b>时间积分</b> 控制，这对数百次 kick 的累积稳定性至关重要。</p>
+</div>
+
+<!-- ============================== Strategy B ============================== -->
+<div class="strategy-card" id="s-b">
+  <div class="strategy-header">
+    <div class="strategy-title">B. 预先动量增广 + TDVP pulse</div>
+    <div class="strategy-meta">
+      <span class="tag tag-low">实现：易</span>
+      <span class="tag tag-mid">稳定性：中</span>
+      <span class="tag tag-mid">物理代价：低</span>
+    </div>
+  </div>
+
+  <h4>思路</h4>
+  <p>在进入 kick 循环之前调用 <code>augment_basis_with_momentum(basis, k<sub>L</sub>, n_mom=4, b_val=0.5)</code>，把基底从 K=3 扩到 K~30+。然后 pulse 窗口仍然走 RK4-TDVP，但此时 <b>流形已经覆盖了主要动量扇区</b>。</p>
+
+  <h4>数学原理</h4>
+  <p>增广后基底包含 <span class="math">{φ<sub>R=inkₗ/b</sub>}</span>，n ∈ [−n<sub>mom</sub>, n<sub>mom</sub>]。一个 Bessel 展开截断到 <span class="math">|n|≤n<sub>mom</sub></span> 的 kicked 态就落在这个扩展流形里。</p>
+  <p>pulse 窗口 TDVP 方程仍然成立，但 <span class="math">‖ψ − P<sub>M</sub>U<sub>kick</sub>ψ‖</span> 现在是 Bessel 尾巴 <span class="math">~J<sub>n<sub>mom</sub>+1</sub>(κ)</span> 而非 O(1)。</p>
+
+  <h4>优点</h4>
+  <ul>
+    <li>保留"TDVP 全过程"的学术正确性（测的是真·有限脉冲极限）</li>
+    <li>基底够大时，RK4 能跑</li>
+    <li><code>augment_basis_with_momentum</code> 已经实现</li>
+  </ul>
+
+  <h4>缺点</h4>
+  <ul>
+    <li>K 从 3 涨到 ~30，单步 TDVP 代价涨 100×（C 是 O(K·d)²，d 是参数数）</li>
+    <li>S 条件数变坏（momentum 高斯之间重叠非零），需要调 <code>max_cond</code></li>
+    <li>刚性问题 <b>没解决</b>：<span class="math">T<sub>pulse</sub></span> 太小 RK4 还是崩，只是崩得慢一点</li>
+    <li>实测（Trial 1 边注）：光增广到 K=15 对 T_pulse=0.1 仍然不稳</li>
+  </ul>
+
+  <h4>实施难度：</h4>
+  <p>15 分钟。在 <code>run_kick_convergence_test</code> 里 SVM 完之后、循环之前插一行 <code>augment_basis_with_momentum</code>。但要重新确认 <code>alpha_z_list</code>（因为 K 变了）。</p>
+
+  <h4>物理代价</h4>
+  <p>低——基底增广本身是合法的变分扩张，不改哈密顿量。</p>
+
+  <h4>推荐用法</h4>
+  <p>作为 <b>学术验证路径</b>——如果你 <b>必须</b> 回答"有限脉冲 TDVP 收敛到 δ-kick"，跟 A 搭配使用（A 做生产，B 做验证）。</p>
+</div>
+
+<!-- ============================== Strategy C ============================== -->
+<div class="strategy-card" id="s-c">
+  <div class="strategy-header">
+    <div class="strategy-title">C. 解析 boost — 在每次 kick 把 R 虚部移一下</div>
+    <div class="strategy-meta">
+      <span class="tag tag-med">实现：中</span>
+      <span class="tag tag-good">稳定性：高</span>
+      <span class="tag tag-low">物理代价：低（有截断）</span>
+    </div>
+  </div>
+
+  <h4>思路（novel，我自己想的）</h4>
+  <p>不建立 kick 矩阵，也不做 TDVP 积分。每次 kick 时，<b>对基底每个函数执行 Jacobi-Anger 展开</b>：把一个基函数 <span class="math">φ<sub>R</sub></span> 替换成 |n|≤n<sub>max</sub> 的加权和 <span class="math">∑<sub>n</sub>(−i)<sup>n</sup>J<sub>n</sub>(κ)φ<sub>R + inkₗB⁻¹</sub></span>。这会让基底尺寸 <span class="math">K → K·(2n<sub>max</sub>+1)</span>。然后 <b>定期裁剪</b>（把小权重的基函数合并或丢弃）。</p>
+
+  <h4>数学原理</h4>
+  <div class="math-block">
+  e<sup>−iκ cos(2k<sub>L</sub>x)</sup> · φ<sub>R</sub>(x)
+    = ∑<sub>n</sub>(−i)<sup>n</sup>J<sub>n</sub>(κ) · φ<sub>R + inkₗB⁻¹</sub>(x)
+  </div>
+  <p>因为 R 虚部平移正好是"乘动量平面波"操作，所以 <span class="math">U<sub>kick</sub></span> 作用在基底上是 <b>每个基函数派生出 2n<sub>max</sub>+1 个"儿子"</b>，儿子就是原函数 R 虚部偏移了 ±k<sub>L</sub>/b, ±2k<sub>L</sub>/b, ... 的版本。这是严格的，不涉及任何近似（除了 n<sub>max</sub> 截断）。</p>
+
+  <h4>优点</h4>
+  <ul>
+    <li>Kick 是 <b>严格解析</b> 作用（到截断阶），<b>不做 ODE 积分</b>，完全没刚性</li>
+    <li>与 A 相比，u 不需要重解（因为基底本身已经被 kick 过了）</li>
+    <li>与 B 相比，<b>自适应</b>——只在真正被 kick 的方向上增广，不做预先大而全的增广</li>
+    <li>每次 free 演化的基底 <b>主动跟踪</b> 波函数的动量扇区分布</li>
+  </ul>
+
+  <h4>缺点</h4>
+  <ul>
+    <li>基底尺寸<b>指数增长</b>——每次 kick 乘 (2n_max+1)，n_kicks=100 时不可控</li>
+    <li>必须配合 <b>基底压缩</b>：比如 SVD 截断、CUR-decomposition、或合并几乎共线的基函数</li>
+    <li>实现复杂度比 A/B 高一个量级</li>
+    <li>压缩引入误差，可能在 n_kicks 多时慢慢积累</li>
+  </ul>
+
+  <h4>实施难度：</h4>
+  <p>2-3 天。需要：(1) 实现 R-virtual-shift 的 kick 作用，(2) 实现基底压缩器（SVD on overlap matrix + 重新展开），(3) 调 n_max 和压缩阈值。</p>
+
+  <h4>数学细节</h4>
+  <p>压缩的关键：在新基底 <span class="math">{φ<sub>j</sub>}</span> 上算 Gram <span class="math">S</span>，SVD 得到 <span class="math">S = V D V†</span>。截断 <span class="math">D</span> 的小奇异值，保留 <span class="math">V</span> 的前 K' 列作为"有效基"。然后把波函数投影到这个子空间。这保证压缩误差可量化（=被扔掉的奇异值之和）。</p>
+
+  <h4>推荐用法</h4>
+  <p>如果 Strategy B 的基底尺寸压力太大（比如你想做 N=4，<span class="math">K×(2n<sub>mom</sub>+1)<sup>N</sup></span> 会爆），C 是更 scalable 的路线。对 N=2,3 没必要，直接用 A+B。</p>
+</div>
+
+<!-- ============================== Strategy D ============================== -->
+<div class="strategy-card" id="s-d">
+  <div class="strategy-header">
+    <div class="strategy-title">D. 隐式 / 指数积分器替换 RK4</div>
+    <div class="strategy-meta">
+      <span class="tag tag-high">实现：难</span>
+      <span class="tag tag-mid">稳定性：看情况</span>
+      <span class="tag tag-mid">物理代价：低</span>
+    </div>
+  </div>
+
+  <h4>思路</h4>
+  <p>把 <code>realtime_tdvp_step</code> 里的 RK4 换成<b>隐式中点法 (implicit midpoint)</b> 或 <b>Gauss-Legendre 隐式 Runge-Kutta</b>，或者 <b>exponential integrator</b>（把线性部分 exp 精确处理）。</p>
+
+  <h4>数学原理</h4>
+  <p>隐式中点法：</p>
+  <div class="math-block">
+  z<sub>n+1</sub> = z<sub>n</sub> + Δt · f((z<sub>n</sub>+z<sub>n+1</sub>)/2)
+  </div>
+  <p>这是 <b>辛</b> 且 A-stable 的，对任意刚性问题都稳定（误差可能大，但不会爆炸）。代价是每步要解一个非线性方程（Newton 迭代）。</p>
+  <p>Exponential integrator：把 <span class="math">ż = Lz + N(z)</span> 的线性部分 <span class="math">L</span> 用 <span class="math">exp(LΔt)</span> 精确处理：</p>
+  <div class="math-block">
+  z<sub>n+1</sub> = e<sup>LΔt</sup>z<sub>n</sub> + Δt·φ<sub>1</sub>(LΔt)·N(z<sub>n</sub>)
+  </div>
+  <p>其中 <span class="math">φ<sub>1</sub>(z) = (e<sup>z</sup>−1)/z</span>。这对"大振幅但线性"的 kick 特别合适——cos 作为位置函数，在固定基底下 <span class="math">⟨φ<sub>i</sub>|cos(2k<sub>L</sub>x)|φ<sub>j</sub>⟩</span> 是常数矩阵，可以看成"线性"的。</p>
+
+  <h4>优点</h4>
+  <ul>
+    <li>彻底消除刚性问题</li>
+    <li>对任意 <span class="math">T<sub>pulse</sub></span> 都能跑</li>
+  </ul>
+
+  <h4>缺点</h4>
+  <ul>
+    <li>隐式法每步要 Newton 迭代 → 性能 3-5× 下降</li>
+    <li>Newton 的 Jacobian 涉及 TDVP 方程的二阶导，代码量爆炸</li>
+    <li><b>不能解决基底不够的问题</b>——积分器再好，流形投影丢的信息也找不回来</li>
+    <li>Exponential integrator 要求 <span class="math">L</span> 是常数矩阵，但 TDVP 里 C 依赖 z，不是常数</li>
+  </ul>
+
+  <h4>实施难度：</h4>
+  <p>1-2 周。Eigen 不自带隐式 RK，需要自己写 Newton 迭代。要验证辛性、能量守恒。</p>
+
+  <h4>推荐用法</h4>
+  <p><b>不推荐单独用</b>——不解决根因。除非你已经搞定基底（用 B 或 C），然后想把 <span class="math">T<sub>pulse</sub></span> 推到极小以做"理想 δ-kick" 的学术验证，此时隐式法是最后一公里的事。</p>
+</div>
+
+<!-- ============================== Strategy E ============================== -->
+<div class="strategy-card" id="s-e">
+  <div class="strategy-header">
+    <div class="strategy-title">E. Magnus 展开 —— 把 pulse 整窗解析化</div>
+    <div class="strategy-meta">
+      <span class="tag tag-high">实现：难</span>
+      <span class="tag tag-good">稳定性：高</span>
+      <span class="tag tag-low">物理代价：可量化</span>
+    </div>
+  </div>
+
+  <h4>思路</h4>
+  <p>对 pulse 窗口整个 <span class="math">T<sub>pulse</sub></span>，不做 RK4 离散，而是写 <span class="math">U<sub>pulse</sub> = exp(Ω)</span>，Ω 由 Magnus 级数给出。一阶截断就是：</p>
+  <div class="math-block">
+  Ω<sub>1</sub> = −i ∫<sub>0</sub><sup>T<sub>pulse</sub></sup> H(t) dt = −iκ cos(2k<sub>L</sub>x)  (吸收了 1/T<sub>pulse</sub> × T<sub>pulse</sub>)
+  </div>
+  <p>二阶：</p>
+  <div class="math-block">
+  Ω<sub>2</sub> = −½ ∫<sub>0</sub><sup>T<sub>pulse</sub></sup>dt<sub>1</sub>∫<sub>0</sub><sup>t<sub>1</sub></sup>dt<sub>2</sub>[H(t<sub>1</sub>),H(t<sub>2</sub>)]
+  </div>
+  <p>对理想 δ-kick，H(t) 与自身对易，Magnus 级数在一阶截断——<b>这就是解析 kick</b>。对有限 T<sub>pulse</sub> + 同时有 kinetic/harmonic 的情形，[T, cos(2k<sub>L</sub>x)] ≠ 0，Magnus 二阶给出 T<sub>pulse</sub>² 修正。</p>
+
+  <h4>优点</h4>
+  <ul>
+    <li><b>不需要 ODE 积分</b>，整个 pulse 一次解析</li>
+    <li>在基底 <b>有限维</b> 下，Ω 是 K×K 矩阵，exp(Ω) 用 Padé 或谱分解精确算</li>
+    <li>有限 T<sub>pulse</sub> 的修正可量化（= Magnus 截断误差）</li>
+    <li>辛（严格酉）</li>
+  </ul>
+
+  <h4>缺点</h4>
+  <ul>
+    <li>Magnus 系数涉及嵌套对易子 <span class="math">[H(t<sub>1</sub>),H(t<sub>2</sub>)]</span>，解析计算到二阶以上非常痛苦</li>
+    <li>对于 δ-kick 极限，Magnus 一阶 <b>等价于</b> Strategy A，所以收益有限</li>
+    <li>对 T<sub>pulse</sub> 有限的情况，二阶修正需要实现 [T+V, cos] 的基函数矩阵元，工作量大</li>
+  </ul>
+
+  <h4>实施难度：</h4>
+  <p>2-3 周。核心工作是把对易子矩阵元解析化。</p>
+
+  <h4>推荐用法</h4>
+  <p>如果你想把 Strategy A 推广到 <b>有限 T<sub>pulse</sub></b>（比如模拟实验中的 20μs 脉宽）并保持解析性，Magnus 是正确路径。否则 A 已经够了。</p>
+</div>
+
+<!-- ============================== Strategy F ============================== -->
+<div class="strategy-card" id="s-f">
+  <div class="strategy-header">
+    <div class="strategy-title">F. Strang 分裂 + 动态基底再增广</div>
+    <div class="strategy-meta">
+      <span class="tag tag-med">实现：中</span>
+      <span class="tag tag-good">稳定性：高</span>
+      <span class="tag tag-low">物理代价：低</span>
+    </div>
+  </div>
+
+  <h4>思路</h4>
+  <p>把每个 kick 周期分解成：</p>
+  <div class="math-block">
+  U(T) ≈ U<sub>free</sub>(T/2) · U<sub>kick</sub>(解析) · U<sub>free</sub>(T/2)
+  </div>
+  <p>这是 Strang splitting，精度 O(T³)，比 1 阶 Trotter 的 O(T²) 高一阶。free 段用 TDVP (或固定基 exact)，kick 段用解析 (Strategy A 或 C)。</p>
+  <p>关键加料：free 段结束后，检查基底对当前波函数的表达保真度；如果 fidelity 明显掉了（说明 free 演化把波函数推到了流形外），做一次 <b>在线基底扩张</b>（把当前波函数的 "residual" 加入基底）。</p>
+
+  <h4>数学原理</h4>
+  <p>Strang 误差项是嵌套对易子 <span class="math">[[H<sub>free</sub>, H<sub>kick</sub>], ...]·T³/24</span>。对实验参数 (T=1, κ=1)，这个误差 ~10⁻²，比 1 阶 Trotter (~10⁻¹) 好一个量级。</p>
+  <p>在线扩张：定义 residual <span class="math">|r⟩ = |ψ⟩ − P<sub>M</sub>|ψ⟩</span>。把 |r⟩ 拟合成新 ECG（最小二乘），加到基底里。</p>
+
+  <h4>优点</h4>
+  <ul>
+    <li>物理上正确的 Trotter 展开</li>
+    <li>动态基底：只在真正需要时扩张，控制 K 膨胀</li>
+    <li>完美结合 A 和 C 的优点</li>
+  </ul>
+
+  <h4>缺点</h4>
+  <ul>
+    <li>在线拟合新 ECG（把 |r⟩ 近似成 <span class="math">∑ c<sub>i</sub>·ECG<sub>i</sub></span>）是非线性最小二乘，本身不简单</li>
+    <li>基底再优化时 S 条件数要重新监控</li>
+    <li>如果 fidelity 下降太快，可能要每步都扩张 → 退化成 Strategy C</li>
+  </ul>
+
+  <h4>实施难度：</h4>
+  <p>1 周。主要工作在在线拟合模块。</p>
+
+  <h4>推荐用法</h4>
+  <p>中长时间（n_kicks ~ 100）动力学的"软工程"方案。在 A 的基础上加 Strang 分裂即可快速上手，在线扩张是锦上添花。</p>
+</div>
+
+<!-- ============================== Strategy G ============================== -->
+<div class="strategy-card" id="s-g">
+  <div class="strategy-header">
+    <div class="strategy-title">G. 流形扩展：把 R_im、A_off-diag 全放进 TDVP 变量</div>
+    <div class="strategy-meta">
+      <span class="tag tag-med">实现：中</span>
+      <span class="tag tag-mid">稳定性：待验证</span>
+      <span class="tag tag-low">物理代价：低</span>
+    </div>
+  </div>
+
+  <h4>思路</h4>
+  <p>你的 <code>SolverConfig::dynamics()</code> 已经打开 <code>optimize_B</code> 和 <code>optimize_R</code>，但默认 <code>optimize_A</code> 也只含 diagonal。对 kick 来说，最相关的自由度是 <b>R 的虚部</b>（动量），因为 kick 直接把 R 虚部移位。如果 TDVP 里包含 R 虚部作为主动变量，那么即使基底只有 K=3，每个基函数也能"跟着 kick 飘动"到正确的动量位置。</p>
+
+  <h4>数学原理</h4>
+  <p>让 TDVP 变分流形是：</p>
+  <div class="math-block">
+  M = { ∑<sub>i</sub> u<sub>i</sub>·exp[−(A<sub>i</sub>+B)x²+2R<sub>i</sub><sup>T</sup>Bx−...]  :  u, A, R 都复 }
+  </div>
+  <p>变分参数数：K × (1 + N(N+1)/2 + N) 复自由度。对 N=2, K=3：3×(1+3+2)=18 复 = 36 实自由度。</p>
+  <p>kick 算符作用后，"最佳拟合"是把 <span class="math">R<sub>i</sub> → R<sub>i</sub> + i·⟨J⟩·k<sub>L</sub>/B</span>（某种 Bessel 加权平均）。TDVP 方程会自动把 R 推向这个方向，只要积分器能稳定处理。</p>
+
+  <h4>优点</h4>
+  <ul>
+    <li>基底保持最小 K，计算量最低</li>
+    <li>物理上优雅：让基函数"随波逐流"</li>
+    <li>单个高斯波包就能跟踪一个动量的经典轨迹</li>
+  </ul>
+
+  <h4>缺点</h4>
+  <ul>
+    <li>kick 产生的是 <b>多动量叠加</b>（Bessel 权重覆盖 |n|≤4），单个 R 只能跟一个动量 → 信息仍然丢</li>
+    <li>K=3 基底里每个基函数的 R 都往"平均动量"飘，<b>不能</b>分别覆盖 n=1, n=2, n=3 扇区</li>
+    <li>变分流形几何变坏（大量零模），C 矩阵更病态</li>
+  </ul>
+
+  <h4>实施难度：</h4>
+  <p>已经存在！把 <code>config = SolverConfig::dynamics()</code> 打开即可。测一下就知道行不行。</p>
+
+  <h4>数学上的根本限制</h4>
+  <p>这个策略假设"每个基函数跟踪一个经典轨迹"的 <b>TDVP 半经典近似</b>。对 κ≪1 弱 kick 或许可以，对 κ~1 中等 kick <b>肯定不够</b>，因为 kick 不是位移、是多扇区展开。单高斯包 ansatz 的经典极限丢掉量子干涉。</p>
+
+  <h4>推荐用法</h4>
+  <p>作为 <b>快速试水</b>：打开 dynamics 模式跑一次，看 fidelity 如何。如果有意外惊喜（可能性小）就用；大概率只是证明"单高斯包覆盖多动量扇区"是不可能的，从而佐证 B/C 的必要性。</p>
+</div>
+
+<!-- ====================================================================== -->
+<h2 id="part4">Part 4 — 决策矩阵与推荐路径</h2>
+
+<h3>4.1 综合评价</h3>
+
+<table>
+<tr>
+  <th>Strategy</th>
+  <th>解决基底问题</th>
+  <th>解决刚性</th>
+  <th>n_kicks 扩展性</th>
+  <th>实现</th>
+  <th>物理保真</th>
+  <th>推荐度</th>
+</tr>
+<tr>
+  <td><b>A</b>. 解析 kick + TDVP free</td>
+  <td>✅（如果基底够）</td><td>✅</td><td>✅</td><td>★（极易）</td><td>精确 Jacobi 截断</td>
+  <td>⭐⭐⭐⭐⭐ 生产首选</td>
+</tr>
+<tr>
+  <td><b>B</b>. 预先动量增广 + TDVP</td>
+  <td>✅</td><td>❌</td><td>一般</td><td>★★</td><td>保留完整 TDVP</td>
+  <td>⭐⭐⭐ 学术验证</td>
+</tr>
+<tr>
+  <td><b>C</b>. 解析 boost + 基底压缩</td>
+  <td>✅（自适应）</td><td>✅</td><td>✅</td><td>★★★★</td><td>严格 + 压缩误差</td>
+  <td>⭐⭐⭐⭐ N≥4 时</td>
+</tr>
+<tr>
+  <td><b>D</b>. 隐式积分器</td>
+  <td>❌</td><td>✅</td><td>一般</td><td>★★★★</td><td>保留 TDVP</td>
+  <td>⭐⭐ 只配 B 用</td>
+</tr>
+<tr>
+  <td><b>E</b>. Magnus 展开</td>
+  <td>部分</td><td>✅</td><td>✅</td><td>★★★★</td><td>T_pulse 解析修正</td>
+  <td>⭐⭐⭐ 实验匹配</td>
+</tr>
+<tr>
+  <td><b>F</b>. Strang + 动态增广</td>
+  <td>✅</td><td>✅</td><td>✅</td><td>★★★</td><td>Strang 二阶</td>
+  <td>⭐⭐⭐⭐ 中程研究</td>
+</tr>
+<tr>
+  <td><b>G</b>. 流形扩展</td>
+  <td>❌（半经典极限）</td><td>一般</td><td>一般</td><td>★</td><td>低</td>
+  <td>⭐⭐ 快速试水</td>
+</tr>
+</table>
+
+<h3>4.2 具体推荐（按你的目标分）</h3>
+
+<div class="box ok">
+<b>目标 1：短期拿 MBDL 数据（N=2~4，n_kicks=100~1000）</b>
+<ol>
+  <li>先用 <b>Strategy A</b>（把 <code>run_kick_convergence_test</code> 的 TDVP pulse 换成 <code>apply_analytic_kick</code>，先不管 convergence 问题）</li>
+  <li>配合 <b>Strategy B</b> 的预先增广，确保 kick fidelity > 0.999</li>
+  <li>有时间再加 <b>Strategy F</b> 的 Strang 分裂提高精度</li>
+</ol>
+</div>
+
+<div class="box info">
+<b>目标 2：学术完整性（想发表"TDVP-ECG 对 QKR 的定量模拟"）</b>
+<ol>
+  <li>主路径用 A+B（生产数据）</li>
+  <li>附录做 <b>Strategy E</b> 的 Magnus 二阶修正，讨论 T_pulse 有限效应</li>
+  <li>跟 paper 的 QMC 做对比，证明 ECG 能做到定量而不仅定性</li>
+</ol>
+</div>
+
+<div class="box warn">
+<b>目标 3：追求 N=5,6（实验规模的方向）</b>
+<ol>
+  <li>必须用 <b>Strategy C</b>（基底随 kick 自适应增广 + 压缩）</li>
+  <li>实现难度高，考虑 1-2 个月的工作量</li>
+  <li>此时"N! permutation sum"也是瓶颈，可能需要 Slater-determinant trick</li>
+</ol>
+</div>
+
+<h3>4.3 Trial 2 建议的第一步</h3>
+
+<p>按照你现在的代码状态和我看到的 Trial 1 结果，最经济的下一步是：</p>
+
+<ol>
+  <li><b>确认 Strategy A 能跑通 κ=1, n_kicks=10, K 增广到 ~20</b>——这是最小可行产品。拿这个跟 <code>run_kicked_gamma0_test</code> 的 PASS 结果交叉验证，就能把 pulse 窗口的"convergence 问题"结论写死。</li>
+  <li>如果第 1 步通过，把 n_kicks 推到 50, 100, 500，看长时间累积误差的上升速度，比对 paper 里的 MBDL signature。</li>
+  <li>如果长时间出现 norm drift，引入 <b>Strategy F</b> 的周期性基底刷新。</li>
+</ol>
+
+<!-- ====================================================================== -->
+<h2 id="part5">Part 5 — 附录：关键公式速查</h2>
+
+<h3>5.1 Jacobi-Anger 展开（双向）</h3>
+<div class="math-block">
+e<sup>iz cos θ</sup> = ∑<sub>n=−∞</sub><sup>+∞</sup> i<sup>n</sup> J<sub>n</sub>(z) e<sup>inθ</sup><br>
+e<sup>−iz cos θ</sup> = ∑<sub>n=−∞</sub><sup>+∞</sup> (−i)<sup>n</sup> J<sub>n</sub>(z) e<sup>inθ</sup>
+</div>
+
+<h3>5.2 Bessel 函数量级（κ=1, 2, 5, 10）</h3>
+<table>
+<tr><th>n \ κ</th><th>1</th><th>2</th><th>5</th><th>10</th></tr>
+<tr><td>J<sub>0</sub></td><td>0.765</td><td>0.224</td><td>−0.178</td><td>−0.246</td></tr>
+<tr><td>J<sub>1</sub></td><td>0.440</td><td>0.577</td><td>−0.328</td><td>0.043</td></tr>
+<tr><td>J<sub>2</sub></td><td>0.115</td><td>0.353</td><td>0.047</td><td>0.255</td></tr>
+<tr><td>J<sub>3</sub></td><td>0.020</td><td>0.129</td><td>0.365</td><td>0.058</td></tr>
+<tr><td>J<sub>5</sub></td><td>2.5e−4</td><td>0.007</td><td>0.261</td><td>−0.234</td></tr>
+<tr><td>J<sub>10</sub></td><td>2.6e−10</td><td>2.5e−7</td><td>1.5e−3</td><td>0.208</td></tr>
+</table>
+<p>需要的截断 n<sub>max</sub>：κ=1 取 4，κ=2 取 7，κ=5 取 12，κ=10 取 20。</p>
+
+<h3>5.3 ECG 在动量平面波下的变换</h3>
+<div class="math-block">
+e<sup>iqx</sup> · exp[−(A+B)x²+2R<sup>T</sup>Bx+...]
+= exp[−(A+B)x² + 2(R<sup>T</sup>B + (iq/2)e<sup>T</sup>)x + ...]
+= ECG with R → R + (iq/2)·B⁻¹·e
+</div>
+<p>用到 <code>augment_basis_with_momentum</code> 里 <code>R_new(a) = Cd(0.0, n·k_L/b_val)</code> 的公式（这里 q=2n·k<sub>L</sub>, 所以位移 = iq/(2B<sub>aa</sub>) = in·k<sub>L</sub>/b_val）。</p>
+
+<h3>5.4 TDVP 方程（实时版）</h3>
+<div class="math-block">
+C(z) · dz/dt = −i · g(z)<br>
+C<sub>αβ</sub>(z) = ⟨∂<sub>α</sub>ψ | P<sup>⊥</sup> | ∂<sub>β</sub>ψ⟩<br>
+g<sub>α</sub>(z) = ⟨∂<sub>α</sub>ψ | H | ψ⟩
+</div>
+<p>其中 P<sup>⊥</sup> 是关于 |ψ⟩ 的正交投影。在 ECG 里 C、g 都是解析可算的。</p>
+
+<h3>5.5 Strang Splitting 误差</h3>
+<div class="math-block">
+e<sup>(A+B)T</sup> = e<sup>AT/2</sup>e<sup>BT</sup>e<sup>AT/2</sup> + O(T³)·([[A,B],A]+[[A,B],B])
+</div>
+<p>对我们的情况 A=H<sub>kick</sub>, B=H<sub>free</sub>, [H<sub>kick</sub>, H<sub>free</sub>] 非零（因为 cos(2k<sub>L</sub>x) 与 ∂² 不对易）。</p>
+
+<h3>5.6 物理参数对照</h3>
+<table>
+<tr><th>符号</th><th>代码里</th><th>含义</th><th>典型值</th></tr>
+<tr><td>κ</td><td><code>kappa</code></td><td>kick 强度（无量纲）</td><td>1~10</td></tr>
+<tr><td>k<sub>L</sub></td><td><code>k_L</code></td><td>光晶格波数</td><td>0.5~1</td></tr>
+<tr><td>T</td><td><code>T_period</code></td><td>kick 周期</td><td>1（谐振子单位）</td></tr>
+<tr><td>T<sub>pulse</sub></td><td><code>T_pulse</code></td><td>pulse 宽度</td><td>→0 为理想</td></tr>
+<tr><td>ω</td><td>1 (const)</td><td>谐振子频率</td><td>1</td></tr>
+<tr><td>γ</td><td>—</td><td>Lieb-Liniger 参数 g/n</td><td>0~11</td></tr>
+</table>
+
+<hr>
+
+<div class="box info">
+<b>一句话总结。</b>
+Kick TDVP 失败的根因是 <b>ECG 流形对 kick 算符不封闭（除非你用 R 虚部扩张）</b>。
+最短路径是 Strategy A（解析 kick）+ B（预先动量增广）——已有代码几乎齐全，改几处 call site 就行。
+不要继续死磕 pulse 窗口 RK4 TDVP——那里的刚性是表象，基底问题才是里子。
+</div>
+
+<!-- ====================================================================== -->
+<h2 id="qa">Part 6 — Q&amp;A（聊天记录）</h2>
+
+<p class="small">这一节记录我们在讨论中澄清的物理/数值困惑。每个 Q 写出提出时的原话，A 给出详细答案。</p>
+
+<!-- ----------------------------- Q1 ----------------------------- -->
+<div class="strategy-card" id="qa-1">
+  <div class="strategy-header">
+    <div class="strategy-title">Q1 · δ(t) 里的 1/T_pulse 到底在说什么？kick 应该表达成什么？用 delta 合理吗？</div>
+  </div>
+
+  <div class="callout-q" style="background:#fbf3ff;border-left:4px solid #8250df;padding:0.8em 1.2em;margin:1em 0;border-radius:0 6px 6px 0;">
+  <b>原问题。</b>"为什么要让 kicking_scale = 1/T_pulse，脉冲不就是把 delta 函数换成一个很小的数字嘛，等一下这个哈密顿量是啥意思，这个外部注入 kick 应该怎么表达呀，因为这个你可以看作一种力，他最后要转化成系统的势能，或者某一种能量，用 delta 合理吗"
+  </div>
+
+  <h4>A1.1 先看清 δ 是在时间还是空间里</h4>
+
+  <p>Paper 和你代码里的哈密顿量其实长这样：</p>
+
+  <div class="math-block">
+  H(t) = T + V<sub>ho</sub> + g·δ(x<sub>a</sub>−x<sub>b</sub>) + κ·cos(2k<sub>L</sub>x)·∑<sub>n</sub>δ(t−nT)
+  </div>
+
+  <p>这里有 <b>两个 δ 函数，含义完全不同</b>：</p>
+  <ul>
+    <li><b>δ(x<sub>1</sub>−x<sub>2</sub>)</b> — Lieb-Liniger 的 <b>空间接触相互作用</b>，代表两粒子靠在一起时的 s-wave 散射。这是 <code>CLAUDE.md</code> 里的 "delta contact interaction"，跟 kick 没关系。</li>
+    <li><b>δ(t−nT)</b> — QKR 的 <b>时间瞬时 kick</b>，代表在 <span class="math">t=nT</span> 的瞬间给整个云打一发光晶格脉冲。</li>
+  </ul>
+
+  <p>"用 delta 合理吗"讨论的是 <b>后者</b>（时间 δ）。不要跟空间 δ 混淆。</p>
+
+  <h4>A1.2 为什么 kicking_scale = 1/T_pulse</h4>
+
+  <p>时间 δ 函数的物理意义是"把一次脉冲在无限短的时间里注入完"。理想 kick 作用一次产生的幺正演化是：</p>
+
+  <div class="math-block">
+  U<sub>kick</sub> = exp[−i∫<sub>nT<sup>−</sup></sub><sup>nT<sup>+</sup></sup> H<sub>kick</sub>(t) dt] = exp[−iκ·cos(2k<sub>L</sub>x)]
+  </div>
+
+  <p>用到了 δ(t) 在邻域内积分等于 1。关键是 <b>κ·cos(2k<sub>L</sub>x) 本身就是那个时间积分的结果</b>，而不是瞬时幅值。</p>
+
+  <p>实验上你做不到真正的 δ(t)，所以把 δ(t) 换成"宽度 <span class="math">T<sub>pulse</sub></span>、面积为 1 的矩形"：</p>
+
+  <div class="math-block">
+  δ(t) → χ<sub>[0, T<sub>pulse</sub>]</sub>(t) / T<sub>pulse</sub>
+  </div>
+
+  <p>代到哈密顿量里，脉冲期间的势就是 <b>(κ/T<sub>pulse</sub>)·cos(2k<sub>L</sub>x)</b>。这个 <span class="math">1/T<sub>pulse</sub></span> 不是玄学——它 <b>保证脉冲的时间积分面积不变</b>：</p>
+
+  <div class="math-block">
+  ∫<sub>0</sub><sup>T<sub>pulse</sub></sup> (κ/T<sub>pulse</sub>)·cos(2k<sub>L</sub>x) dt = κ·cos(2k<sub>L</sub>x)
+  </div>
+
+  <div class="box warn">
+  <b>关键点。</b> 如果你 <b>不</b> 加 <span class="math">1/T<sub>pulse</sub></span>，那 <span class="math">T<sub>pulse</sub> → 0</span> 时整个脉冲的积分也 → 0，<b>根本没 kick</b>。1/T_pulse 出现的目的是让"有限脉冲"在 <span class="math">T<sub>pulse</sub> → 0</span> 极限下退回到理想 δ-kick。
+  </div>
+
+  <h4>A1.3 "kick 是力，会转成什么能量"——这步直觉有点偏</h4>
+
+  <p>Kick 本身 <b>不是力</b>，而是 <b>时间依赖的势能项</b>（力是 <span class="math">−∂V/∂x</span>；量子力学里我们直接写 H 不写 F）。能量转移链是这样的：</p>
+
+  <ol>
+    <li>脉冲开 → 势能 <span class="math">V<sub>kick</sub>(x,t)</span> 存在</li>
+    <li>此势能对波函数做 <b>位置依赖的相位旋转</b> <span class="math">exp[−iκ·cos(2k<sub>L</sub>x)]</span></li>
+    <li>脉冲关 → V<sub>kick</sub> <b>消失</b>，但波函数已经带上了空间依赖的相位</li>
+    <li>这个相位在后续自由演化中表现为 <b>动能</b>（<span class="math">p̂</span> 作用在 <span class="math">e<sup>iφ(x)</sup></span> 上 = ∇φ，所以空间相位 = 动量分布）</li>
+  </ol>
+
+  <div class="box ok">
+  <b>所以注入的能量最终变成动能</b>，不是势能（脉冲一结束 V<sub>kick</sub> 就不存在了）。这正是 MBDL 要研究的核心——没有 localization，每次 kick 动能累加发散；有了 localization，动能饱和。
+  </div>
+
+  <h4>A1.4 δ(t) 在三个层面是否合理？</h4>
+
+  <table>
+  <tr><th>层面</th><th>是否合理</th><th>理由</th></tr>
+  <tr>
+    <td><b>数学</b></td><td>✅ 合理</td>
+    <td>δ(t) 定义良好，<span class="math">exp[−iκ·cos(2k<sub>L</sub>x)]</span> 是标准幺正算子；所有经典教材这样写 QKR。</td>
+  </tr>
+  <tr>
+    <td><b>实验</b></td><td>✅ 合理</td>
+    <td>Guo 等人：T<sub>pulse</sub> ≈ 300 ns、T ≈ 50 μs，比值 ~0.6%，确实接近理想 δ。</td>
+  </tr>
+  <tr>
+    <td><b>数值</b></td><td>⚠ 有陷阱</td>
+    <td>合理的前提是你 <b>解析地利用 1/T<sub>pulse</sub> 与 T<sub>pulse</sub> 的抵消</b>（Jacobi-Anger），而不是让 RK4 自己发现它。</td>
+  </tr>
+  </table>
+
+  <h4>A1.5 数值陷阱的具体原因</h4>
+
+  <p>在解析层面：</p>
+
+  <div class="math-block">
+  (κ/T<sub>pulse</sub>) · T<sub>pulse</sub> = κ &nbsp; &nbsp; [精确]
+  </div>
+
+  <p>在 RK4 层面：</p>
+
+  <div class="math-block">
+  势能 ~ 1/T<sub>pulse</sub>（很大）× 步长 ~ T<sub>pulse</sub>/50（很小） = O(1) 的"每步相位"
+  </div>
+
+  <p>看起来似乎也是 O(1)，但 RK4 <b>只会看到瞬时梯度大</b>，不知道这个大梯度会被短时间抵消。它在每一步 <span class="math">Δz = ż·Δt</span> 的局部计算里把 <span class="math">ż ∝ 1/T<sub>pulse</sub></span> 完整吃进去，再乘一个小 Δt，误差项（RK4 是 O(Δt<sup>5</sup>) 局部截断）里带了 <span class="math">ż<sup>5</sup> ∝ 1/T<sub>pulse</sub><sup>5</sup></span> 的系数——这个系数<b>不与</b> <span class="math">T<sub>pulse</sub></span> 在分子上的 <span class="math">Δt<sup>5</sup></span> 精确抵消，所以 T<sub>pulse</sub> → 0 时误差发散。</p>
+
+  <p>这就是 <b>Strategy A（解析 kick）存在的根本原因</b>：它直接在代数层面完成那个抵消，把 exp[−iκ·cos(2k<sub>L</sub>x)] 作为一个 Jacobi-Anger 矩阵元算出来，<b>不让积分器碰这个大数</b>。</p>
+
+  <h4>A1.6 如果想"更物理"地表达脉冲</h4>
+
+  <p>标准几种选择，按逼近程度排列：</p>
+
+  <table>
+  <tr><th>脉冲形状</th><th>哈密顿量</th><th>→δ 极限</th><th>数值特点</th></tr>
+  <tr>
+    <td><b>理想 δ</b></td>
+    <td>κ·cos(2k<sub>L</sub>x)·δ(t)</td>
+    <td>本身就是</td>
+    <td>必须解析处理（Jacobi-Anger）</td>
+  </tr>
+  <tr>
+    <td><b>矩形脉冲</b></td>
+    <td>(κ/T<sub>p</sub>)·cos·χ<sub>[0,T<sub>p</sub>]</sub>(t)</td>
+    <td>T<sub>p</sub>→0 收敛</td>
+    <td>阶梯状，Magnus 收敛好，但 1/T<sub>p</sub> 刚性</td>
+  </tr>
+  <tr>
+    <td><b>高斯脉冲</b></td>
+    <td>(κ/√(2π)σ)·cos·e<sup>−t²/2σ²</sup></td>
+    <td>σ→0 收敛</td>
+    <td>光滑，高阶数值积分适用，但峰值仍 ~1/σ</td>
+  </tr>
+  <tr>
+    <td><b>Sech 脉冲</b></td>
+    <td>(κ/πτ)·cos·sech²(t/τ)</td>
+    <td>τ→0 收敛</td>
+    <td>量子光学常用，解析可积</td>
+  </tr>
+  </table>
+
+  <p>但 <b>关键一点</b>：只要你想研究 MBDL，脉冲形状几乎不影响结论——因为 Floquet 动力学只看"每周期积分到的算符"（首阶 Magnus 等价于 <span class="math">U<sub>kick</sub> = exp[−iκ·cos(2k<sub>L</sub>x)]</span>，与脉冲形状无关）。<b>形状只在 Magnus 二阶及以上有修正</b>。所以在物理上，<span class="highlight">δ(t) 就是 MBDL 问题的正则模型</span>，没有必要换成别的形状，除非要专门研究"有限脉冲宽度修正"。</p>
+
+  <h4>A1.7 用你的话总结</h4>
+
+  <div class="box info">
+  <b>"脉冲就是把 delta 函数换成一个很小的数字"——不完全对。</b><br><br>
+  更准确的说法是："脉冲是把 δ 函数换成一个 <b>宽度很小、幅值很大、面积保持 κ 不变</b> 的函数"。宽度和幅值是反比关系：<span class="math">T<sub>pulse</sub> × (κ/T<sub>pulse</sub>) = κ</span>。如果只把宽度变小而不放大幅值，脉冲面积就变成 0，什么 kick 也没打。<br><br>
+  <b>"kick 是力、会转成势能"——也不完全对。</b> Kick 是时间依赖的 <b>势能算符</b>，作用方式是乘相位 <span class="math">exp[−iκ·cos(2k<sub>L</sub>x)]</span>。相位一旦乘上，就作为 <b>空间依赖相位</b> 储存在波函数里，脉冲结束后 V<sub>kick</sub> 消失，这个相位表现为 <b>动量分布变化</b>，即转化成了 <b>动能</b>。势能只是在脉冲瞬间作为"中介"存在。<br><br>
+  <b>"用 δ 合理吗"——合理，但要用对地方。</b> 物理上合理（标准模型）、实验上合理（T<sub>pulse</sub>/T ~ 1%）、数学上合理（幺正算子定义良好）；<b>但数值上</b>要求你用解析方法处理 kick（Strategy A），不能让 RK4 硬积。
+  </div>
+</div>
+
+<!-- ----------------------------- Q2 ----------------------------- -->
+<div class="strategy-card" id="qa-2">
+  <div class="strategy-header">
+    <div class="strategy-title">Q2 · 这个哈密顿量定义本身是否合理？能被薛定谔方程正确推动吗？</div>
+  </div>
+
+  <div class="callout-q" style="background:#fbf3ff;border-left:4px solid #8250df;padding:0.8em 1.2em;margin:1em 0;border-radius:0 6px 6px 0;">
+  <b>原问题。</b>"定义哈密顿量最后是想通过薛定谔方程正确的引导物理态的变化，那么现在这个哈密顿量定义是否合理呢"
+  </div>
+
+  <p>这个问题比看起来深，要在 <b>三个层次</b> 上分别审视——物理上是否描述对了实验、数学上是否是良定义的算子、数值上是否适合直接喂给积分器。三件事都合格才算"合理"。</p>
+
+  <h4>A2.1 物理层面 —— 合理，标准 QKR 模型</h4>
+
+  <p>完整哈密顿量：</p>
+
+  <div class="math-block">
+  H(t) = ∑<sub>a</sub>[−½∂<sub>x<sub>a</sub></sub>² + ½ω²x<sub>a</sub>²]
+       + g∑<sub>a&lt;b</sub>δ(x<sub>a</sub>−x<sub>b</sub>)
+       + κ∑<sub>a</sub>cos(2k<sub>L</sub>x<sub>a</sub>)·∑<sub>n</sub>δ(t−nT)
+  </div>
+
+  <p>逐项对照 Guo 等人的实验：</p>
+
+  <table>
+  <tr><th>项</th><th>对应实验物理</th><th>是否合理</th></tr>
+  <tr>
+    <td>−½∂<sub>x</sub>²</td>
+    <td>冷原子动能（ℏ=m=1 单位）</td>
+    <td>✅ 标准</td>
+  </tr>
+  <tr>
+    <td>½ω²x²</td>
+    <td>光学偶极阱（做谐近似）</td>
+    <td>✅ 合理，paper 里确实有弱径向禁闭</td>
+  </tr>
+  <tr>
+    <td>g·δ(x<sub>a</sub>−x<sub>b</sub>)</td>
+    <td>1D 接触相互作用（Lieb-Liniger）</td>
+    <td>✅ 1D 极限标准做法，g = −2/a<sub>1D</sub>，可由 γ 参数调</td>
+  </tr>
+  <tr>
+    <td>κ·cos(2k<sub>L</sub>x)</td>
+    <td>驻波光晶格势（两束反向激光干涉）</td>
+    <td>⚠ 有个 ½ 因子和常数项要澄清（见下）</td>
+  </tr>
+  <tr>
+    <td>∑<sub>n</sub>δ(t−nT)</td>
+    <td>脉冲序列，T<sub>pulse</sub>/T≈0.6% 近 δ 极限</td>
+    <td>✅ 合理（Q1 已讨论）</td>
+  </tr>
+  </table>
+
+  <div class="box warn">
+  <b>⚠ 一个易忽略的常数项。</b> 实验光晶格势严格来说是 <span class="math">V<sub>0</sub>·cos²(k<sub>L</sub>x) = (V<sub>0</sub>/2)[1 + cos(2k<sub>L</sub>x)]</span>。常数 V<sub>0</sub>/2 给出 <b>全局相位</b>，可以从波函数里吸收掉不影响物理。所以写成 κ·cos(2k<sub>L</sub>x) 时，κ = V<sub>0</sub>·T<sub>pulse</sub>/2 是物理 kick 强度。代码里的 κ 已经是这个"归一化后"的值。
+  </div>
+
+  <p>所以物理层面 <b>完全合理</b>——这就是该用的哈密顿量。跟 paper 的 Eq. (1) 一致。</p>
+
+  <h4>A2.2 数学层面 —— 合理，但要正确"解读"δ(t)</h4>
+
+  <p>天真地看，把 <span class="math">H(t) = H<sub>0</sub> + V·δ(t)</span> 塞进薛定谔方程：</p>
+
+  <div class="math-block">
+  i∂<sub>t</sub>|ψ⟩ = [H<sub>0</sub> + V·δ(t)]|ψ⟩
+  </div>
+
+  <p>这在数学上 <b>并不是</b> 一个标准微分方程——因为 δ(t)|ψ⟩ 不是一个普通函数。正确的解读是 <b>把它理解成算子值分布</b>，通过对 δ 附近积分得到 <b>jump condition</b>：</p>
+
+  <div class="math-block">
+  |ψ(nT<sup>+</sup>)⟩ = exp(−iV)|ψ(nT<sup>−</sup>)⟩ = exp[−iκ·cos(2k<sub>L</sub>x)]|ψ(nT<sup>−</sup>)⟩
+  </div>
+
+  <p>在 t ∈ (nT, (n+1)T) 之间，δ(t) 不激活，薛定谔方程退化为：</p>
+
+  <div class="math-block">
+  i∂<sub>t</sub>|ψ⟩ = H<sub>0</sub>|ψ⟩, &nbsp; &nbsp; H<sub>0</sub> = T + V<sub>ho</sub> + g·δ(x<sub>a</sub>−x<sub>b</sub>)
+  </div>
+
+  <p>这是 <b>普通</b> 的连续时间演化。所以整个 Floquet 周期的严格数学定义是一个 <b>算子乘积</b>：</p>
+
+  <div class="math-block">
+  U<sub>Floquet</sub> = exp(−iH<sub>0</sub>T) · exp[−iκ·cos(2k<sub>L</sub>x)]
+  </div>
+
+  <div class="box ok">
+  <b>关键洞察。</b> 写成 H = H<sub>0</sub> + V·δ(t) 只是 <b>Floquet 算子乘积的速记</b>——真正严格的数学对象是那个乘积。把 δ(t) 看成"连续哈密顿量"是 <b>误用</b>，这正是 RK4 数值积分失败的深层原因：它在把一个 <b>不连续演化</b> 当 <b>连续演化</b> 来积分。
+  </div>
+
+  <h4>A2.3 数值层面 —— "合理"取决于你用什么算法</h4>
+
+  <p>同一个物理哈密顿量可以有几种等价的数学表述，数值上表现差异巨大：</p>
+
+  <table>
+  <tr><th>表述</th><th>公式</th><th>数值友好度</th><th>备注</th></tr>
+  <tr>
+    <td><b>F1 连续 + δ(t)</b></td>
+    <td>i∂<sub>t</sub>ψ = [H<sub>0</sub> + V·δ(t)]ψ</td>
+    <td>❌ 差</td>
+    <td>RK4 认为 δ(t) 是脉冲幅值发散，崩</td>
+  </tr>
+  <tr>
+    <td><b>F2 有限脉冲极限</b></td>
+    <td>i∂<sub>t</sub>ψ = [H<sub>0</sub> + (κ/T<sub>p</sub>)cos·χ]ψ</td>
+    <td>⚠ 差</td>
+    <td>T<sub>p</sub>→0 时刚性爆炸（Q1 已析）</td>
+  </tr>
+  <tr style="background:#dafbe1;">
+    <td><b>F3 Floquet 算子乘积</b></td>
+    <td>ψ<sub>n+1</sub> = e<sup>−iH<sub>0</sub>T</sup>·e<sup>−iκcos</sup>·ψ<sub>n</sub></td>
+    <td>✅ 好</td>
+    <td>分成自由演化 + 解析 kick，各自最优算法</td>
+  </tr>
+  <tr>
+    <td><b>F4 相互作用绘景</b></td>
+    <td>i∂<sub>t</sub>ψ<sub>I</sub> = V<sub>I</sub>(t)·δ(t)·ψ<sub>I</sub></td>
+    <td>✅ 好</td>
+    <td>把 H<sub>0</sub> 吸收到绘景里，只剩 kick</td>
+  </tr>
+  </table>
+
+  <div class="box info">
+  <b>F3 和 F4 数学上跟 F1 完全等价</b>，只是哈密顿量的"组织方式"不同。物理一样，演化一样，能量谱一样，只是 <b>代码实现的抓手不同</b>。你现在代码里 <code>run_kicked_gamma0_test</code> 走的就是 F3：<code>free_evolve_fixed_basis</code> 精确做 <span class="math">e<sup>−iH<sub>0</sub>T</sup></span>，<code>apply_analytic_kick</code> 精确做 <span class="math">e<sup>−iκcos</sup></span>。失败的 <code>run_kick_convergence_test</code> 走的是 F2，所以糟。
+  </div>
+
+  <h4>A2.4 TDVP 对哈密顿量的"解读"又是另一层</h4>
+
+  <p>哈密顿量定义对不对是一个问题，<b>TDVP 能不能正确跟随这个哈密顿量</b> 是另一个问题。TDVP 不是解薛定谔方程，是解 <b>投影后的薛定谔方程</b>：</p>
+
+  <div class="math-block">
+  i∂<sub>t</sub>|ψ(z)⟩ = P<sub>T<sub>ψ</sub>M</sub> · H|ψ(z)⟩
+  </div>
+
+  <p>其中 <span class="math">P<sub>T<sub>ψ</sub>M</sub></span> 是到变分流形 M 在 ψ 处切空间的投影。于是 <b>TDVP 给出的动力学 ≠ 真薛定谔动力学</b>，差距是 <span class="math">(1−P)H|ψ⟩</span>——被流形"看不见"的那部分。</p>
+
+  <ul>
+    <li>对 <b>基态搜索</b>（虚时 TDVP）：这没关系，只要流形含真基态附近就行。</li>
+    <li>对 <b>自由演化</b>：只要 H<sub>0</sub> 保持态在流形上（比如谐振子基态附近），误差可控。</li>
+    <li>对 <b>kick 演化</b>：kick 把态强力推出流形，<span class="math">(1−P)U<sub>kick</sub>ψ</span> 巨大，TDVP 公式 <b>数学上仍然成立</b>（它就是产生最佳切空间近似），但 <b>物理上是错的</b>（因为近似质量差）。</li>
+  </ul>
+
+  <div class="box warn">
+  <b>所以"哈密顿量是否合理"和"TDVP 输出是否合理"是两件事。</b> 哈密顿量本身（F1-F4 任一表述）都物理正确；但 TDVP 能把薛定谔演化 <b>投</b> 到变分流形上得到正确结果，依赖流形是否对 H 闭合。Part 2 讲过，ECG 流形对 kick 不闭合——这是 TDVP 失败的根因，<b>不是</b>哈密顿量本身的问题。
+  </div>
+
+  <h4>A2.5 改哈密顿量能解决问题吗？</h4>
+
+  <p>理论上有几条路，但都不推荐。列一下以备参考：</p>
+
+  <table>
+  <tr><th>重定义 H 的方式</th><th>能否救 TDVP</th><th>物理代价</th></tr>
+  <tr>
+    <td>把脉冲形状改光滑（高斯、sech²）</td>
+    <td>❌ 不能</td>
+    <td>无，Floquet 动力学首阶不变</td>
+  </tr>
+  <tr>
+    <td>把 cos 换成 polynomial approximation</td>
+    <td>⚠ 可能</td>
+    <td>改变物理，破坏动量周期性</td>
+  </tr>
+  <tr>
+    <td>做 rotating wave approximation</td>
+    <td>❌ 不适用</td>
+    <td>破坏 QKR 本质</td>
+  </tr>
+  <tr>
+    <td>换相互作用绘景 (F4)</td>
+    <td>部分可</td>
+    <td>无，只是换参考系，但 ECG 基底也随之变化，还要处理</td>
+  </tr>
+  </table>
+
+  <p>结论是 <b>不应该改哈密顿量</b>——它已经是物理上正确的模型。应该改的是 <b>算法如何利用这个哈密顿量的结构</b>（Strategy A 就是利用"kick 可解析作用"这个结构）。</p>
+
+  <h4>A2.6 用一句话回答</h4>
+
+  <div class="box ok">
+  <b>哈密顿量定义 100% 合理</b>——它严格对应 Guo 等人实验的 QKR 模型，每一项都有明确实验对应。
+  <br><br>
+  <b>但"哈密顿量合理"不等于"薛定谔演化可数值实现"</b>。薛定谔方程 <span class="math">i∂<sub>t</sub>ψ = Hψ</span> 对 F1 表述是算子值分布方程，需要通过 <b>Floquet 算子乘积（F3）</b> 来正确解读，而不是当成普通 ODE 喂给 RK4。
+  <br><br>
+  <b>"TDVP 能否正确引导态演化"又是一个独立问题</b>——取决于变分流形对哈密顿量的闭合性，这跟哈密顿量定义无关，是流形 vs 算子的几何问题。
+  <br><br>
+  <b>所以你现在的失败</b>：哈密顿量没错，薛定谔方程没错，错的是把 Floquet 乘积结构（F3）当成连续 ODE（F2）来积分，并且用了一个对 kick 不闭合的变分流形。改 <b>算法表述</b>（走 F3 + Strategy A），不改哈密顿量。
+  </div>
+</div>
+
+<!-- ----------------------------- Q3 ----------------------------- -->
+<div class="strategy-card" id="qa-3">
+  <div class="strategy-header">
+    <div class="strategy-title">Q3 · 空间 δ(x) 不违和，但时间 δ(t) 让 H 在那一点无穷大？</div>
+  </div>
+
+  <div class="callout-q" style="background:#fbf3ff;border-left:4px solid #8250df;padding:0.8em 1.2em;margin:1em 0;border-radius:0 6px 6px 0;">
+  <b>原问题。</b>"空间的 delta 我不会引起这个问题是因为如果粒子确实演化到了有 delta 的位置，那么他的能量确实是那个数，但是时间的我很难理解，因为他不像空间，粒子步走到那个位置就是了，时间是一定会到那个时间，有这个时间的 delta 存在难道在那个点你的哈密顿量无穷大吗？"
+  </div>
+
+  <p>你这个疑问是 <b>量子力学里最深的一个不对称</b>——时间和空间在 QM 里的地位根本不同。很多物理系学生卡过这点。我一层层解开。</p>
+
+  <h4>A3.1 你的直觉抓对了一个关键不对称</h4>
+
+  <p>确实有一个基本差异，你总结得很精准：</p>
+
+  <table>
+  <tr><th></th><th>空间 δ(x − x₀)</th><th>时间 δ(t − t₀)</th></tr>
+  <tr>
+    <td><b>"事件"是否一定发生</b></td>
+    <td>概率性——粒子只有在 x=x₀ 附近时才有效</td>
+    <td>决定性——时间一定会流过 t=t₀</td>
+  </tr>
+  <tr>
+    <td><b>出现在哈密顿量的位置</b></td>
+    <td>作为 <b>势能项</b>（哈密顿算子的一部分）</td>
+    <td>作为 <b>时间系数</b>（乘在算子前面）</td>
+  </tr>
+  <tr>
+    <td><b>直觉上是否"会让 H 无穷大"</b></td>
+    <td>只在点 x₀ 处，但粒子不一定在那</td>
+    <td>在 t₀ 一定发生，似乎 H→∞</td>
+  </tr>
+  </table>
+
+  <p>答案是：<b>是的，形式上 H(t) 在 t=t₀ 确实"无穷大"</b>。但 <b>这并不引起任何物理问题</b>，原因需要从三个层面解释。</p>
+
+  <h4>A3.2 空间 δ(x)：为什么不违和</h4>
+
+  <p>考虑 1D 接触相互作用 <span class="math">H<sub>int</sub> = g·δ(x<sub>1</sub>−x<sub>2</sub>)</span>。你会问：在 <span class="math">x<sub>1</sub>=x<sub>2</sub></span> 处，这不是无穷大吗？</p>
+
+  <p>形式上是。但 <b>能量期望</b> 是：</p>
+
+  <div class="math-block">
+  ⟨H<sub>int</sub>⟩ = ∫dx<sub>1</sub>dx<sub>2</sub> |ψ(x<sub>1</sub>,x<sub>2</sub>)|² · g·δ(x<sub>1</sub>−x<sub>2</sub>)
+                = g·∫dx |ψ(x,x)|²
+  </div>
+
+  <p>δ 被 <b>概率密度 |ψ|²</b> 积分掉了，变成有限数。物理上：<b>δ 的无穷大权重 × 波函数在那一点的有限概率 = 有限能量</b>。</p>
+
+  <p>这就是你说的"粒子确实演化到了有 δ 的位置，那么他的能量确实是那个数"——更准确说是"有 <b>g·|ψ(x,x)|²</b> 的能量密度贡献"。</p>
+
+  <h4>A3.3 时间 δ(t)：形式上 H 确实无穷大</h4>
+
+  <p>现在看时间 δ。哈密顿量 <span class="math">H(t) = H<sub>0</sub> + V·δ(t−t<sub>0</sub>)</span>。</p>
+
+  <p>在 <span class="math">t = t<sub>0</sub></span>：<b>是的，H(t<sub>0</sub>) = ∞</b>（作为分布）。但问题是——<b>"H 在某一时刻的值"根本不是一个物理观测量</b>。</p>
+
+  <div class="box warn">
+  <b>这是关键澄清。</b> 在 QM 里我们从不测"H 在某时刻的值"；我们测 <b>H 的期望 ⟨ψ(t)|H|ψ(t)⟩</b>，这个量对应"如果此刻把系统扔进能量测量装置，期望得到什么"。对于含 δ(t) 的 H，在 t=t<sub>0</sub> 那一瞬间 ⟨H⟩ 确实是发散的——但这个"瞬间"测不到（δ 函数宽度为零），所以不是物理量。
+  </div>
+
+  <p>物理量应该是：</p>
+
+  <ul>
+    <li><b>"kick 之前" 的能量</b>: <span class="math">E<sub>−</sub> = ⟨ψ(t<sub>0</sub><sup>−</sup>)|H<sub>0</sub>|ψ(t<sub>0</sub><sup>−</sup>)⟩</span></li>
+    <li><b>"kick 之后" 的能量</b>: <span class="math">E<sub>+</sub> = ⟨ψ(t<sub>0</sub><sup>+</sup>)|H<sub>0</sub>|ψ(t<sub>0</sub><sup>+</sup>)⟩</span></li>
+    <li><b>"注入的能量"</b>: <span class="math">ΔE = E<sub>+</sub> − E<sub>−</sub></span> ← <b>有限</b>！</li>
+  </ul>
+
+  <p>你代码里 <code>compute_total_energy(basis, terms_free)</code> 算的就是 <span class="math">⟨H<sub>0</sub>⟩</span>，从来不把 kicking 项算进"能量"——这很对，因为 kick 本身不是能量，只是把能量注入进来的 <b>瞬时过程</b>。</p>
+
+  <h4>A3.4 为什么形式上的无穷大不引起物理问题</h4>
+
+  <p>薛定谔方程：</p>
+
+  <div class="math-block">
+  i·∂<sub>t</sub>|ψ⟩ = H(t)|ψ⟩
+  </div>
+
+  <p>在 t<sub>0</sub> 附近的小邻域 (t<sub>0</sub>−ε, t<sub>0</sub>+ε) 内积分：</p>
+
+  <div class="math-block">
+  i·[|ψ(t<sub>0</sub>+ε)⟩ − |ψ(t<sub>0</sub>−ε)⟩] = ∫<sub>t<sub>0</sub>−ε</sub><sup>t<sub>0</sub>+ε</sup> H(t)|ψ⟩ dt<br>
+  = ∫ H<sub>0</sub>|ψ⟩ dt + V·|ψ(t<sub>0</sub>)⟩ · ∫δ(t−t<sub>0</sub>)dt
+  </div>
+
+  <p>当 ε→0：左边是 |ψ⟩ 的跳变；右边第一项 → 0（H<sub>0</sub> 有限，对零宽度积分为零）；右边第二项 = V·|ψ(t<sub>0</sub>)⟩。所以：</p>
+
+  <div class="math-block">
+  |ψ(t<sub>0</sub><sup>+</sup>)⟩ − |ψ(t<sub>0</sub><sup>−</sup>)⟩ = −i·V·|ψ(t<sub>0</sub>)⟩
+  </div>
+
+  <p>但这个线性关系不是幺正的。真正的严格结果是（对指数化后的幺正形式做积分）：</p>
+
+  <div class="math-block">
+  |ψ(t<sub>0</sub><sup>+</sup>)⟩ = exp(−iV)·|ψ(t<sub>0</sub><sup>−</sup>)⟩
+  </div>
+
+  <p>这是 <b>有限的、幺正的、norm 守恒的</b> 跳变。V 可以取任意有限算子，δ(t) 的无穷大 <b>没有出现在可观测量里</b>——它被指数化"吃掉"了。</p>
+
+  <h4>A3.5 经典力学的完美类比</h4>
+
+  <p>想象一个经典粒子受到 <b>冲量力</b> <span class="math">F(t) = p<sub>0</sub>·δ(t)</span>。</p>
+
+  <ul>
+    <li>在 t=0：力无穷大（形式上）</li>
+    <li>但牛顿第二定律 <span class="math">dp/dt = F</span> 积分：<span class="math">Δp = ∫F dt = p<sub>0</sub></span></li>
+    <li>动量跳变 <b>有限</b>，能量跳变 <b>有限</b>，位置 <b>不变</b>（因为 ∫v dt → 0）</li>
+  </ul>
+
+  <div class="box ok">
+  <b>核心洞察。</b> 在经典力学里我们早就接受了"冲量力"：锤子敲球的一瞬间，力公式上无穷大，但动量改变有限。没人觉得"锤子那一瞬间力无穷大"是物理问题——因为 <b>"瞬时的力值"不是物理观测量，"动量改变"才是</b>。
+  <br><br>
+  量子 δ(t) kick 完全类比：<b>"瞬时的 H 值"不是物理观测量，"状态的幺正跳变 exp(−iV)"才是</b>。
+  </div>
+
+  <h4>A3.6 空间 vs 时间 δ 的数学对比</h4>
+
+  <table>
+  <tr><th></th><th>空间 δ(x)</th><th>时间 δ(t)</th></tr>
+  <tr>
+    <td><b>数学对象</b></td>
+    <td>势能算子里的分布</td>
+    <td>哈密顿量的时间权重分布</td>
+  </tr>
+  <tr>
+    <td><b>如何被"积掉"</b></td>
+    <td>对 |ψ(x)|² 积分（空间期望）</td>
+    <td>对 dt 积分（时间演化生成）</td>
+  </tr>
+  <tr>
+    <td><b>积出来的有限量</b></td>
+    <td>能量期望 g·|ψ(x<sub>0</sub>)|²</td>
+    <td>幺正跳变 exp(−iV)</td>
+  </tr>
+  <tr>
+    <td><b>物理观测的是</b></td>
+    <td>稳态能量（标量）</td>
+    <td>状态跳变（算子）</td>
+  </tr>
+  <tr>
+    <td><b>"那一点 H 无穷大吗"</b></td>
+    <td>形式上是，但被 |ψ|² 权重化</td>
+    <td>形式上是，但不是可观测量</td>
+  </tr>
+  </table>
+
+  <p>所以你观察到的不对称 <b>确实存在</b>，但它反映的是 <b>时间在 QM 里是参数而不是算子</b>（Pauli 定理：不存在"时间算子"）。时间不是可观测量，所以 "H(t) 在某时刻的值" 也不是可观测量。</p>
+
+  <h4>A3.7 再更深一层：时间作为"Floquet 操作"</h4>
+
+  <p>对周期性 δ-kick，最清晰的物理图像不是"H(t) 在不同时刻取不同值"，而是：</p>
+
+  <div class="math-block">
+  每周期 T 执行一次算法：
+  (1) 用 H<sub>0</sub> 自由演化时间 T
+  (2) 把状态乘以 exp(−iκ·cos(2k<sub>L</sub>x))
+  循环……
+  </div>
+
+  <p>这里根本 <b>没有 δ(t)</b>——它只是记法。实际演化是 "连续演化 + 离散跳变" 的 <b>混合系统</b>（hybrid system）。时间被分为两种：连续流动时间（由 H<sub>0</sub> 支配）和离散事件时间（由 kick 支配）。</p>
+
+  <h4>A3.8 一句话回答</h4>
+
+  <div class="box ok">
+  <b>"H 在那一点无穷大吗？"——形式上是，但这不是物理观测量，所以不引起任何问题。</b>
+  <br><br>
+  空间 δ(x) 被 <b>概率密度 |ψ|²</b> 积成有限能量；时间 δ(t) 被 <b>时间 dt</b> 积成有限幺正跳变 exp(−iV)。两者的不对称在于 <b>积分对象不同</b>：空间 δ 积掉后得到能量（数），时间 δ 积掉后得到算子（演化）。
+  <br><br>
+  你的直觉——"时间一定会到"——抓对了一个关键点：时间 δ 的事件是 <b>确定性</b> 的，每个周期必然发生一次。但 "事件发生" 和 "H 在那一点无穷大" 是两回事。事件发生是 <b>exp(−iV) 这个有限幺正算子被施加</b>；形式上的"无穷大"只是这个幺正算子的"生成元"（generator）在零时长里的极限写法。
+  <br><br>
+  <b>量子 δ(t) ≈ 经典冲量力 F·δ(t)</b>：锤子敲球一瞬间"力无穷大"，但动量变化有限。kick 一瞬间"H 无穷大"，但状态跳变有限。这是同一个数学结构，只是从经典观测量（动量）换成了量子观测量（幺正）。
+  </div>
+
+  <h4>A3.9 与我们代码失败的联系</h4>
+
+  <p>回到 ECG-TDVP 失败：</p>
+
+  <ul>
+    <li><b>物理上 δ(t) 完全合法</b>——它定义了一个有限幺正跳变，状态变化有限，能量变化有限</li>
+    <li><b>数值上</b>问题不是"H 无穷大"——而是我们 <b>假装 H(t) 是连续函数</b>（用 κ/T<sub>pulse</sub> 来光滑化），然后 RK4 被这个"光滑化后的大数"噎死</li>
+    <li><b>正确做法</b>是直接计算幺正跳变 exp(−iκcos(2k<sub>L</sub>x))，绕开 H 的瞬时值（这正是 Strategy A 做的事）</li>
+  </ul>
+
+  <p>所以你的疑问其实帮我们再次定位了问题所在：<b>不要去"积分"含 δ(t) 的 H，要直接"施加"它生成的幺正跳变</b>。H 在那一点是否无穷大是个伪问题；exp(−iV) 作为一个算子永远是有限的幺正算子，这才是物理。</p>
+</div>
+
+<p class="small" style="margin-top: 3em; color:#57606a;">
+生成于 2026-04-21 — ECG1D C++ 项目 kick operator TDVP 策略分析。
+配合阅读：<code>claude_edit_suggestion.html</code>（Trial 1 post-mortem）、<code>claude_main_cpp_study.html</code>（代码导读）、<code>ecg1d_main_principle.html</code>（物理原理）。
+</p>
+
+</body>
+</html>

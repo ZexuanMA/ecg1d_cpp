@@ -873,8 +873,13 @@ static void run_kicked_evolution_test() {
     evolution(alpha_z_list, refined.basis, 1, 100, 1e-10, terms_free, config, &perms);
 
     // Now do kicked real-time evolution
-    HamiltonianTerms terms_kick = terms_free;
-    terms_kick.kicking = true;
+    // Pulse window: kick operator only (no kinetic/harmonic/delta/gaussian).
+    HamiltonianTerms terms_kick;
+    terms_kick.kinetic  = false;
+    terms_kick.harmonic = false;
+    terms_kick.delta    = false;
+    terms_kick.gaussian = false;
+    terms_kick.kicking  = true;
 
     KickParams kick_params;
     kick_params.T_period   = 1.0;
@@ -1402,8 +1407,13 @@ static void run_kick_convergence_test(int n_kicks = 10) {
         int bn = static_cast<int>(basis_tdvp.size());
         auto alpha_z_dyn = build_alpha_z_list(bn, N, dyn_config);
 
-        HamiltonianTerms terms_kick = terms_free;
-        terms_kick.kicking = true;
+        // Pulse window: kick operator only (no kinetic/harmonic/delta/gaussian).
+        HamiltonianTerms terms_kick;
+        terms_kick.kinetic       = false;
+        terms_kick.harmonic      = false;
+        terms_kick.delta         = false;
+        terms_kick.gaussian      = false;
+        terms_kick.kicking       = true;
         terms_kick.kicking_scale = scale;
 
         for (int n = 0; n < n_kicks; n++) {

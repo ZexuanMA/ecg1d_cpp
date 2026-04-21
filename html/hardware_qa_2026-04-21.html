@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>装机硬件问答整理 — 2026-04-21</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+    max-width: 1100px;
+    margin: 2em auto;
+    padding: 0 2em;
+    line-height: 1.65;
+    color: #1f2328;
+    background: #f6f8fa;
+  }
+  h1 { border-bottom: 2px solid #1f6feb; padding-bottom: 0.3em; color: #0b4fb3; }
+  h2 { border-bottom: 1px solid #d0d7de; padding-bottom: 0.2em; margin-top: 2em; color: #24292f; }
+  h3 { color: #24292f; margin-top: 1.4em; }
+  h4 { color: #444; margin-top: 1.2em; }
+  code, pre {
+    font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.92em;
+  }
+  code { background: #eaeef2; padding: 2px 5px; border-radius: 4px; }
+  pre {
+    background: #0d1117;
+    color: #e6edf3;
+    padding: 1em;
+    border-radius: 6px;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  .box {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 1em 1.5em;
+    margin: 1em 0;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .q-box {
+    background: #fff;
+    border-left: 4px solid #1f6feb;
+    border-radius: 6px;
+    padding: 0.6em 1.2em;
+    margin: 1.5em 0 1em 0;
+    font-weight: 600;
+    color: #0b4fb3;
+  }
+  .a-box {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 1em 1.5em;
+    margin: 0.5em 0 2em 0;
+  }
+  .warn  { border-left: 4px solid #d29922; background: #fff8c5; padding: 0.8em 1.2em; border-radius: 4px; margin: 1em 0; }
+  .ok    { border-left: 4px solid #1f883d; background: #dafbe1; padding: 0.8em 1.2em; border-radius: 4px; margin: 1em 0; }
+  .bad   { border-left: 4px solid #cf222e; background: #ffebe9; padding: 0.8em 1.2em; border-radius: 4px; margin: 1em 0; }
+  .info  { border-left: 4px solid #1f6feb; background: #ddf4ff; padding: 0.8em 1.2em; border-radius: 4px; margin: 1em 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    background: #fff;
+  }
+  th, td {
+    border: 1px solid #d0d7de;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #f6f8fa; font-weight: 600; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .toc {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 1em 1.5em;
+    margin: 1em 0 2em 0;
+  }
+  .toc ol { margin: 0.5em 0; padding-left: 1.5em; }
+  .toc li { margin: 0.3em 0; }
+  .toc a { color: #0b4fb3; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .emoji { font-style: normal; }
+  strong { color: #24292f; }
+  blockquote {
+    border-left: 4px solid #d0d7de;
+    padding: 0.4em 1em;
+    color: #57606a;
+    margin: 1em 0;
+    background: #fafbfc;
+  }
+  hr { border: none; border-top: 1px solid #d0d7de; margin: 2em 0; }
+  .meta { color: #57606a; font-size: 0.9em; margin-bottom: 2em; }
+</style>
+</head>
+<body>
+
+<h1>装机硬件问答整理</h1>
+<div class="meta">日期：2026-04-21 · 主题：RTX 5090 / 5070 双显卡 + AM5 平台装机</div>
+
+<div class="toc">
+<strong>目录</strong>
+<ol>
+  <li><a href="#q1">背插显卡是什么意思</a></li>
+  <li><a href="#q2">水冷的 5090 非公版有哪些</a></li>
+  <li><a href="#q3">这种卡还需要前后留位置吗</a></li>
+  <li><a href="#q4">9950X3D 有多少 PCIe 通道</a></li>
+  <li><a href="#q5">双 GPU 够不够</a></li>
+  <li><a href="#q6">5070 可以吗</a></li>
+  <li><a href="#q7">一张 5070 一张 5090</a></li>
+  <li><a href="#q8">5070 当辅助卡需要什么 PCIe</a></li>
+  <li><a href="#q9">x16+x4 方案配置单 + 算力损失 + 散热</a></li>
+  <li><a href="#q10">可以用双水冷呀</a></li>
+  <li><a href="#q11">28 条 PCIe 5.0 是怎么看的</a></li>
+  <li><a href="#q12">那要怎么使用呢</a></li>
+  <li><a href="#q13">其他主板的例子</a></li>
+  <li><a href="#q14">PCIe 通道分配详细讲解</a></li>
+  <li><a href="#q15">5070 连芯片组 vs 直连 CPU 的影响</a></li>
+  <li><a href="#q16">PCIe 4 和 PCIe 5 的区别</a></li>
+  <li><a href="#q17">CPU 的 PCIe 和主板的 PCIe 是一回事吗</a></li>
+  <li><a href="#q18">MSI MPG X870E Carbon WiFi 的 PCIe 通道与分配</a></li>
+</ol>
+</div>
+
+<hr>
+
+<!-- Q1 -->
+<div class="q-box" id="q1">Q1. 背插显卡是什么意思呀</div>
+<div class="a-box">
+<p>"背插显卡"通常指<strong>接口在背面（PCB 背侧）的显卡</strong>，对应的是 BTF（Back To the Future）规范的主板和显卡设计。</p>
+
+<h4>核心特点</h4>
+<ul>
+  <li>传统显卡的供电口（8pin/16pin）和某些接口在显卡<strong>正面</strong>，插上线材后裸露在机箱内，影响美观</li>
+  <li>背插显卡把供电接口移到显卡 <strong>PCB 背面</strong>，配合背插主板（供电、风扇等接口也都在主板背面），所有线材走机箱背面</li>
+  <li>效果：机箱正面视角完全无线，整洁度大幅提升</li>
+</ul>
+
+<h4>需要注意</h4>
+<ul>
+  <li>必须搭配<strong>背插主板</strong>（如华硕 BTF、微星 Project Zero、技嘉 Stealth 系列）才能发挥作用</li>
+  <li>机箱也需要支持背插布线（走背线空间更深）</li>
+  <li>目前主要是华硕等厂商在推，生态还在扩展中</li>
+</ul>
+
+<div class="info">简单说就是：<strong>把线都藏到主板背面去，让机箱内部看起来干干净净</strong>的一套配套方案里的显卡部分。</div>
+</div>
+
+<!-- Q2 -->
+<div class="q-box" id="q2">Q2. 水冷的 5090 非公版有哪些</div>
+<div class="a-box">
+<p>RTX 5090 的非公版水冷卡主要有以下几款（都是 <strong>一体式 AIO 水冷</strong>）：</p>
+
+<table>
+  <tr><th>型号</th><th>冷排</th><th>特点</th></tr>
+  <tr><td>ASUS ROG Astral LC RTX 5090 OC</td><td>360mm + 3×120mm</td><td>华硕旗舰，38mm 厚冷排，水管从卡<strong>上方</strong>引出，默频 2580 / OC 2610 MHz</td></tr>
+  <tr><td>MSI RTX 5090 SUPRIM LIQUID</td><td>混合风 + 水</td><td>SUPRIM 高端系列，风水混合设计</td></tr>
+  <tr><td>MSI RTX 5090 32G AIO Special Edition</td><td>2×120mm 内置</td><td>HydroCool 混合水冷，正反双面共 4 风扇</td></tr>
+  <tr><td>GIGABYTE AORUS RTX 5090 XTREME WATERFORCE</td><td>大冷排</td><td>全覆盖冷却 GPU / 显存 / MOSFET</td></tr>
+  <tr><td>ZOTAC RTX 5090 ArcticStorm AIO</td><td>360mm + 3×120mm</td><td>铜底微水道，双 BIOS（性能/静音），水管 520mm，建议电源 1000W</td></tr>
+</table>
+
+<h4>选购要点</h4>
+<ul>
+  <li>5090 TGP 接近 <strong>575–600W</strong>，AIO 对压住温度和噪音有明显优势</li>
+  <li>机箱需预留 <strong>360mm 冷排位</strong>（顶置或前置）</li>
+  <li>ASUS Astral LC 和 ZOTAC ArcticStorm 是目前<strong>全覆盖水冷</strong>最彻底的两款</li>
+  <li>还有 <strong>EKWB、Bykski、Alphacool</strong> 等厂商出<strong>分体水冷头</strong>（需自组水路）</li>
+</ul>
+</div>
+
+<!-- Q3 -->
+<div class="q-box" id="q3">Q3. 这种卡还需要前后留位置吗</div>
+<div class="a-box">
+<div class="info"><strong>核心结论</strong>：卡身本体依然占位，只是散热鳍片没了。一体式水冷显卡 ≠ 薄卡。</div>
+
+<h4>需要留的空间</h4>
+<ul>
+  <li><strong>PCIe 插槽位置（卡身）</strong>：厚度一般 2~2.5 槽（比纯风冷 3.5~4 槽明显薄），长度仍然不短（ZOTAC ArcticStorm 约 251mm）</li>
+  <li><strong>冷排位置</strong>：需要 <strong>360mm 冷排位</strong>（顶置最佳，前置次之）。冷排厚度 27~38mm + 风扇 25mm = 总计约 55~65mm</li>
+  <li><strong>水管走线</strong>：520mm 左右的水管，需要从卡身绕到冷排</li>
+</ul>
+
+<h4>注意与 CPU 水冷冲突</h4>
+<p>如果 CPU 已经是 360 水冷占了顶部，显卡水排就得走前面板，或反过来。</p>
+
+<h4>实际好处</h4>
+<ul>
+  <li><strong>显卡区域散热压力骤降</strong>：机箱内部热量被水管带到冷排直接排出</li>
+  <li><strong>不再挡 M.2 / 下方 PCIe 插槽</strong>：薄卡身让主板下方更宽松</li>
+  <li><strong>不怕显卡下垂</strong>：重量分摊到冷排</li>
+</ul>
+
+<blockquote>卡身要留位（但比风冷轻松），冷排要额外找一个 360 位置，并且要和 CPU 水冷协调好。</blockquote>
+</div>
+
+<!-- Q4 -->
+<div class="q-box" id="q4">Q4. 9950X3D 有多少 PCIe 通道</div>
+<div class="a-box">
+<p><strong>CPU 直出：28 条 PCIe 5.0</strong>（AM5 平台通用规格）</p>
+
+<table>
+  <tr><th>用途</th><th>通道数</th><th>版本</th></tr>
+  <tr><td>显卡（PCIe x16 插槽）</td><td><strong>16</strong></td><td>PCIe 5.0</td></tr>
+  <tr><td>M.2 SSD（主 M.2，直连 CPU）</td><td><strong>4</strong></td><td>PCIe 5.0</td></tr>
+  <tr><td>第二个 M.2（部分主板）</td><td><strong>4</strong></td><td>PCIe 5.0</td></tr>
+  <tr><td>芯片组互联（到 X870/X670 等）</td><td><strong>4</strong></td><td>PCIe 5.0 或 4.0</td></tr>
+  <tr><td>USB4 / 其他</td><td>4（共享部分）</td><td>—</td></tr>
+</table>
+
+<h4>加上芯片组后的总通道</h4>
+<p><strong>X870E（双芯片组）</strong> 能额外提供约 <strong>12 条 PCIe 4.0 + 8 条 PCIe 3.0</strong>。</p>
+
+<blockquote>28 条 PCIe 5.0，够插一张旗舰显卡 + 两块 PCIe 5.0 SSD，再多就要看芯片组了。</blockquote>
+</div>
+
+<!-- Q5 -->
+<div class="q-box" id="q5">Q5. 看来双 GPU 还是不够哈</div>
+<div class="a-box">
+<p>AM5 平台做双 GPU 确实<strong>捉襟见肘</strong>，这是消费级平台的共性限制。</p>
+
+<h4>为什么不够</h4>
+<p>9950X3D 的 16 条 PCIe 5.0 显卡通道，双卡只能这么分：</p>
+<ul>
+  <li><strong>x8 + x8</strong>（需要主板支持拆分，高端 X870E 才有）</li>
+  <li>或者 <strong>x16 + x4</strong>（第二卡走芯片组）</li>
+</ul>
+
+<h4>消费级平台的真实情况</h4>
+<table>
+  <tr><th>平台</th><th>显卡通道</th><th>双卡方案</th></tr>
+  <tr><td>AM5 (9950X3D)</td><td>16× 5.0</td><td>x8+x8（看主板）</td></tr>
+  <tr><td>LGA1851 (Core Ultra 200)</td><td>20× 5.0</td><td>x8+x8 可行</td></tr>
+  <tr><td>LGA1700 (14900K)</td><td>16× 5.0 + 4× 4.0</td><td>x8+x8 或 x16+x4</td></tr>
+</table>
+
+<p>而且 <strong>RTX 40/50 系消费卡已经砍掉 NVLink</strong>，双卡只能靠 PCIe 通信。</p>
+
+<h4>真正适合多卡的平台</h4>
+<ul>
+  <li><strong>Threadripper 7000 / Pro</strong>：48~128 条 PCIe 5.0</li>
+  <li><strong>EPYC 9004/9005</strong>：128 条 5.0</li>
+  <li><strong>Xeon W-3400</strong>：112 条 5.0</li>
+</ul>
+<p>代价：CPU + 主板 <strong>3~5 万起步</strong>。</p>
+</div>
+
+<!-- Q6 -->
+<div class="q-box" id="q6">Q6. 5070 可以吗</div>
+<div class="a-box">
+<h4>RTX 5070 基本规格</h4>
+<ul>
+  <li>显存：<strong>12GB GDDR7</strong>（192-bit）</li>
+  <li>CUDA 核心：6144</li>
+  <li>TGP：250W</li>
+  <li>价格：约 ¥4500（MSRP $549）</li>
+  <li>性能：大约 = RTX 4070 Super，略低于 4070 Ti</li>
+</ul>
+
+<h4>场景 1：单卡 5070</h4>
+<p><strong>适合</strong>：1440p 高画质游戏、轻度 AI 推理（7B~13B 量化版）、视频剪辑</p>
+<p><strong>不适合</strong>：4K 开光追、LLM 推理（12GB 显存是硬伤）、SDXL 训练</p>
+
+<h4>场景 2：双 5070 代替双 5090</h4>
+<div class="bad"><strong>不推荐</strong></div>
+<table>
+  <tr><th>项目</th><th>2×5070</th><th>1×5090</th></tr>
+  <tr><td>总显存</td><td>24GB（不能合并）</td><td>32GB（统一）</td></tr>
+  <tr><td>价格</td><td>~¥9000</td><td>~¥16000</td></tr>
+  <tr><td>LLM 推理</td><td>每卡独立 12GB</td><td>32GB 可跑 32B Q4</td></tr>
+  <tr><td>游戏</td><td>SLI 已死，第二张闲置</td><td>满血输出</td></tr>
+</table>
+
+<h4>推荐搭配</h4>
+<table>
+  <tr><th>预算</th><th>推荐</th></tr>
+  <tr><td>游戏 1440p</td><td>单 5070 或 5070 Ti（16GB）</td></tr>
+  <tr><td>游戏 4K</td><td>单 5080（16GB）或 5090</td></tr>
+  <tr><td>AI 轻度</td><td>5070 Ti 16GB</td></tr>
+  <tr><td>AI 中度（30B 模型）</td><td>单 5090 32GB</td></tr>
+  <tr><td>AI 重度</td><td>2×5090 或 RTX Pro 6000 96GB</td></tr>
+</table>
+</div>
+
+<!-- Q7 -->
+<div class="q-box" id="q7">Q7. 一张 5070 一张 5090</div>
+<div class="a-box">
+<p>这是个比较特殊的搭配，<strong>有特定场景下有意义</strong>。</p>
+
+<h4>可行场景</h4>
+<div class="ok"><strong>1. 显示分离（AI 工作流常用）</strong>：5090 专门跑计算，5070 负责显示输出</div>
+<div class="ok"><strong>2. 异构 LLM 推理</strong>：llama.cpp/vLLM 可以把模型切分，共 44GB 可用，能跑 70B Q4</div>
+<div class="ok"><strong>3. 视频转码 + 游戏</strong>：5090 打游戏，5070 同时 OBS/NVENC 推流</div>
+
+<h4>不可行场景</h4>
+<div class="bad"><strong>1. 游戏性能叠加</strong>：SLI/NVLink 早已取消</div>
+<div class="bad"><strong>2. 训练大模型</strong>：数据并行要求同规格，混搭会被慢卡拖垮</div>
+
+<h4>装机要注意</h4>
+<table>
+  <tr><th>项目</th><th>需求</th></tr>
+  <tr><td>主板</td><td>X870E 支持 x8+x8 拆分</td></tr>
+  <tr><td>电源</td><td>1200W 以上</td></tr>
+  <tr><td>机箱</td><td>至少 8 槽位</td></tr>
+  <tr><td>PCIe 通道</td><td>9950X3D 只有 16 条给显卡</td></tr>
+</table>
+</div>
+
+<!-- Q8 -->
+<div class="q-box" id="q8">Q8. 5070 不拿来训练，就用来 5090 跑的时候跑点其他小代码和游戏和显示，需要什么 PCIe</div>
+<div class="a-box">
+<div class="info"><strong>答案</strong>：PCIe 4.0 x4 就够用，5.0 x4 完全无压力。</div>
+
+<h4>原因</h4>
+<ul>
+  <li>5070 官方规格是 PCIe 5.0 x16，但<strong>实际带宽利用率极低</strong></li>
+  <li>游戏场景：PCIe 4.0 x8 ≈ 5.0 x4，与 x16 差距 &lt;2%</li>
+  <li>小模型推理/代码调试：几乎不吃 PCIe 带宽</li>
+  <li>显示输出：带宽需求可忽略</li>
+</ul>
+
+<h4>两种典型方案</h4>
+<p><strong>方案 A：拆分（高端板）</strong></p>
+<table>
+  <tr><th>设备</th><th>通道</th></tr>
+  <tr><td>5090</td><td>PCIe 5.0 x8</td></tr>
+  <tr><td>5070</td><td>PCIe 5.0 x8</td></tr>
+</table>
+
+<p><strong>方案 B：x16 + x4（推荐给你）</strong></p>
+<table>
+  <tr><th>设备</th><th>通道</th></tr>
+  <tr><td>5090</td><td>PCIe 5.0 x16 满血</td></tr>
+  <tr><td>5070</td><td>PCIe 4.0 x4 芯片组</td></tr>
+</table>
+
+<h4>性能影响</h4>
+<table>
+  <tr><th>场景</th><th>损失</th></tr>
+  <tr><td>游戏</td><td>1~3%（几乎感受不到）</td></tr>
+  <tr><td>显示 / 视频 / 写代码</td><td>0 影响</td></tr>
+</table>
+</div>
+
+<!-- Q9 -->
+<div class="q-box" id="q9">Q9. 我用 16 和 4 的那个方案，给我配置单、5070 算力损失、能不能插下、散热</div>
+<div class="a-box">
+<h4>PCIe 4.0 x4 对 5070 的算力损失（修正后）</h4>
+<table>
+  <tr><th>场景</th><th>损失幅度</th></tr>
+  <tr><td>1080p 游戏</td><td>5~10%</td></tr>
+  <tr><td>1440p 游戏</td><td>3~6%</td></tr>
+  <tr><td>4K 游戏</td><td>2~4%</td></tr>
+  <tr><td>大贴图 / UE5 类</td><td>最高 8~12%</td></tr>
+  <tr><td>显示 / 写代码 / 轻推理</td><td>&lt;1%</td></tr>
+</table>
+<p>你的用途平均 <strong>3~6% 损失</strong>，肉眼完全感受不到。</p>
+
+<h4>推荐配置单</h4>
+<table>
+  <tr><th>部件</th><th>型号</th><th>价格（¥）</th></tr>
+  <tr><td>CPU</td><td>AMD Ryzen 9 9950X3D</td><td>~5500</td></tr>
+  <tr><td>CPU 散热</td><td>利民 FC140 / 猫头鹰 NH-D15 G2</td><td>~500</td></tr>
+  <tr><td>主板</td><td>MSI MPG X870E Carbon WiFi</td><td>~3800</td></tr>
+  <tr><td>内存</td><td>海盗船 DDR5-6000 CL30 64GB (2×32)</td><td>~1600</td></tr>
+  <tr><td>GPU 1</td><td>ZOTAC RTX 5090 ArcticStorm AIO</td><td>~17000</td></tr>
+  <tr><td>GPU 2</td><td>七彩虹 iGame RTX 5070 Advanced OC</td><td>~4800</td></tr>
+  <tr><td>主 SSD</td><td>三星 990 Pro 2TB</td><td>~1200</td></tr>
+  <tr><td>副 SSD</td><td>致态 TiPlus 7100 4TB</td><td>~1800</td></tr>
+  <tr><td>电源</td><td>海韵 PRIME PX-1300 ATX 3.1</td><td>~2300</td></tr>
+  <tr><td>机箱</td><td>联力 O11 Dynamic EVO XL</td><td>~1500</td></tr>
+  <tr><td>机箱风扇</td><td>猫头鹰 A12x25 × 6</td><td>~900</td></tr>
+  <tr><td colspan="2"><strong>总价</strong></td><td><strong>约 ¥41,000</strong></td></tr>
+</table>
+
+<h4>插槽分配（ATX 7 槽）</h4>
+<pre>
+槽位 1:  [5090 水冷版卡身   ]  ← PCIe 5.0 x16（CPU 直连）
+槽位 2:  [5090              ]     卡身占 2.5 槽
+槽位 3:  [5090              ]
+槽位 4:  [ 空气流空间        ]  ← 留 1 槽散热间距
+槽位 5:  [5070 Advanced OC  ]  ← PCIe 4.0 x4（芯片组）
+槽位 6:  [5070              ]     卡身 2.2 槽
+槽位 7:  [5070              ]
+</pre>
+<div class="ok">刚好塞得下，而且两卡之间还有散热间距。</div>
+
+<h4>为什么必须选水冷 5090</h4>
+<p>普通三风扇 5090 厚度 <strong>3.5~4 槽</strong>，下面没法再插 5070。水冷版把卡身压到 <strong>2.5 槽</strong>，腾出 5070 的位置。</p>
+
+<h4>散热设计</h4>
+<table>
+  <tr><th>位置</th><th>设备</th><th>风道</th></tr>
+  <tr><td>顶部 360</td><td>5090 AIO 冷排</td><td>排风</td></tr>
+  <tr><td>侧面 360</td><td>进风风扇 × 3</td><td>吹向显卡</td></tr>
+  <tr><td>底部</td><td>进风风扇 × 3</td><td>给 5070 补冷风</td></tr>
+  <tr><td>后部</td><td>排风 × 1</td><td>排 CPU 热</td></tr>
+</table>
+
+<div class="warn"><strong>CPU 用风冷的原因</strong>：9950X3D 比 9950X 冷，风冷压得住；让出顶部 360 给 5090；减少漏液风险。</div>
+</div>
+
+<!-- Q10 -->
+<div class="q-box" id="q10">Q10. 可以用双水冷呀</div>
+<div class="a-box">
+<p>O11 Dynamic EVO XL 的散热位够双水冷。改动只有 CPU 散热升级到 <strong>NZXT Kraken Elite 360</strong> 或 <strong>海盗船 H170i Elite LCD XT 420</strong>（+¥1500），总价约 ¥42,500。</p>
+
+<h4>冷排布局</h4>
+<pre>
+┌─────────────────────────────────┐
+│  顶部 420：CPU AIO（排风）         │
+├─────────────────────────────────┤
+│                                  │
+│  侧面 360：5090 AIO（排风）        │
+│                                  │
+├─────────────────────────────────┤
+│  底部 360：进风 × 3               │
+└─────────────────────────────────┘
+后部：排风 × 1
+</pre>
+
+<div class="info"><strong>为什么 CPU 冷排放顶部</strong>：5090 ArcticStorm 水管只有 520mm，从显卡拉到顶部可能不够长。</div>
+
+<h4>双水冷 vs 双风冷温度对比</h4>
+<table>
+  <tr><th>指标</th><th>双风冷</th><th>双水冷</th></tr>
+  <tr><td>CPU 满载温度</td><td>75~85°C</td><td>60~70°C</td></tr>
+  <tr><td>5070 温度</td><td>70~78°C</td><td>65~72°C</td></tr>
+  <tr><td>噪音</td><td>较高</td><td>更安静</td></tr>
+</table>
+
+<h4>潜在风险</h4>
+<div class="warn">双 AIO = 两个漏液点，虽然概率极低但一旦漏液损失大。水冷寿命约 5~7 年。搬家麻烦。</div>
+</div>
+
+<!-- Q11 -->
+<div class="q-box" id="q11">Q11. "28 条 PCIe 5.0" 是怎么看的</div>
+<div class="a-box">
+<h4>查官方规格</h4>
+<p>AMD 官网只写 "PCIe 5.0"，<strong>不会直接写总通道数</strong>。总通道要看 AM5 平台白皮书：</p>
+<table>
+  <tr><th>用途</th><th>通道数</th></tr>
+  <tr><td>显卡（GFX）</td><td>16× PCIe 5.0</td></tr>
+  <tr><td>存储（NVMe）</td><td>4× PCIe 5.0</td></tr>
+  <tr><td>第二组 NVMe</td><td>4× PCIe 5.0</td></tr>
+  <tr><td>USB4</td><td>4× PCIe 4.0（部分）</td></tr>
+  <tr><td>CPU ↔ 芯片组</td><td>4× PCIe 5.0</td></tr>
+  <tr><td><strong>总计</strong></td><td><strong>28 条</strong></td></tr>
+</table>
+
+<h4>为什么版本不一致</h4>
+<table>
+  <tr><th>来源</th><th>数字</th><th>原因</th></tr>
+  <tr><td>AMD 营销</td><td>24</td><td>只数可用通道</td></tr>
+  <tr><td>TechPowerUp</td><td>28</td><td>数全部物理通道</td></tr>
+</table>
+
+<h4>实操验证</h4>
+<p><strong>方法 A</strong>：看主板说明书里的 Block Diagram（方块图）</p>
+<p><strong>方法 B</strong>：Linux 下 <code>lspci -vv | grep -i "LnkCap"</code></p>
+<p><strong>方法 C</strong>：Windows 下用 HWiNFO64 看每条链路</p>
+
+<h4>相关平台对比</h4>
+<table>
+  <tr><th>平台</th><th>CPU 直出通道</th></tr>
+  <tr><td>AM5（Ryzen 7000/9000）</td><td>28× PCIe 5.0</td></tr>
+  <tr><td>LGA1851</td><td>24× 5.0 + 4× 4.0</td></tr>
+  <tr><td>sTR5（Threadripper）</td><td>48× PCIe 5.0</td></tr>
+  <tr><td>sTR5 PRO / SP5</td><td>128× PCIe 5.0</td></tr>
+</table>
+</div>
+
+<!-- Q12 -->
+<div class="q-box" id="q12">Q12. 那你要怎么使用呢</div>
+<div class="a-box">
+<h4>以 MSI X870E Carbon 为例的分配</h4>
+<pre>
+CPU (28 条 PCIe 5.0)
+├── 16条 → PCIE_1 → ★ RTX 5090（满血 x16）
+├── 4条  → M2_1   → ★ 三星 990 Pro 2TB（系统盘）
+├── 4条  → M2_2   → （空着备用）
+└── 4条  → 芯片组链路
+          ├── PCIE_2 → ★ RTX 5070（PCIe 4.0 x4）
+          ├── M2_3   → ★ 致态 TiPlus 4TB（数据盘）
+          ├── M2_4   → （空着）
+          ├── SATA × 4
+          ├── USB 3.2
+          ├── 2.5G 网卡
+          └── Wi-Fi 7
+</pre>
+
+<h4>芯片组会卡吗</h4>
+<p>芯片组上行只有 PCIe 5.0 x4 = <strong>16 GB/s</strong>，所有芯片组设备共享。</p>
+<table>
+  <tr><th>同时操作</th><th>带宽</th></tr>
+  <tr><td>5070 跑游戏</td><td>~3 GB/s</td></tr>
+  <tr><td>数据 SSD 读取</td><td>~7 GB/s</td></tr>
+  <tr><td>USB 外接 SSD</td><td>~1 GB/s</td></tr>
+  <tr><td><strong>合计</strong></td><td><strong>~11 GB/s（不冲突）</strong></td></tr>
+</table>
+
+<h4>常见坑：M.2 吃 PCIe</h4>
+<div class="warn">M2_2 插 SSD 可能让 PCIE_1 掉速到 x8。解决方法：主 SSD 只插 M2_1，数据盘插 M2_3/M2_4，M2_2 留空。</div>
+</div>
+
+<!-- Q13 -->
+<div class="q-box" id="q13">Q13. 有没有其他主板的例子</div>
+<div class="a-box">
+<table>
+  <tr><th>主板</th><th>价格</th><th>5090 通道</th><th>5070 通道</th><th>拆分</th><th>推荐度</th></tr>
+  <tr><td>ROG Crosshair X870E Hero</td><td>¥5500</td><td>5.0 x16</td><td>4.0 x4</td><td>✅</td><td>⭐⭐⭐⭐</td></tr>
+  <tr><td>GIGABYTE X870E AORUS Master</td><td>¥4500</td><td>5.0 x16</td><td>4.0 x4</td><td>❌</td><td>⭐⭐⭐⭐⭐</td></tr>
+  <tr><td>MSI MPG X870E Carbon</td><td>¥3800</td><td>5.0 x16</td><td>4.0 x4</td><td>✅</td><td>⭐⭐⭐⭐⭐</td></tr>
+  <tr><td>MSI X870 Tomahawk</td><td>¥2200</td><td>5.0 x16</td><td>4.0 <strong>x2</strong>⚠️</td><td>❌</td><td>⭐⭐</td></tr>
+  <tr><td>ASRock X870 Steel Legend</td><td>¥2500</td><td>5.0 x16</td><td>4.0 x4</td><td>❌</td><td>⭐⭐⭐⭐</td></tr>
+  <tr><td>ASUS TUF B850-Plus</td><td>¥1600</td><td>5.0 x16</td><td>4.0 x4</td><td>❌</td><td>⭐⭐⭐⭐</td></tr>
+</table>
+
+<div class="bad"><strong>避雷</strong>：MSI X870 Tomahawk 的第二槽是 PCIe 4.0 x2，双显卡党别选。</div>
+
+<h4>按预算选</h4>
+<ul>
+  <li><strong>预算充足</strong>：MSI MPG X870E Carbon 或 GIGABYTE X870E AORUS Master</li>
+  <li><strong>中等预算</strong>：ASRock X870 Steel Legend</li>
+  <li><strong>极致性价比</strong>：ASUS TUF B850-Plus</li>
+</ul>
+</div>
+
+<!-- Q14 -->
+<div class="q-box" id="q14">Q14. 讲详细点（PCIe 通道分配基础）</div>
+<div class="a-box">
+<h4>PCIe 是什么</h4>
+<p>CPU 和其他硬件之间的<strong>高速公路</strong>。</p>
+<ul>
+  <li><strong>通道（Lane）= 车道数</strong>：x1/x4/x8/x16</li>
+  <li><strong>代数（Gen）= 限速</strong>：PCIe 3.0 / 4.0 / 5.0</li>
+</ul>
+
+<h4>9950X3D 的 28 条分工</h4>
+<pre>
+CPU (9950X3D)
+ ├─ 16 条 → 显卡插槽
+ ├─ 4 条  → SSD 接口 1
+ ├─ 4 条  → SSD 接口 2
+ └─ 4 条  → 通往芯片组
+</pre>
+
+<h4>芯片组 = 中转站</h4>
+<pre>
+CPU ── 4条PCIe ──→ 芯片组 ──→ 第二显卡槽
+                            ──→ 多余 SSD
+                            ──→ USB / SATA / 网卡
+</pre>
+<p>挂在芯片组下的所有东西<strong>共用那 4 条上行总线</strong>。</p>
+
+<h4>CPU 直连 vs 芯片组</h4>
+<table>
+  <tr><th>插槽类型</th><th>延迟</th><th>带宽</th><th>适合</th></tr>
+  <tr><td>CPU 直连</td><td>极快</td><td>独占</td><td>显卡、高速 SSD</td></tr>
+  <tr><td>芯片组</td><td>稍慢</td><td>共享</td><td>第二显卡、次要设备</td></tr>
+</table>
+
+<h4>判断规则</h4>
+<blockquote>
+标 <strong>Gen5 / 5.0</strong> = CPU 直连（快）<br>
+标 <strong>Gen4 / 4.0</strong> = 芯片组（慢一些）
+</blockquote>
+
+<h4>装机三条铁律</h4>
+<ol>
+  <li>主显卡插离 CPU 最近的 PCIe 槽（Gen5 x16）</li>
+  <li>主 SSD 插 CPU 直连的 M.2（Gen5 的那个）</li>
+  <li>次要设备插芯片组槽</li>
+</ol>
+</div>
+
+<!-- Q15 -->
+<div class="q-box" id="q15">Q15. 5070 连芯片组 vs 直连 CPU 的影响</div>
+<div class="a-box">
+<h4>三个实际影响</h4>
+
+<p><strong>影响 1：延迟</strong></p>
+<ul>
+  <li>CPU 直连：100~200 ns</li>
+  <li>经过芯片组：300~500 ns</li>
+  <li>差 200~300 ns = 0.0000003 秒，<strong>人类感知不到</strong></li>
+</ul>
+
+<p><strong>影响 2：带宽共享</strong></p>
+<p>芯片组上行 PCIe 5.0 x4 = 16 GB/s，所有设备共享。日常 11 GB/s 够用。</p>
+
+<p><strong>影响 3：游戏 FPS</strong></p>
+<table>
+  <tr><th>分辨率</th><th>FPS 损失</th></tr>
+  <tr><td>1080p</td><td>3~6%</td></tr>
+  <tr><td>1440p</td><td>2~4%</td></tr>
+  <tr><td>4K</td><td>1~2%</td></tr>
+</table>
+
+<h4>你的场景受影响吗</h4>
+<table>
+  <tr><th>用途</th><th>影响</th></tr>
+  <tr><td>显示桌面</td><td>0%</td></tr>
+  <tr><td>玩游戏</td><td>2~4%（3 FPS 感知不到）</td></tr>
+  <tr><td>跑小代码</td><td>&lt;1%</td></tr>
+</table>
+
+<h4>你的方案 vs 双卡直连</h4>
+<table>
+  <tr><th>配置</th><th>5090 性能</th><th>5070 性能</th></tr>
+  <tr><td>x16 + x4（你的方案）</td><td><strong>100%</strong></td><td>94~97%</td></tr>
+  <tr><td>x8 + x8 双直连</td><td>98~99%</td><td>100%</td></tr>
+</table>
+
+<div class="ok">你的方案更好，5090 留满血才是正确选择。</div>
+
+<blockquote>只有"双卡一起训练 AI"时，芯片组才会是严重瓶颈。</blockquote>
+</div>
+
+<!-- Q16 -->
+<div class="q-box" id="q16">Q16. PCIe 4 和 PCIe 5 的区别</div>
+<div class="a-box">
+<h4>核心区别：每条车道限速翻倍</h4>
+<table>
+  <tr><th>代数</th><th>单车道速度</th><th>发布年份</th></tr>
+  <tr><td>PCIe 3.0</td><td>1 GB/s</td><td>2010</td></tr>
+  <tr><td>PCIe 4.0</td><td>2 GB/s</td><td>2017</td></tr>
+  <tr><td><strong>PCIe 5.0</strong></td><td><strong>4 GB/s</strong></td><td>2019</td></tr>
+  <tr><td>PCIe 6.0</td><td>8 GB/s</td><td>2022</td></tr>
+</table>
+
+<h4>不同车道数总带宽</h4>
+<table>
+  <tr><th>接法</th><th>PCIe 3.0</th><th>PCIe 4.0</th><th>PCIe 5.0</th></tr>
+  <tr><td>x4（SSD）</td><td>4 GB/s</td><td>8 GB/s</td><td>16 GB/s</td></tr>
+  <tr><td>x8</td><td>8 GB/s</td><td>16 GB/s</td><td>32 GB/s</td></tr>
+  <tr><td>x16（显卡）</td><td>16 GB/s</td><td>32 GB/s</td><td>64 GB/s</td></tr>
+</table>
+<p><strong>重要对照</strong>：<code>PCIe 5.0 x8 = PCIe 4.0 x16</code>（带宽相同）</p>
+
+<h4>显卡实际场景</h4>
+<table>
+  <tr><th>插槽设置</th><th>5090 性能</th></tr>
+  <tr><td>PCIe 5.0 x16</td><td>100%</td></tr>
+  <tr><td>PCIe 5.0 x8</td><td>98~99%</td></tr>
+  <tr><td>PCIe 4.0 x16</td><td>97~99%</td></tr>
+  <tr><td>PCIe 4.0 x8</td><td>94~96%</td></tr>
+</table>
+<div class="info"><strong>PCIe 5.0 对显卡几乎没明显提升</strong>，因为显卡主要用自己的 VRAM。</div>
+
+<h4>SSD 真正受益</h4>
+<table>
+  <tr><th>SSD 类型</th><th>读取速度</th></tr>
+  <tr><td>PCIe 3.0 NVMe</td><td>3.5 GB/s</td></tr>
+  <tr><td>PCIe 4.0 NVMe（主流）</td><td>7 GB/s</td></tr>
+  <tr><td>PCIe 5.0 NVMe（顶级）</td><td>14 GB/s</td></tr>
+</table>
+
+<h4>升级价值评估</h4>
+<table>
+  <tr><th>升级</th><th>对游戏</th><th>对 SSD</th><th>是否值得</th></tr>
+  <tr><td>3.0 → 4.0</td><td>5~10%</td><td>2 倍</td><td>✅ 非常值</td></tr>
+  <tr><td>4.0 → 5.0</td><td>1~3%</td><td>2 倍</td><td>⚠️ 看用途</td></tr>
+  <tr><td>5.0 → 6.0</td><td>&lt;1%</td><td>2 倍</td><td>🤷 无感</td></tr>
+</table>
+
+<h4>装机建议</h4>
+<ul>
+  <li>5090 插 5.0 x16 槽（主板给了就用满）</li>
+  <li>5070 插 4.0 x4（够用省钱）</li>
+  <li>SSD 主盘用 <strong>PCIe 4.0 NVMe（7 GB/s）</strong>就够</li>
+  <li>省下的钱加内存到 128GB</li>
+</ul>
+
+<blockquote><strong>PCIe 5.0 = 每条车道翻倍</strong>。对显卡提升小（5090 都吃不满），对顶级 SSD 翻倍但日常弱感。真正需要 5.0 的是多卡训练 AI 和专业场景。</blockquote>
+</div>
+
+<!-- Q17 -->
+<div class="q-box" id="q17">Q17. CPU 有的 PCIe 和主板的不一样对吧</div>
+<div class="a-box">
+<div class="info"><strong>一句话区分</strong>：CPU 的 PCIe 是源头（固定数量），主板只是把它布线出来 + 通过芯片组扩展。<strong>主板只是"搬运工"和"扩展器"。</strong></div>
+
+<h4>关系图</h4>
+<pre>
+┌──────────────────────────────────────────┐
+│              CPU（源头）                  │
+│      9950X3D 固定有 28 条 PCIe 5.0       │
+└──────────┬───────────────────────────────┘
+           │ 通过 CPU 插座（AM5）传到主板
+           ▼
+┌──────────────────────────────────────────┐
+│              主板（搬运工）                │
+│  主板 PCB 用铜线把 CPU 通道布到：           │
+│    ├─ 显卡槽（PCIe x16）                   │
+│    ├─ M.2 SSD 插槽                        │
+│    └─ 芯片组                              │
+│                                          │
+│  芯片组（X870/B850）                      │
+│  吃 4 条 CPU PCIe，再扩展出更多：          │
+│    ├─ 第二个 PCIe 槽                      │
+│    ├─ 更多 M.2                           │
+│    └─ USB / SATA / 网卡 / Wi-Fi          │
+└──────────────────────────────────────────┘
+</pre>
+
+<h4>同样是 9950X3D，不同主板接口完全不同</h4>
+<table>
+  <tr><th>主板</th><th>PCIe 槽</th><th>M.2</th><th>特点</th></tr>
+  <tr><td>MSI X870E Carbon（高端）</td><td>2 个</td><td>4 个（2 Gen5 + 2 Gen4）</td><td>均衡</td></tr>
+  <tr><td>ASUS TUF B850-Plus（入门）</td><td>2 个</td><td>3 个（1 Gen5 + 2 Gen4）</td><td>够用</td></tr>
+  <tr><td>ROG Crosshair X870E Hero（旗舰）</td><td>3 个（可拆 x8+x8）</td><td>5 个</td><td>顶配</td></tr>
+</table>
+<p><strong>CPU 都一样，主板决定你能用上多少、怎么用。</strong></p>
+
+<h4>主板厂家的"操作空间"</h4>
+<ol>
+  <li><strong>怎么分给 PCIe 槽</strong>：单卡 x16、双卡 x8+x8、x16+芯片组 x4</li>
+  <li><strong>给几个 M.2 直连 CPU</strong>：高端 2 个、中端 1 个</li>
+  <li><strong>复用通道（共享设计）</strong>：M.2_2 共享 PCIE_1 带宽，插满就掉速</li>
+  <li><strong>给芯片组链路的规格</strong>：可选 Gen5 或 Gen4</li>
+</ol>
+
+<h4>"同样标 PCIe 4.0 x4 的 M.2"≠ 同样的体验</h4>
+<ul>
+  <li>来自 <strong>CPU 直连</strong>：独占带宽</li>
+  <li>来自 <strong>芯片组</strong>：和别的设备抢</li>
+</ul>
+
+<h4>CPU 会限制主板上限</h4>
+<p>主板再高端，也<strong>不能超过 CPU 的总通道数</strong>。想要更多？只能换平台：</p>
+<table>
+  <tr><th>CPU</th><th>PCIe 总通道</th></tr>
+  <tr><td>Ryzen 9 9950X3D</td><td>28× PCIe 5.0</td></tr>
+  <tr><td>Threadripper 7960X</td><td>48× PCIe 5.0</td></tr>
+  <tr><td>EPYC 9354</td><td>128× PCIe 5.0</td></tr>
+</table>
+
+<h4>买主板时的关键看点</h4>
+<p>看 Expansion Slots 表里每行括号里的来源：</p>
+<pre>
+PCI_E1: PCIe 5.0 x16 (CPU)          ← CPU 直连
+PCI_E2: PCIe 4.0 x4  (Chipset)      ← 芯片组扩展
+M2_1:   PCIe 5.0 x4  (CPU)          ← CPU 直连
+M2_2:   PCIe 5.0 x4  (CPU)          ← CPU 直连
+M2_3:   PCIe 4.0 x4  (Chipset)      ← 芯片组扩展
+M2_4:   PCIe 4.0 x4  (Chipset)      ← 芯片组扩展
+</pre>
+<div class="ok">只有括号标 <strong>(CPU)</strong> 的才是真·源头通道。</div>
+
+<h4>常见误区</h4>
+<table>
+  <tr><th>误区</th><th>真相</th></tr>
+  <tr><td>主板越贵 PCIe 通道越多</td><td>CPU 决定总数，主板只能"重新分配"</td></tr>
+  <tr><td>买贵主板能多插 SSD</td><td>多出来的 M.2 大多挂芯片组，速度不如 CPU 直连</td></tr>
+  <tr><td>芯片组越新越好</td><td>B850 和 X870 的 CPU 直连部分一样，只是扩展能力不同</td></tr>
+</table>
+
+<blockquote><strong>CPU 决定天花板，主板决定怎么利用这个天花板。</strong></blockquote>
+</div>
+
+<!-- Q18 -->
+<div class="q-box" id="q18">Q18. MSI MPG X870E Carbon WiFi 的 PCIe 通道与分配</div>
+<div class="a-box">
+
+<h4>主板规格概览</h4>
+<ul>
+  <li>规格：ATX，AM5 插座</li>
+  <li>芯片组：AMD X870E（双芯片组设计）</li>
+  <li>定位：中高端，~¥3800</li>
+  <li>亮点：原生 USB4 × 2、Wi-Fi 7、2.5G 网卡</li>
+</ul>
+
+<h4>PCIe 扩展槽（3 个）</h4>
+<table>
+  <tr><th>接口</th><th>物理长度</th><th>实际通道</th><th>来源</th></tr>
+  <tr><td><strong>PCI_E1</strong></td><td>x16</td><td><strong>PCIe 5.0 x16</strong></td><td>CPU 直连</td></tr>
+  <tr><td><strong>PCI_E2</strong></td><td>x16</td><td><strong>PCIe 4.0 x4</strong></td><td>芯片组</td></tr>
+  <tr><td>PCI_E3</td><td>x1</td><td>PCIe 3.0 x1</td><td>芯片组</td></tr>
+</table>
+
+<h4>M.2 SSD 插槽（4 个）</h4>
+<table>
+  <tr><th>接口</th><th>通道</th><th>来源</th><th>位置</th></tr>
+  <tr><td><strong>M2_1</strong></td><td>PCIe 5.0 x4</td><td><strong>CPU 直连</strong></td><td>CPU 插座正下方</td></tr>
+  <tr><td><strong>M2_2</strong></td><td>PCIe 5.0 x4</td><td><strong>CPU 直连</strong></td><td>显卡槽下方</td></tr>
+  <tr><td>M2_3</td><td>PCIe 4.0 x4</td><td>芯片组</td><td>主板中下部</td></tr>
+  <tr><td>M2_4</td><td>PCIe 4.0 x4</td><td>芯片组</td><td>主板底部</td></tr>
+</table>
+
+<h4>CPU 28 条通道的完整分配图</h4>
+<pre>
+┌────────────────────────────────────────┐
+│           CPU (9950X3D)                │
+│         28 条 PCIe 5.0                 │
+└────────────────────────────────────────┘
+    │
+    ├── 16 条 ━━━━→ PCI_E1 (显卡槽)      [5.0 x16]
+    ├── 4 条 ━━━━━→ M2_1  (主 SSD)       [5.0 x4]
+    ├── 4 条 ━━━━━→ M2_2  (次 SSD)       [5.0 x4]
+    └── 4 条 ━━━━━→ X870E 芯片组
+                      │
+                      ├→ PCI_E2 (第二槽)  [4.0 x4]
+                      ├→ PCI_E3          [3.0 x1]
+                      ├→ M2_3             [4.0 x4]
+                      ├→ M2_4             [4.0 x4]
+                      ├→ USB4 × 2
+                      ├→ USB 3.2 × 多个
+                      ├→ 2.5G 网卡
+                      ├→ Wi-Fi 7
+                      └→ SATA × 4
+</pre>
+
+<h4>关键：带宽共享规则（坑点）</h4>
+
+<div class="warn"><strong>规则 1：M2_2 与 PCI_E1 共享</strong><br>
+M2_2 空着 → PCI_E1 跑 x16 满血<br>
+M2_2 插 SSD → PCI_E1 降为 x8（5090 损失 1~2%）</div>
+
+<div class="info"><strong>规则 2：PCI_E2 与芯片组设备共享</strong><br>
+PCI_E2 走芯片组，和 M2_3/M2_4、USB、SATA 共用 4 条上行总线。日常不冲突。</div>
+
+<h4>针对 5090 + 5070 方案的最优分配</h4>
+<table>
+  <tr><th>接口</th><th>插什么</th><th>理由</th></tr>
+  <tr><td><strong>PCI_E1</strong></td><td>🎮 RTX 5090</td><td>CPU 直连满血 x16</td></tr>
+  <tr><td><strong>PCI_E2</strong></td><td>🎮 RTX 5070</td><td>芯片组 4.0 x4</td></tr>
+  <tr><td>PCI_E3</td><td>空 / 扩展卡</td><td>—</td></tr>
+  <tr><td><strong>M2_1</strong></td><td>💾 三星 990 Pro 2TB（系统盘）</td><td>CPU 直连独占</td></tr>
+  <tr><td><strong>M2_2</strong></td><td>⚠️ <strong>留空</strong></td><td>插了会让 5090 掉到 x8</td></tr>
+  <tr><td>M2_3</td><td>💾 致态 TiPlus 4TB（数据盘）</td><td>芯片组 4.0 x4</td></tr>
+  <tr><td>M2_4</td><td>空 / 扩展盘</td><td>备用</td></tr>
+</table>
+
+<div class="ok"><strong>好处</strong>：5090 完全满血 · 主 SSD 最快 · 5070 独立 · 数据盘不抢带宽</div>
+
+<h4>想插满两块 Gen5 SSD 怎么办？</h4>
+<table>
+  <tr><th>选择</th><th>做法</th><th>代价</th></tr>
+  <tr><td>A</td><td>M2_1 + M2_2 都插 Gen5 SSD</td><td>5090 降为 x8（损失 1~2%）</td></tr>
+  <tr><td><strong>B（推荐）</strong></td><td>第二块 SSD 插 M2_3（Gen4）</td><td>SSD 7GB/s 而非 14GB/s，日常无感知</td></tr>
+</table>
+
+<h4>关于 x8+x8 拆分</h4>
+<div class="warn">Carbon BIOS 里可以启用拆分，但拆分后的 x8 导向 M2_2 位置（通过 M.2-to-PCIe 转接），<strong>没有第二个物理 x16 槽直接拿到 CPU x8</strong>。需要 x8+x8 双显卡直连要选 <strong>Crosshair X870E Hero</strong>。你的 x16+x4 方案不用拆分。</div>
+
+<h4>BIOS 要确认的设置</h4>
+<ol>
+  <li><code>Settings → Advanced → PCI Subsystem</code>
+    <ul>
+      <li>PCI_E1 Gen Switch = <strong>Gen5</strong></li>
+      <li>PCI_E2 Gen Switch = <strong>Gen4</strong></li>
+    </ul>
+  </li>
+  <li><code>Settings → Advanced → Storage</code>
+    <ul>
+      <li>M2_1 Mode = <strong>NVMe</strong></li>
+      <li>M2_2 Mode = Disabled（如果不用）</li>
+    </ul>
+  </li>
+  <li>不用的功能关掉：SATA / Wi-Fi / 蓝牙</li>
+</ol>
+
+<h4>装机后验证（GPU-Z）</h4>
+<p>打开 GPU-Z，选中 RTX 5090，右下角 <strong>Bus Interface</strong>：</p>
+<pre>
+正常:   PCIe x16 5.0 @ x16 5.0
+掉速:   PCIe x16 5.0 @ x8 5.0    ← M2_2 抢了带宽，拔掉恢复
+</pre>
+<p>5070 显示 <code>PCIe x16 4.0 @ x4 4.0</code> 是正常的（芯片组槽位）。</p>
+
+<h4>速查表</h4>
+<table>
+  <tr><th>需求</th><th>做法</th></tr>
+  <tr><td>主显卡最快</td><td>插 PCI_E1</td></tr>
+  <tr><td>主 SSD 最快</td><td>插 M2_1</td></tr>
+  <tr><td>副显卡</td><td>插 PCI_E2</td></tr>
+  <tr><td>数据盘</td><td>插 M2_3 或 M2_4</td></tr>
+  <tr><td><strong>避坑：5090 保持 x16</strong></td><td><strong>M2_2 空着</strong></td></tr>
+</table>
+
+<blockquote><strong>一条核心规则</strong>：M2_2 留空，换取 5090 x16 满血。</blockquote>
+</div>
+
+<hr>
+
+<div class="box">
+<h3>最终结论汇总（针对你的装机）</h3>
+<ol>
+  <li><strong>方案</strong>：5090（水冷，PCIe 5.0 x16 直连）+ 5070（PCIe 4.0 x4 芯片组）</li>
+  <li><strong>平台</strong>：9950X3D + X870E 主板（推荐 MSI MPG X870E Carbon 或 GIGABYTE X870E AORUS Master）</li>
+  <li><strong>散热</strong>：5090 用水冷压厚度和温度；CPU 风冷/水冷皆可</li>
+  <li><strong>机箱</strong>：联力 O11 Dynamic EVO XL 或同级大塔</li>
+  <li><strong>电源</strong>：1200W+ ATX 3.1 / 原生 12V-2×6</li>
+  <li><strong>性能代价</strong>：5070 损失 3~6%（完全可接受）；5090 完全满血</li>
+  <li><strong>避雷</strong>：MSI X870 Tomahawk 第二槽只有 4.0 x2</li>
+</ol>
+</div>
+
+</body>
+</html>

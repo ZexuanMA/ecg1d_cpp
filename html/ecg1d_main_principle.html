@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ECG1D Main.cpp Principle and Mathematical Review</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --bg-strong: #efe6d6;
+      --paper: rgba(255, 252, 246, 0.94);
+      --paper-strong: rgba(255, 250, 242, 0.98);
+      --ink: #15202b;
+      --muted: #58677a;
+      --line: rgba(21, 32, 43, 0.12);
+      --accent: #0f5b78;
+      --accent-soft: rgba(15, 91, 120, 0.12);
+      --accent-strong: #9a5a16;
+      --good: #215c3a;
+      --warn: #935b00;
+      --bad: #9f2f2f;
+      --shadow: 0 18px 52px rgba(34, 44, 56, 0.09);
+      --radius: 24px;
+      --radius-sm: 14px;
+      --mono: "Berkeley Mono", "SFMono-Regular", "Cascadia Code", "Fira Code", Consolas, monospace;
+      --serif: "Charter", "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      --sans: "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(154, 90, 22, 0.16), transparent 26rem),
+        radial-gradient(circle at 85% 10%, rgba(15, 91, 120, 0.14), transparent 22rem),
+        linear-gradient(180deg, #f8f2ea 0%, var(--bg) 46%, #f2ebdf 100%);
+      font-family: var(--sans);
+      line-height: 1.72;
+    }
+
+    .shell {
+      width: min(1160px, calc(100vw - 32px));
+      margin: 28px auto 56px;
+    }
+
+    .hero,
+    .section,
+    .appendix {
+      background: var(--paper);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      box-shadow: var(--shadow);
+      border-radius: var(--radius);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero {
+      padding: 34px 34px 28px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(135deg, rgba(15, 91, 120, 0.07), transparent 45%),
+        linear-gradient(315deg, rgba(154, 90, 22, 0.07), transparent 42%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 12px;
+      position: relative;
+      z-index: 1;
+    }
+
+    h1, h2, h3 {
+      font-family: var(--serif);
+      letter-spacing: -0.02em;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(2.2rem, 4vw, 3.65rem);
+      line-height: 1.06;
+      max-width: 12ch;
+      position: relative;
+      z-index: 1;
+    }
+
+    .lead {
+      margin: 18px 0 0;
+      max-width: 76ch;
+      font-size: 1.05rem;
+      color: var(--muted);
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-grid,
+    .summary-grid,
+    .mode-grid,
+    .review-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .hero-grid {
+      grid-template-columns: 1.8fr 1fr;
+      margin-top: 28px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .summary-grid,
+    .mode-grid,
+    .review-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .hero-card,
+    .card,
+    .mode-card,
+    .review-card {
+      padding: 18px 20px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+    }
+
+    .hero-card strong,
+    .card strong,
+    .mode-card strong,
+    .review-card strong {
+      display: block;
+      font-size: 0.85rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+
+    .hero-card p,
+    .card p,
+    .mode-card p,
+    .review-card p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    nav {
+      margin: 20px 0 24px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    nav a {
+      color: var(--ink);
+      text-decoration: none;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.56);
+      font-size: 0.92rem;
+      transition: 180ms ease;
+    }
+
+    nav a:hover {
+      transform: translateY(-1px);
+      background: white;
+      border-color: rgba(15, 91, 120, 0.25);
+    }
+
+    .section,
+    .appendix {
+      padding: 28px 30px;
+      margin-top: 18px;
+    }
+
+    .section h2,
+    .appendix h2 {
+      font-size: clamp(1.7rem, 2vw, 2.3rem);
+      margin-bottom: 10px;
+    }
+
+    .section-intro {
+      color: var(--muted);
+      margin: 0 0 22px;
+      max-width: 82ch;
+    }
+
+    .equation {
+      margin: 18px 0;
+      padding: 18px 20px;
+      border-radius: 18px;
+      border: 1px solid rgba(15, 91, 120, 0.16);
+      background: linear-gradient(180deg, rgba(15, 91, 120, 0.05), rgba(15, 91, 120, 0.02));
+      font-family: var(--serif);
+      font-size: clamp(1.03rem, 1.5vw, 1.18rem);
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .equation code {
+      font-family: var(--mono);
+      font-size: 0.94em;
+      white-space: normal;
+    }
+
+    .note,
+    .warning,
+    .scope {
+      border-left: 4px solid;
+      border-radius: 0 18px 18px 0;
+      padding: 14px 16px;
+      margin: 18px 0;
+      background: rgba(255, 255, 255, 0.62);
+    }
+
+    .note {
+      border-color: var(--accent);
+      background: rgba(15, 91, 120, 0.07);
+    }
+
+    .warning {
+      border-color: var(--warn);
+      background: rgba(147, 91, 0, 0.08);
+    }
+
+    .scope {
+      border-color: var(--accent-strong);
+      background: rgba(154, 90, 22, 0.08);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .flow .step {
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.65));
+    }
+
+    .step .num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .step h3 {
+      font-size: 1.05rem;
+      margin-bottom: 8px;
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.96rem;
+    }
+
+    .cols {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 22px;
+      align-items: start;
+    }
+
+    .list {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .list li {
+      margin: 10px 0;
+    }
+
+    .mini-title {
+      font-size: 0.88rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+      margin: 0 0 10px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.7);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+
+    th,
+    td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      font-size: 0.85rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: rgba(15, 91, 120, 0.05);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    code,
+    .mono {
+      font-family: var(--mono);
+      font-size: 0.95em;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .pill.high {
+      color: white;
+      background: var(--bad);
+    }
+
+    .pill.medium {
+      color: #503000;
+      background: rgba(147, 91, 0, 0.18);
+    }
+
+    .pill.note {
+      color: #07394f;
+      background: rgba(15, 91, 120, 0.14);
+      border-left: none;
+      margin: 0;
+      padding: 4px 9px;
+    }
+
+    .review-card h3 {
+      font-size: 1.08rem;
+      margin: 10px 0 8px;
+    }
+
+    .review-card p + p {
+      margin-top: 10px;
+    }
+
+    .footer {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 980px) {
+      .hero-grid,
+      .summary-grid,
+      .mode-grid,
+      .review-grid,
+      .cols,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(100vw - 18px, 100%);
+        margin-top: 12px;
+      }
+
+      .hero,
+      .section,
+      .appendix {
+        padding: 22px 18px;
+        border-radius: 22px;
+      }
+
+      nav {
+        gap: 8px;
+      }
+
+      nav a {
+        width: 100%;
+        text-align: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="eyebrow">Repository Interpretation</div>
+      <h1>ECG1D <code>main.cpp</code> Principle and Mathematical Review</h1>
+      <p class="lead">
+        This document translates the execution logic of <code>main.cpp</code> and its numerical backend into mathematical language.
+        The emphasis is on what the program actually computes: a finite-dimensional explicitly correlated Gaussian manifold,
+        generalized eigenvalue optimization, TDVP evolution, and kicked-dynamics projection in a non-orthogonal basis.
+      </p>
+
+      <div class="hero-grid">
+        <article class="hero-card">
+          <strong>Main Thesis</strong>
+          <p>
+            The code represents the many-body state as a finite non-orthogonal Gaussian expansion
+            <span class="mono">&Psi;(x) = &Sigma;<sub>k</sub> u<sub>k</sub>&Phi;<sub>k</sub>(x)</span>.
+            Every major routine in <code>main.cpp</code> either improves the manifold
+            <span class="mono">{&Phi;<sub>k</sub>}</span>, updates the coefficient vector
+            <span class="mono">u</span>, or propagates that state under a chosen Hamiltonian.
+          </p>
+        </article>
+        <article class="hero-card">
+          <strong>What Is Reviewed</strong>
+          <p>
+            The explanation below covers the implemented mathematics, not only the intended theory.
+            Where the code contains a material modeling or numerical risk, it is called out explicitly in the review appendix.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <nav aria-label="Sections">
+      <a href="#overview">Overview</a>
+      <a href="#ansatz">Wavefunction Ansatz</a>
+      <a href="#kernels">Pair Kernels</a>
+      <a href="#eigen">Generalized Eigenproblem</a>
+      <a href="#svm">SVM and Refinement</a>
+      <a href="#tdvp">TDVP</a>
+      <a href="#kicked">Kicked Dynamics</a>
+      <a href="#modes">Main Modes</a>
+      <a href="#review">Review Findings</a>
+    </nav>
+
+    <section class="section" id="overview">
+      <h2>1. High-Level Overview</h2>
+      <p class="section-intro">
+        <code>main.cpp</code> is an orchestration layer. The real mathematics lives in the
+        modules that assemble overlap kernels, Hamiltonian matrix elements, overlap derivatives,
+        TDVP metric tensors, and kick operators. At the program level, the code follows one of two archetypes:
+      </p>
+
+      <div class="summary-grid">
+        <article class="card">
+          <strong>Static Problem</strong>
+          <p>
+            Build a non-orthogonal ECG basis, assemble
+            <span class="mono">H</span> and <span class="mono">S</span>, solve
+            <span class="mono">Hc = ESc</span>, then improve the basis by stochastic search and imaginary-time TDVP.
+          </p>
+        </article>
+        <article class="card">
+          <strong>Dynamic Problem</strong>
+          <p>
+            Starting from a variationally optimized state, evolve either by real-time TDVP
+            or by the more stable fixed-basis strategy:
+            analytic kick projection plus exact generalized-eigenbasis free propagation.
+          </p>
+        </article>
+      </div>
+
+      <div class="flow">
+        <article class="step">
+          <div class="num">1</div>
+          <h3>State Construction</h3>
+          <p>Read or synthesize basis parameters <code>(u, A, B, R)</code> and interpret them as correlated Gaussian orbitals.</p>
+        </article>
+        <article class="step">
+          <div class="num">2</div>
+          <h3>Matrix Assembly</h3>
+          <p>For every pair of basis functions, compute Gaussian pair integrals and assemble the overlap and Hamiltonian matrices.</p>
+        </article>
+        <article class="step">
+          <div class="num">3</div>
+          <h3>Variational Solve</h3>
+          <p>Solve a generalized Hermitian eigenproblem to obtain the lowest energy and its coefficient vector in the current basis.</p>
+        </article>
+        <article class="step">
+          <div class="num">4</div>
+          <h3>Evolution or Diagnostics</h3>
+          <p>Apply TDVP, exact fixed-basis propagation, or analytic kick projection depending on the chosen execution path.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="ansatz">
+      <h2>2. Variational State and Basis Ansatz</h2>
+      <p class="section-intro">
+        The finite-dimensional trial state is a linear combination of explicitly correlated Gaussian basis functions:
+      </p>
+
+      <div class="equation">
+        &Psi;(x) = &Sigma;<sub>k=1</sub><sup>K</sup> u<sub>k</sub> &Phi;<sub>k</sub>(x)
+      </div>
+
+      <p>
+        For each basis element, the parameter set stored in <code>BasisParams</code> is
+        <span class="mono">(u, A, B, R, name)</span>. The nonlinear part of the basis function is of the form
+      </p>
+
+      <div class="equation">
+        &phi;<sub>k</sub>(x) =
+        exp[-x<sup>T</sup>(A<sub>k</sub> + B<sub>k</sub>)x
+        + 2 R<sub>k</sub><sup>T</sup> B<sub>k</sub> x
+        - R<sub>k</sub><sup>T</sup> B<sub>k</sub> R<sub>k</sub>]
+      </div>
+
+      <div class="cols">
+        <div>
+          <p class="mini-title">Interpretation of Parameters</p>
+          <ul class="list">
+            <li><code>A</code> is a complex symmetric correlation matrix controlling the quadratic core of the Gaussian.</li>
+            <li><code>B</code> is implemented as diagonal and acts as an additional width operator, especially useful for dynamics.</li>
+            <li><code>R</code> is a complex displacement-like vector. Its imaginary part encodes momentum-carrying phases.</li>
+            <li><code>u</code> is the linear coefficient in the global expansion, not part of the orbital shape itself.</li>
+          </ul>
+        </div>
+        <div>
+          <p class="mini-title">Momentum Encoding</p>
+          <p>
+            If <span class="mono">B<sub>aa</sub> = b</span> and
+            <span class="mono">R<sub>a</sub> = i q / (2b)</span>, then the linear term becomes
+          </p>
+          <div class="equation">
+            exp[2 R<sub>a</sub> B<sub>aa</sub> x<sub>a</sub>] = exp[i q x<sub>a</sub>]
+          </div>
+          <p>
+            This is why the kick-related routines generate additional basis functions by assigning purely imaginary components to <code>R</code>.
+          </p>
+        </div>
+      </div>
+
+      <div class="note">
+        <strong>Implemented symmetry convention.</strong>
+        Matrix elements are always summed over permutations with weights
+        <span class="mono">s<sub>P</sub> = perms.signs[p]</span>. In the current implementation,
+        <span class="mono">s<sub>P</sub> = 1</span> for all permutations, so the actual code realizes a bosonic symmetrized sum rather than a generic signed permutation sum.
+      </div>
+    </section>
+
+    <section class="section" id="kernels">
+      <h2>3. Gaussian Pair Cache and Operator Kernels</h2>
+      <p class="section-intro">
+        All matrix elements reduce to pairwise Gaussian integrals. For a bra basis function
+        <span class="mono">i</span>, a ket basis function <span class="mono">j</span>, and a permutation matrix
+        <span class="mono">P</span>, the code constructs a cached object
+        <span class="mono">PairCache</span> containing the effective quadratic form:
+      </p>
+
+      <div class="equation">
+        K = A<sub>i</sub><sup>*</sup> + B<sub>i</sub><sup>*</sup> + P<sup>T</sup>A<sub>j</sub>P + P<sup>T</sup>B<sub>j</sub>P
+      </div>
+      <div class="equation">
+        b<sup>T</sup> = 2 R<sub>i</sub><sup>*T</sup> B<sub>i</sub><sup>*</sup> + 2 R<sub>j</sub><sup>T</sup> B<sub>j</sub> P
+      </div>
+      <div class="equation">
+        C = -R<sub>i</sub><sup>*T</sup> B<sub>i</sub><sup>*</sup> R<sub>i</sub><sup>*</sup> - R<sub>j</sub><sup>T</sup> B<sub>j</sub> R<sub>j</sub>,
+        &mu; = (1/2) K<sup>-1</sup> b
+      </div>
+      <div class="equation">
+        M<sub>G</sub> = &pi;<sup>N/2</sup> det(K)<sup>-1/2</sup> exp[C + (1/4)b<sup>T</sup>K<sup>-1</sup>b]
+      </div>
+
+      <p>
+        This scalar <span class="mono">M<sub>G</sub></span> is the fundamental Gaussian overlap kernel.
+        Every physical matrix element is obtained by multiplying <span class="mono">M<sub>G</sub></span>
+        by an operator-specific kernel.
+      </p>
+
+      <div class="summary-grid">
+        <article class="card">
+          <strong>Overlap Kernel</strong>
+          <p><span class="mono">S<sub>ij</sub> = &Sigma;<sub>P</sub> s<sub>P</sub> M<sub>G</sub><sup>(P)</sup></span></p>
+        </article>
+        <article class="card">
+          <strong>Hamiltonian Kernel</strong>
+          <p>
+            <span class="mono">H<sub>ij</sub> = &Sigma;<sub>P</sub> s<sub>P</sub> M<sub>G</sub><sup>(P)</sup> K<sub>op</sub><sup>(P)</sup></span>,
+            where <span class="mono">K<sub>op</sub></span> is the local operator kernel.
+          </p>
+        </article>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Term</th>
+              <th>Implemented Kernel</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Kinetic</td>
+              <td class="mono">
+                P = -2 tr(K<sub>Mj</sub>) + g<sup>T</sup>g - 4 g<sup>T</sup>K<sub>Mj</sub>&mu;
+                + 4 &mu;<sup>T</sup>K<sub>Mj</sub><sup>2</sup>&mu; + 2 tr(K<sub>Mj</sub><sup>2</sup>K<sup>-1</sup>)
+              </td>
+              <td>Contraction of the Laplacian against the Gaussian pair.</td>
+            </tr>
+            <tr>
+              <td>Harmonic Trap</td>
+              <td class="mono">rTr = (1/2) tr(K<sup>-1</sup>) + &mu;<sup>T</sup>&mu;</td>
+              <td>Expectation of <span class="mono">x<sup>2</sup></span> inside the Gaussian pair.</td>
+            </tr>
+            <tr>
+              <td>Delta Contact</td>
+              <td class="mono">
+                G<sub>ab</sub> = 1 / sqrt(&pi; h) exp[-p<sup>2</sup>/h],
+                h = K<sup>-1</sup><sub>aa</sub> + K<sup>-1</sup><sub>bb</sub> - 2K<sup>-1</sup><sub>ab</sub>,
+                p = &mu;<sub>a</sub> - &mu;<sub>b</sub>
+              </td>
+              <td>Closed-form pair-contact interaction kernel.</td>
+            </tr>
+            <tr>
+              <td>Gaussian Interaction</td>
+              <td class="mono">
+                H<sub>ab</sub> = &sigma; / sqrt(&sigma;<sup>2</sup> + h)
+                exp[-p<sup>2</sup> / (&sigma;<sup>2</sup> + h)]
+              </td>
+              <td>Finite-width two-body interaction kernel.</td>
+            </tr>
+            <tr>
+              <td>Kicking Potential</td>
+              <td class="mono">
+                Q<sub>a</sub> = exp[-k<sub>L</sub><sup>2</sup>K<sup>-1</sup><sub>aa</sub>] cos(2 k<sub>L</sub> &mu;<sub>a</sub>)
+              </td>
+              <td>Local cosine-lattice expectation in the Gaussian pair.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="scope">
+        <strong>Hamiltonian implemented in code.</strong>
+        With the active switches in <code>HamiltonianTerms</code>, the solver evaluates
+        <span class="mono">H = T + V<sub>ho</sub> + V<sub>&delta;</sub> + V<sub>gauss</sub> + V<sub>kick</sub></span>,
+        with the default constants <span class="mono">&hbar; = m = &omega; = 1</span>.
+      </div>
+    </section>
+
+    <section class="section" id="eigen">
+      <h2>4. Generalized Eigenproblem and Energy Functional</h2>
+      <p class="section-intro">
+        Because the ECG basis is non-orthogonal, the variational problem is not a standard eigenproblem.
+        The coefficient vector is determined by the generalized Hermitian system
+      </p>
+
+      <div class="equation">
+        H u = E S u
+      </div>
+
+      <p>
+        Equivalently, the energy of a state written in the current basis is the Rayleigh quotient
+      </p>
+
+      <div class="equation">
+        E[u] = (u<sup>&dagger;</sup> H u) / (u<sup>&dagger;</sup> S u)
+      </div>
+
+      <p>
+        Numerically, the code diagonalizes <span class="mono">S</span>, truncates numerically unsafe eigenvectors,
+        builds <span class="mono">S<sup>-1/2</sup></span>, and solves the transformed Hermitian problem
+      </p>
+
+      <div class="equation">
+        H&#771; c = E c,  with  H&#771; = S<sup>-1/2</sup> H S<sup>-1/2</sup>
+      </div>
+
+      <div class="cols">
+        <div>
+          <p class="mini-title">Why This Matters</p>
+          <ul class="list">
+            <li>The overlap matrix can become ill-conditioned when basis functions are nearly linearly dependent.</li>
+            <li>Truncation in the small-eigenvalue subspace prevents uncontrolled amplification by <code>S<sup>-1/2</sup></code>.</li>
+            <li>The code cross-checks the lowest eigenvalue against the corresponding Rayleigh quotient before accepting it.</li>
+          </ul>
+        </div>
+        <div>
+          <p class="mini-title">Additional Diagnostic</p>
+          <p>
+            The solver also computes an energy-variance proxy
+            <span class="mono">&sigma;<sup>2</sup> = &lang;H<sup>2</sup>&rang; - E<sup>2</sup></span>.
+            In a perfect eigenstate this should approach zero, so it functions as a quality certificate for the current basis.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="svm">
+      <h2>5. SVM Construction and Stochastic Refinement</h2>
+      <p class="section-intro">
+        The first part of the pipeline is basis discovery. The code does not assume an optimal nonlinear manifold in advance.
+        Instead it builds one by a stochastic variational method, then refines it by local perturbations.
+      </p>
+
+      <div class="equation">
+        B<sub>K+1</sub> = arg min<sub>&phi; in candidate pool</sub> E<sub>0</sub>(B<sub>K</sub> &cup; {&phi;})
+      </div>
+
+      <div class="summary-grid">
+        <article class="card">
+          <strong>Greedy SVM Stage</strong>
+          <p>
+            <code>svm_build_basis()</code> samples trial ECGs, screens out near-duplicate functions by normalized overlap,
+            and accepts the candidate that produces the smallest lowest generalized eigenvalue.
+          </p>
+        </article>
+        <article class="card">
+          <strong>Refinement Stage</strong>
+          <p>
+            <code>stochastic_refine()</code> perturbs one basis function at a time,
+            rebuilds <code>H</code> and <code>S</code>, and keeps a replacement only if the ground-state energy decreases.
+          </p>
+        </article>
+      </div>
+
+      <div class="warning">
+        <strong>Mathematical role of SVM.</strong>
+        The linear coefficients solve only a finite-dimensional problem once the manifold is fixed.
+        The difficult part is the nonlinear search over the manifold itself. SVM is the code's practical surrogate for the
+        infinite-dimensional minimization
+        <span class="mono">inf<sub>manifold</sub> inf<sub>u != 0</sub> (u<sup>&dagger;</sup>Hu)/(u<sup>&dagger;</sup>Su)</span>.
+      </div>
+    </section>
+
+    <section class="section" id="tdvp">
+      <h2>6. TDVP as a Riemannian Evolution Equation</h2>
+      <p class="section-intro">
+        Once the basis parameters are treated as dynamical coordinates
+        <span class="mono">z = {u, B, R, A}</span>, the code constructs the overlap-geometry matrix
+        <span class="mono">C</span> and the Hamiltonian gradient <span class="mono">g</span>.
+      </p>
+
+      <div class="equation">
+        C<sub>&alpha;&beta;</sub>
+        = (1/S) &part;<sup>2</sup>S / (&part;z<sub>&alpha;</sub> &part;z&#772;<sub>&beta;</sub>)
+        - (1/S<sup>2</sup>)
+        (&part;S / &part;z<sub>&alpha;</sub>)
+        (&part;S / &part;z&#772;<sub>&beta;</sub>)
+      </div>
+
+      <div class="equation">
+        g<sub>&alpha;</sub> = &part;E / &part;z&#772;<sub>&alpha;</sub>
+      </div>
+
+      <p>
+        This is precisely the metric-like tensor implemented by <code>calculate_C()</code>.
+        In geometric terms, the code computes the projected equation of motion on a non-orthogonal variational manifold.
+      </p>
+
+      <div class="cols">
+        <div>
+          <p class="mini-title">Imaginary-Time TDVP</p>
+          <div class="equation">
+            C dz = -g
+          </div>
+          <p>
+            The solver regularizes <code>C</code> with a Tikhonov term, solves by truncated SVD,
+            applies a line search, and accepts a step only if the energy decreases.
+            In this mode, the code excludes the <code>u</code> coordinates from the update and may re-solve them from the generalized eigenproblem.
+          </p>
+        </div>
+        <div>
+          <p class="mini-title">Real-Time TDVP</p>
+          <div class="equation">
+            C dz/dt = -i g
+          </div>
+          <p>
+            <code>kicked_evolution.cpp</code> uses the real-time version and integrates it by a classical RK4 scheme.
+            In this branch the coefficient variables <code>u</code> are included in the update.
+          </p>
+        </div>
+      </div>
+
+      <div class="note">
+        <strong>Derivative architecture.</strong>
+        The derivative layer is exact at the analytic kernel level:
+        first derivatives of the logarithmic Gaussian overlap generate the metric,
+        and Hamiltonian gradients are decomposed into
+        <span class="mono">d(M<sub>G</sub>)</span> and <span class="mono">d(kernel)</span> parts.
+        That is why the TDVP implementation looks algebraically dense: it is carrying closed-form derivatives, not finite differences.
+      </div>
+    </section>
+
+    <section class="section" id="kicked">
+      <h2>7. Kicked Dynamics: Projection, Basis Augmentation, and Exact Free Propagation</h2>
+      <p class="section-intro">
+        The kicked branch is mathematically the most interesting part of the code. It mixes three ideas:
+        momentum-aware basis augmentation, analytic kick projection, and exact fixed-basis free evolution.
+      </p>
+
+      <h3 style="margin-top: 0.2rem;">7.1 Kick Operator</h3>
+      <div class="equation">
+        U<sub>kick</sub> = exp[-i &kappa; &Sigma;<sub>a=1</sub><sup>N</sup> cos(2 k<sub>L</sub> x<sub>a</sub>)]
+      </div>
+      <p>
+        The code uses the Jacobi-Anger expansion
+      </p>
+      <div class="equation">
+        exp[-i &kappa; cos &theta;]
+        = &Sigma;<sub>n=-&infin;</sub><sup>&infin;</sup> (-i)<sup>n</sup> J<sub>n</sub>(&kappa;) exp(i n &theta;)
+      </div>
+      <p>
+        Because the matrix element of <span class="mono">exp(i n 2k<sub>L</sub> x<sub>a</sub>)</span> against a Gaussian pair is analytic,
+        the kick matrix can be assembled explicitly:
+      </p>
+      <div class="equation">
+        K<sup>kick</sup><sub>ij</sub> = &lang;&Phi;<sub>i</sub>|U<sub>kick</sub>|&Phi;<sub>j</sub>&rang;
+      </div>
+      <div class="equation">
+        u' = S<sup>-1</sup> K<sup>kick</sup> u
+      </div>
+
+      <h3>7.2 Exact Fixed-Basis Free Evolution</h3>
+      <p>
+        Between kicks, the most stable branch keeps the basis fixed and propagates only the coefficient vector in the generalized eigenbasis:
+      </p>
+      <div class="equation">
+        u(t) = S<sup>-1/2</sup> exp[-i H&#771; t] S<sup>1/2</sup> u(0)
+      </div>
+      <p>
+        This avoids stepwise TDVP drift during the free interval. Mathematically it is an exact propagator inside the currently chosen finite basis.
+      </p>
+
+      <h3>7.3 Why Basis Augmentation Is Necessary</h3>
+      <p>
+        A kick does not preserve the original Gaussian manifold centered around the ground state.
+        The phase factor <span class="mono">exp(i n 2k<sub>L</sub> x)</span> generates shifted momentum sectors, so the code augments the basis with momentum-carrying ECGs.
+      </p>
+
+      <div class="equation">
+        B<sub>aug</sub> = B<sub>gs</sub> &cup; B<sub>mom</sub>
+      </div>
+
+      <p>
+        In the <code>--kicked-gamma0</code> path, the code also scores repair packets by a first-kick objective:
+      </p>
+      <div class="equation">
+        J = rel(E) + 3 |&Delta;&lang;x<sup>2</sup>&rang;| + rel(&lang;p<sup>2</sup>&rang;)
+        + 0.25 |1 - fidelity|
+        + 5 penalty<sub>gs</sub>
+        + 0.05 penalty<sub>cond</sub>
+      </div>
+      <p>
+        This objective is not abstract theory; it is literally the acceptance criterion used to improve the post-kick representation quality while still protecting overlap conditioning.
+      </p>
+
+      <div class="scope">
+        <strong>Interpretation of the kicked branch.</strong>
+        The code is not merely solving a TDVP ODE. It is trying to build a finite subspace that is approximately invariant under alternating actions of
+        <span class="mono">U<sub>kick</sub></span> and
+        <span class="mono">exp(-i H<sub>free</sub> T)</span>.
+      </div>
+    </section>
+
+    <section class="section" id="modes">
+      <h2>8. What the Main Modes Actually Mean</h2>
+      <p class="section-intro">
+        The command-line flags in <code>main.cpp</code> are not cosmetic. Each mode corresponds to a distinct numerical experiment.
+      </p>
+
+      <div class="mode-grid">
+        <article class="mode-card">
+          <strong>Default Path</strong>
+          <p>
+            Reads or constructs basis functions and prints functional and derivative diagnostics.
+            This is primarily a kernel-validation mode.
+          </p>
+        </article>
+        <article class="mode-card">
+          <strong><code>--tdvp</code> / <code>--tdvp-only</code></strong>
+          <p>
+            Tests the TDVP machinery, including the one-particle harmonic benchmark where Gaussian evolution should be especially favorable.
+          </p>
+        </article>
+        <article class="mode-card">
+          <strong><code>--delta</code>, <code>--gaussian</code>, <code>--kicking</code></strong>
+          <p>
+            Run the full static chain:
+            SVM basis construction, stochastic refinement, then imaginary-time TDVP improvement for different Hamiltonian choices.
+          </p>
+        </article>
+        <article class="mode-card">
+          <strong><code>--kicked</code></strong>
+          <p>
+            Executes real-time kicked evolution with the TDVP machinery, intended as a direct dynamical experiment rather than a stationary solver.
+          </p>
+        </article>
+        <article class="mode-card">
+          <strong><code>--kicked-gamma0</code></strong>
+          <p>
+            Uses a more carefully engineered route:
+            build a ground-state basis, augment it with momentum sectors, apply analytic kick projection, and evolve exactly in the fixed augmented basis.
+          </p>
+        </article>
+        <article class="mode-card">
+          <strong><code>--kick-convergence</code></strong>
+          <p>
+            Studies the finite-pulse TDVP approximation as <code>T_pulse &rarr; 0</code> and compares it with the exact instantaneous-kick solution.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="appendix" id="review">
+      <h2>9. Review Findings</h2>
+      <p class="section-intro">
+        These are the main correctness and design issues I found while reviewing the code path around <code>main.cpp</code>.
+      </p>
+
+      <div class="review-grid">
+        <article class="review-card">
+          <span class="pill high">High</span>
+          <h3>The “ideal delta kick” in the TDVP path is step-size dependent.</h3>
+          <p>
+            In <code>main.cpp</code>, <code>run_kicked_evolution_test()</code> sets
+            <code>T_pulse = 0.0</code> and then calls <code>kicked_evolution()</code>.
+            In <code>apply_kick()</code>, the <code>T_pulse &lt;= 0</code> branch performs exactly one
+            <code>realtime_tdvp_step(..., dt_step, terms_with_kick, ...)</code>.
+          </p>
+          <p>
+            Mathematically, that applies a finite-duration TDVP update of size <code>dt_step</code>,
+            not an impulse with fixed area <code>&kappa;</code>.
+            Since the kick Hamiltonian itself uses the unscaled constant amplitude from
+            <code>physical_constants.hpp</code>, the supposed delta kick is effectively proportional to the integrator step size.
+            The physics therefore changes if <code>dt_step</code> changes.
+          </p>
+        </article>
+
+        <article class="review-card">
+          <span class="pill medium">Medium</span>
+          <h3><code>KickParams.kappa_kick</code> and <code>KickParams.k_L_kick</code> are dead configuration fields.</h3>
+          <p>
+            The public API advertises per-run kick strength and lattice wavevector inside <code>KickParams</code>,
+            but the kicked TDVP implementation never uses them.
+            The actual kick amplitude and wavevector come from the global constants
+            <code>kappa</code> and <code>k_L</code>, with only <code>kicking_scale</code> available as a multiplier.
+          </p>
+          <p>
+            As a result, callers can set <code>kick_params.kappa_kick</code> or <code>kick_params.k_L_kick</code>
+            and observe no effect. That is a silent API mismatch and a likely source of misleading experiments.
+          </p>
+        </article>
+      </div>
+
+      <div class="warning">
+        <strong>Scope note.</strong>
+        The permutation framework stores a sign for each permutation, but the current implementation sets every sign to <code>+1</code>.
+        For your present bosonic cold-atom use case this may be intentional. If you later intend to support antisymmetric states,
+        that layer is not yet doing it.
+      </div>
+
+      <p class="footer">
+        Prepared from the current repository implementation in <code>main.cpp</code>,
+        <code>src/pair_cache.cpp</code>, <code>src/interaction_kernels.cpp</code>,
+        <code>src/svm.cpp</code>, <code>src/tdvp_solver.cpp</code>, and <code>src/kicked_evolution.cpp</code>.
+      </p>
+    </section>
+  </main>
+</body>
+</html>

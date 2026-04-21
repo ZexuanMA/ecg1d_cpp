@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ECG1D C++ — Kick / Free Split Edit Suggestion (Trial 1)</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    max-width: 1100px;
+    margin: 2em auto;
+    padding: 0 2em;
+    line-height: 1.55;
+    color: #1f2328;
+    background: #f6f8fa;
+  }
+  h1 { border-bottom: 2px solid #1f6feb; padding-bottom: 0.3em; color: #0b4fb3; }
+  h2 { border-bottom: 1px solid #d0d7de; padding-bottom: 0.2em; margin-top: 2em; color: #24292f; }
+  h3 { color: #24292f; margin-top: 1.4em; }
+  code, pre {
+    font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.92em;
+  }
+  code { background: #eaeef2; padding: 2px 5px; border-radius: 4px; }
+  pre {
+    background: #0d1117;
+    color: #e6edf3;
+    padding: 1em;
+    border-radius: 6px;
+    overflow-x: auto;
+    line-height: 1.45;
+  }
+  pre .add    { color: #7ee787; }
+  pre .del    { color: #ff7b72; }
+  pre .cmt    { color: #8b949e; font-style: italic; }
+  pre .kw     { color: #ff7b72; }
+  pre .str    { color: #a5d6ff; }
+  pre .fn     { color: #d2a8ff; }
+  pre .num    { color: #79c0ff; }
+  .box {
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    padding: 1em 1.5em;
+    margin: 1em 0;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .warn  { border-left: 4px solid #d29922; background: #fff8c5; }
+  .ok    { border-left: 4px solid #1f883d; background: #dafbe1; }
+  .bad   { border-left: 4px solid #cf222e; background: #ffebe9; }
+  .info  { border-left: 4px solid #1f6feb; background: #ddf4ff; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+    background: #fff;
+  }
+  th, td {
+    border: 1px solid #d0d7de;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #f6f8fa; font-weight: 600; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.8em;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .tag-fix  { background: #ffebe9; color: #cf222e; }
+  .tag-keep { background: #dafbe1; color: #1f883d; }
+  .tag-opt  { background: #ddf4ff; color: #0b4fb3; }
+  .tag-trial1 { background: #fef4d8; color: #7f5000; border: 1px solid #d29922; }
+  .tag-fail { background: #ffebe9; color: #8e1319; border: 1px solid #cf222e; }
+  .trial-banner {
+    background: linear-gradient(135deg, #fff8c5 0%, #ffd33d22 100%);
+    border: 2px solid #d29922;
+    border-radius: 10px;
+    padding: 1em 1.5em;
+    margin: 1em 0 2em 0;
+  }
+  .trial-banner .label {
+    display: inline-block;
+    background: #d29922;
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.85em;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-right: 10px;
+  }
+  .math {
+    font-style: italic;
+    background: #f6f8fa;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  ul li { margin: 0.3em 0; }
+  .file-path {
+    font-family: "SF Mono", Consolas, monospace;
+    background: #eaeef2;
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #0550ae;
+  }
+</style>
+</head>
+<body>
+
+<h1>ECG1D C++ — Kick / Free Split: Proposed Edit <span style="font-size: 0.5em; color: #7f5000;">[Trial 1]</span></h1>
+
+<div class="trial-banner">
+  <span class="label">Trial 1</span>
+  <b>Status: applied, built, run — but the physics split produced divergent TDVP dynamics.</b>
+  <br><br>
+  Edit A (<code>run_kick_convergence_test</code>) and Edit B (<code>run_kicked_evolution_test</code>)
+  were both applied and compiled. Running <code>--kick-convergence --n-kicks 10</code> showed
+  catastrophic divergence at every <code>T_pulse</code> value tested. See
+  <a href="#trial1-result">§ Trial-1 result</a> at the bottom of this page for the numbers and
+  the post-mortem. The edit is <b>kept in the source</b> so you can inspect, but is <b>not yet
+  producing usable results</b> without further changes (basis augmentation or an analytic-kick path).
+</div>
+
+<div class="box info">
+<b>Your goal.</b> During the kick window <span class="math">Δt = T_pulse</span>, TDVP-evolve using the
+<b>kick operator only</b> (no kinetic, no harmonic). During the free window <span class="math">T_period − T_pulse</span>,
+TDVP-evolve with <b>kinetic + harmonic only</b> (no kick). A first-order Trotter split of the full
+Floquet propagator.
+</div>
+
+<h2>1. What your code currently does</h2>
+
+<p>Three kicked-dynamics pathways exist in <span class="file-path">main.cpp</span>. Only one is a
+pure TDVP loop like you describe; the others use exact/analytic propagation or mix terms.</p>
+
+<table>
+<tr>
+  <th>Pathway</th>
+  <th>Location</th>
+  <th>Free window uses</th>
+  <th>Kick window uses</th>
+  <th>Match your idea?</th>
+</tr>
+<tr>
+  <td><code>run_kick_convergence_test</code></td>
+  <td>main.cpp:1282–1476</td>
+  <td><code>terms_free</code> = kinetic + harmonic ✅</td>
+  <td><code>terms_kick = terms_free</code> copy + <code>kicking=true</code> → <b>kinetic + harmonic + kicking</b> ❌</td>
+  <td><span class="tag tag-fix">needs fix</span></td>
+</tr>
+<tr>
+  <td><code>run_kicked_evolution_test</code> → <code>kicked_evolution()</code></td>
+  <td>main.cpp:831–915,<br>src/kicked_evolution.cpp:144</td>
+  <td><code>terms_free</code> = kinetic + harmonic + delta ✅ (free Hamiltonian incl. interaction)</td>
+  <td><code>terms_kick = terms_free</code> + <code>kicking=true</code> → <b>kinetic + harmonic + delta + kicking</b> ❌</td>
+  <td><span class="tag tag-fix">needs fix</span></td>
+</tr>
+<tr>
+  <td><code>run_kicked_gamma0_test</code></td>
+  <td>main.cpp:918–1278</td>
+  <td><code>free_evolve_fixed_basis</code> (exact, no TDVP)</td>
+  <td><code>apply_analytic_kick</code> (instantaneous projection, no TDVP)</td>
+  <td><span class="tag tag-keep">clean — but not TDVP</span></td>
+</tr>
+</table>
+
+<div class="box warn">
+<b>Key observation.</b> The evolution machinery itself (<code>free_evolve</code> in
+<span class="file-path">src/kicked_evolution.cpp:108</span> and <code>realtime_tdvp_step</code> at line 60)
+already accepts an arbitrary <code>HamiltonianTerms</code> struct and feeds it straight into
+<code>assemble_grad(...)</code>. <b>The fix is purely at the call sites</b> — you do <em>not</em>
+need to touch the TDVP solver.
+</div>
+
+<h2>2. The <code>HamiltonianTerms</code> flag reminder</h2>
+
+<p>From <span class="file-path">src/tdvp_solver.hpp:17</span>:</p>
+
+<pre><span class="kw">struct</span> <span class="fn">HamiltonianTerms</span> {
+    <span class="kw">bool</span>   kinetic        = <span class="kw">true</span>;
+    <span class="kw">bool</span>   harmonic       = <span class="kw">true</span>;
+    <span class="kw">bool</span>   delta          = <span class="kw">true</span>;
+    <span class="kw">bool</span>   gaussian       = <span class="kw">true</span>;
+    <span class="kw">bool</span>   kicking        = <span class="kw">true</span>;
+    <span class="kw">double</span> kicking_scale  = <span class="num">1.0</span>;  <span class="cmt">// 1/T_pulse for finite-pulse kicks</span>
+};</pre>
+
+<p>Every term is independently toggleable. The fix is to build a <em>pulse-only</em> instance where
+only <code>kicking</code> is on.</p>
+
+<h2>3. Proposed edits</h2>
+
+<h3>Edit A — <code>run_kick_convergence_test</code> (main.cpp ≈ line 1405–1407)</h3>
+
+<div class="box bad">
+<b>Current:</b>
+<pre>HamiltonianTerms terms_kick = terms_free;     <span class="cmt">// inherits kinetic + harmonic</span>
+terms_kick.kicking = <span class="kw">true</span>;                     <span class="cmt">// adds kicking on top</span>
+terms_kick.kicking_scale = scale;</pre>
+</div>
+
+<div class="box ok">
+<b>Proposed:</b>
+<pre>HamiltonianTerms terms_kick;                  <span class="cmt">// start from defaults (all true)…</span>
+terms_kick.kinetic       = <span class="kw">false</span>;
+terms_kick.harmonic      = <span class="kw">false</span>;
+terms_kick.delta         = <span class="kw">false</span>;
+terms_kick.gaussian      = <span class="kw">false</span>;
+terms_kick.kicking       = <span class="kw">true</span>;               <span class="cmt">// …and keep only the kick</span>
+terms_kick.kicking_scale = scale;             <span class="cmt">// still 1/T_pulse</span></pre>
+</div>
+
+<p>The surrounding kick loop (lines 1409–1425) doesn't need to change — <code>free_evolve</code>
+is already called with <code>terms_free</code> for the free window and <code>terms_kick</code>
+for the pulse. You'll just see cleaner separation.</p>
+
+<h3>Edit B — <code>run_kicked_evolution_test</code> (main.cpp ≈ line 876–877)</h3>
+
+<div class="box bad">
+<b>Current:</b>
+<pre>HamiltonianTerms terms_kick = terms_free;    <span class="cmt">// kinetic + harmonic + delta</span>
+terms_kick.kicking = <span class="kw">true</span>;</pre>
+</div>
+
+<div class="box ok">
+<b>Proposed:</b>
+<pre>HamiltonianTerms terms_kick;
+terms_kick.kinetic  = <span class="kw">false</span>;
+terms_kick.harmonic = <span class="kw">false</span>;
+terms_kick.delta    = <span class="kw">false</span>;              <span class="cmt">// see note below</span>
+terms_kick.gaussian = <span class="kw">false</span>;
+terms_kick.kicking  = <span class="kw">true</span>;</pre>
+</div>
+
+<div class="box warn">
+<b>Open question on Edit B:</b> do you want the <code>delta</code> contact interaction to remain on
+during the pulse, or be switched off too? Your instruction says "kick operator only", so I default
+to <code>delta=false</code>. Physically, dropping δ during T_pulse → 0 is harmless (its contribution
+vanishes as O(T_pulse)), but if you want strict Trotter (free = T+V+δ, kick = κcos) keep it off.
+Tell me which you prefer.
+</div>
+
+<h2>4. What I am <em>not</em> changing</h2>
+
+<ul>
+  <li><span class="tag tag-keep">keep</span> <code>free_evolve</code> / <code>realtime_tdvp_step</code> — already term-agnostic.</li>
+  <li><span class="tag tag-keep">keep</span> <code>terms_free</code> on the free window call — already correct.</li>
+  <li><span class="tag tag-keep">keep</span> energy reporting via <code>compute_total_energy(basis, terms_free)</code>
+      (main.cpp:1419): the measurement Hamiltonian is <span class="math">T + V_harmonic</span>, which is what you want.</li>
+  <li><span class="tag tag-keep">keep</span> <code>kicking_scale = 1 / T_pulse</code> so that
+      <span class="math">∫₀^{T_pulse} κ·cos(2k_L x)/T_pulse dt = κ·cos(2k_L x)</span> in the ideal-kick limit.</li>
+  <li><span class="tag tag-keep">keep</span> <code>run_kicked_gamma0_test</code> untouched — it is not a TDVP pathway.</li>
+</ul>
+
+<h2>5. Caveats worth knowing before you approve</h2>
+
+<ol>
+  <li><b>Trotter order.</b> Your current loop is <code>free(T_period − T_pulse) → kick(T_pulse)</code>,
+      which is 1st-order Trotter. For 2nd-order (Strang) split:
+      <code>free(T/2) → kick(T_pulse) → free(T/2)</code>. Ask if you want this upgrade — it's
+      a separate, small change in the <code>for (n = 0; n &lt; n_kicks; n++)</code> loop body.</li>
+  <li><b>Convergence table expectation.</b> After Edit A, the T_pulse → 0 limit in
+      <code>run_kick_convergence_test</code> should still match the exact reference
+      (the free piece during the pulse was O(T_pulse)). For <em>finite</em> T_pulse
+      (e.g. 0.5, 0.2), the numbers will shift slightly — that's expected and arguably
+      more faithful to a pure kicked-rotor model.</li>
+  <li><b>Gradient assembly.</b> <code>assemble_grad</code> respects the flag booleans via
+      <code>grad_H_for_alpha</code>, so disabling kinetic/harmonic really does remove them from
+      <span class="math">g</span> during the pulse. No hidden coupling.</li>
+  <li><b>Scope.</b> These two edits do <em>not</em> touch the ground-state SVM pipeline,
+      <code>run_phase3_tdvp_*</code>, or observable code.</li>
+</ol>
+
+<h2>6. Summary of files touched</h2>
+
+<table>
+<tr><th>File</th><th>Lines</th><th>Kind</th></tr>
+<tr><td><span class="file-path">main.cpp</span></td><td>≈ 876–877</td><td>2-line → 6-line replacement (Edit B)</td></tr>
+<tr><td><span class="file-path">main.cpp</span></td><td>≈ 1405–1407</td><td>3-line → 7-line replacement (Edit A)</td></tr>
+</table>
+
+<p><b>No header changes, no new functions, no build-system changes.</b></p>
+
+<h2>7. What I need from you</h2>
+
+<ol>
+  <li>Confirm Edit A (convergence test pulse = kick-only). <span class="tag tag-opt">yes/no</span></li>
+  <li>Confirm Edit B (kicked_evolution pulse = kick-only) and say whether <code>delta</code> should stay on during the pulse. <span class="tag tag-opt">yes/no + delta choice</span></li>
+  <li>Optional: upgrade to Strang split? <span class="tag tag-opt">yes/no</span></li>
+</ol>
+
+<div class="box info">
+Once you reply, I'll apply the edits and run <code>cd build &amp;&amp; cmake .. &amp;&amp; make</code>
+to verify the build, then (if you want) re-run <code>./build/ecg1d --kick-convergence</code>
+to check the new convergence table.
+</div>
+
+<hr style="margin: 3em 0; border: none; border-top: 2px dashed #d29922;">
+
+<h1 id="trial1-result" style="color: #7f5000; border-bottom-color: #d29922;">
+  Trial 1 — Result and Post-Mortem
+  <span class="tag tag-trial1">run 2026-04-20</span>
+</h1>
+
+<div class="box bad">
+<b>Outcome: <span class="tag tag-fail">divergent</span>.</b>
+The kick-only-in-pulse TDVP blows up at every <code>T_pulse</code> value tested, with norms reaching
+~10⁶ and energies reaching ~10⁹⁸ after 10 kicks.
+</div>
+
+<h2>T1.1 — Exact reference (grid method)</h2>
+
+<p>Command: <code>./build/ecg1d --kicked-exact --n-kicks 10</code>. Implementation:
+<code>src/kicked_exact.cpp → kicked_exact_1particle()</code>. Grid: N=512 points over
+z ∈ [−15, 15]. Diagonalizes <span class="math">H_free = −½∂²/∂z² + ½z²</span>, applies
+<span class="math">exp(−i H_free T)</span> between kicks and pointwise
+<span class="math">exp(−i κ cos(2k_L z))</span> for each instantaneous kick.</p>
+
+<table>
+<tr><th>kick</th><th>E (single particle)</th><th>E (2-particle = 2×)</th><th>norm</th></tr>
+<tr><td>0</td><td>0.4999</td><td>0.9998</td><td>1.0</td></tr>
+<tr><td>1</td><td>0.6577</td><td>1.3153</td><td>1.0</td></tr>
+<tr><td>2</td><td>0.8526</td><td>1.7051</td><td>1.0</td></tr>
+<tr><td>5</td><td>0.5365</td><td>1.0730</td><td>1.0</td></tr>
+<tr><td>10</td><td><b>0.5472</b></td><td><b>1.0945</b></td><td>1.0</td></tr>
+</table>
+
+<p>Norm drift across 10 kicks: <code>2×10⁻¹⁵</code>. This is ground truth.</p>
+
+<h2>T1.2 — TDVP kick-only-in-pulse (<code>--kick-convergence --n-kicks 10</code>)</h2>
+
+<p>Parameters: N=1, K=3 Gaussian basis (widths 0.2, 0.5, 2.0), <code>T_period=1</code>,
+<code>κ=1</code>, <code>k_L</code> and <code>mass</code>, <code>ω</code> from
+<code>physical_constants.hpp</code>.</p>
+
+<p>Free window: <code>free_evolve(..., terms_free, ...)</code> with <code>terms_free</code> =
+kinetic+harmonic. Pulse window: <code>free_evolve(..., terms_kick, ...)</code> with
+<code>terms_kick</code> = <b>kicking only</b> (Edit A applied), <code>kicking_scale = 1/T_pulse</code>.</p>
+
+<table>
+<tr><th>T_pulse</th><th>E(final)</th><th>E_exact</th><th>rel_error</th><th>apparent order</th></tr>
+<tr><td><code>0.500</code></td><td>5.699</td><td>0.547</td><td>9.41e+00</td><td>—</td></tr>
+<tr><td><code>0.200</code></td><td>−4.83e+98</td><td>0.547</td><td>8.8e+98</td><td>−246</td></tr>
+<tr><td><code>0.100</code></td><td>4.551</td><td>0.547</td><td>7.32e+00</td><td>325</td></tr>
+<tr><td><code>0.050</code></td><td>6.442</td><td>0.547</td><td>1.08e+01</td><td>−0.56</td></tr>
+<tr><td><code>0.020</code></td><td>236.887</td><td>0.547</td><td>4.3e+02</td><td>−4.03</td></tr>
+<tr><td><code>0.010</code></td><td>178.236</td><td>0.547</td><td>3.2e+02</td><td>0.41</td></tr>
+<tr style="background: #dafbe1;">
+  <td><code>direct</code></td><td><b>0.630</b></td><td>0.547</td><td><b>1.51e−01</b></td><td>(analytic baseline)</td>
+</tr>
+</table>
+
+<p>Norms per run (first kick already broken):
+<code>T_pulse=0.5 → ‖ψ‖ drops to 0.055 after kick 1, then climbs to 4500 by kick 10</code>;
+<code>T_pulse=0.01 → ‖ψ‖ → 3.9×10⁶</code>;
+<code>T_pulse=0.2 → ‖ψ‖ → −1.75×10¹⁴⁵</code> (sign flip, overflow).</p>
+
+<p>The only row that survives is the <b>direct baseline</b>, which is <em>not</em> TDVP — it uses
+<code>apply_analytic_kick</code> (Jacobi-Anger projection) and
+<code>free_evolve_fixed_basis</code> (exact generalized-eigenbasis propagation in the fixed basis).
+15% error with K=3 reflects basis truncation, not integrator failure.</p>
+
+<h2>T1.3 — Why it diverged</h2>
+
+<p>The session log <code>KICK_CONVERGENCE_SESSION.md</code> already warned about this (before my edit):</p>
+
+<ol>
+  <li><b>Stiffness.</b> <code>kicking_scale = 1/T_pulse</code> makes the effective kick potential
+      amplitude scale like <code>1/T_pulse</code>. As T_pulse shrinks the ODE becomes arbitrarily
+      stiff.</li>
+  <li><b>Basis insufficiency.</b> A 3-Gaussian basis cannot represent
+      <span class="math">exp(−iκ cos(2k_L x))·ψ</span>. Jacobi-Anger says this phase factor
+      excites arbitrarily many momentum sectors; the bare ground-state basis has none of them.</li>
+  <li><b>Loss of the tether (introduced by my Edit A).</b> With kinetic+harmonic switched off during
+      the pulse, nothing in the pulse Hamiltonian penalizes large |⟨x²⟩| or large |⟨p²⟩|. The TDVP
+      ODE <code>C·dz/dt = −i·g_kick</code> can drive the Gaussian parameters arbitrarily far on a
+      single RK4 step because <code>g_kick</code> is O(1/T_pulse) while <code>C</code> is static
+      geometry.</li>
+</ol>
+
+<div class="box warn">
+<b>Pre-edit behavior was also bad.</b> The session log shows the convergence test was already
+unstable for small T_pulse before my edit — kinetic+harmonic during the pulse only <em>delayed</em>
+the divergence; they did not cure it. My edit made the problem appear earlier and more dramatically.
+</div>
+
+<h2>T1.4 — What we learned</h2>
+
+<ul>
+  <li>The physics statement ("pulse = kick only, free = kinetic+harmonic only") is a clean
+      Trotter split, but <b>it requires a basis that spans the kicked subspace</b>. With K=3 it is
+      futile.</li>
+  <li>The working path in the codebase — <code>run_kicked_gamma0_test</code> — solves exactly
+      this problem by (a) augmenting the basis with momentum harmonics and (b) never running TDVP
+      on the kick. It uses analytic projection for the kick and exact propagation for the free
+      evolution in the <em>fixed</em> augmented basis.</li>
+  <li>For Edit A/B to produce useful numbers, the test must either adopt that strategy or enlarge
+      the basis considerably.</li>
+</ul>
+
+<h2>T1.5 — Options for Trial 2</h2>
+
+<table>
+<tr><th>Option</th><th>Change</th><th>Expected outcome</th></tr>
+<tr>
+  <td><b>A</b>. Analytic kick + TDVP free</td>
+  <td>Replace the pulse-window <code>free_evolve(..., terms_kick, ...)</code> with
+      <code>apply_analytic_kick(basis, perms, κ, k_L, ...)</code> (instantaneous) and keep TDVP
+      only for the free window.</td>
+  <td>Stable, but the test no longer "measures TDVP convergence of a finite-pulse kick" — it
+      becomes "direct baseline + TDVP free".</td>
+</tr>
+<tr>
+  <td><b>B</b>. Keep TDVP pulse, enlarge basis</td>
+  <td>Before the convergence loop, call <code>augment_basis_with_momentum(basis, k_L, n_mom=4, b_val=0.5)</code>.
+      That adds momentum harmonics so the Gaussian manifold actually contains the kicked state.</td>
+  <td>TDVP may become feasible for moderate T_pulse (≥ 0.1). Very small T_pulse still risky because
+      of 1/T_pulse stiffness.</td>
+</tr>
+<tr>
+  <td><b>C</b>. Revert Edit A</td>
+  <td>Restore <code>terms_kick = terms_free + kicking</code>. Physics is no longer a pure Trotter
+      split — pulse window uses full <code>H = T + V_harm + κ·cos(2k_L x)/T_pulse</code>.</td>
+  <td>Matches the pre-edit behavior. Still unstable for small T_pulse; survives for T_pulse ≥ 0.1
+      with noticeable error.</td>
+</tr>
+<tr>
+  <td><b>D</b>. Keep Edit A, switch integrator</td>
+  <td>Replace RK4 in <code>realtime_tdvp_step</code> with an implicit integrator (e.g. Crank-Nicolson
+      or implicit midpoint) that can handle stiff kick potentials.</td>
+  <td>Non-trivial code change in <code>src/kicked_evolution.cpp</code>. Might stabilize but won't
+      fix basis insufficiency.</td>
+</tr>
+</table>
+
+<div class="box info">
+<b>My recommendation:</b> Option A (analytic kick) for the convergence test — it cleanly isolates
+the question "does the free-window TDVP match the exact free propagation?" from the kick
+representation problem. If you want to study TDVP kick convergence specifically, Option B is
+needed as well.
+</div>
+
+<h2>T1.6 — Files touched, state of the tree</h2>
+
+<ul>
+  <li><code>main.cpp</code> lines ≈ 876 (Edit B) and ≈ 1410 (Edit A) — both committed locally,
+      code compiles clean.</li>
+  <li>Binary <code>build/ecg1d</code> rebuilt.</li>
+  <li>No source file in <code>src/</code> was modified.</li>
+  <li><code>KICK_CONVERGENCE_SESSION.md</code> — pre-existing session log, predicted this outcome.</li>
+</ul>
+
+<p style="color: #7f5000; font-style: italic; margin-top: 2em;">
+End of Trial 1 report. Waiting for your decision on Trial 2 direction (A / B / C / D).
+</p>
+
+</body>
+</html>
