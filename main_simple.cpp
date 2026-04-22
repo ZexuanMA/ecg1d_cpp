@@ -1054,7 +1054,7 @@ static void task5_realtime_evolve_kicked(int n_max, int n_mom,
     // Step 1: 踢后态
     std::cout << "\n--- Step 1: 准备 kick 后的 ECG 态 (Route 1) ---\n";
     std::vector<BasisParams> kicked_basis = prepare_kicked_state_route1(
-        /*K_pre=*/1, n_max, n_mom, TargetFitConfig::UPDATE_RESOLVE, /*verbose=*/false);
+        /*K_pre=*/1, n_max, n_mom, TargetFitConfig::UPDATE_RESOLVE, /*verbose=*/true);
     const int K_trial = static_cast<int>(kicked_basis.size());
     std::cout << "  K_trial = " << K_trial << "\n";
 
