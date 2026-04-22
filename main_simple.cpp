@@ -29,6 +29,8 @@
 #include "kick_operator.hpp"      // apply_analytic_kick: 解析 kick 投影
 #include "hamiltonian.hpp"        // overlap, kinetic_energy_functional, Harmonic_functional
 #include "physical_constants.hpp" // ℏ, m, ω, κ, k_L 等物理常数
+#include "target_fitting.hpp"     // Route 1: target-fitting TDVP
+#include "realtime_tdvp.hpp"      // 实时 TDVP 动基底演化
 
 #include <Eigen/Dense>            // Eigen 线性代数库: MatrixXd, VectorXcd, 对角化...
 #include <iostream>               // std::cout 输出
@@ -595,8 +597,14 @@ static void task3_single_kick(int K) {
     // ---------------- Step 3.5: 打印 kick 后的基函数参数 ----------------
     std::cout << "\n--- Step 3.5: Kick 后的 ECG 基函数 ---\n";
     print_basis("kick 后 basis", basis);
-    std::cout << "  注: A, B, R 不变 (analytic kick 不改这些), 只有 u 被更新\n";
-    std::cout << "      u 现在带虚部, 编码了 kick 注入的动量相位\n";
+    std::cout << "  注: A, B, R 看起来不变, 但这只是代码实现的选择 ——\n";
+    std::cout << "      物理上 kick 应该把 R 虚部按 Jacobi-Anger 展开移位:\n";
+    std::cout << "        U_kick·φ_R = Σ_n (-i)^n J_n(κ)·φ_{R+i·n·k_L/B}\n";
+    std::cout << "      也就是每个原 ECG 派生出 (2n_max+1) 个新 R 的 ECG.\n";
+    std::cout << "      apply_analytic_kick 没真的加新基函数, 而是把这个\n";
+    std::cout << "      \"应在新 R 上的态\" 投影到原 R 的基底里, 只改 u.\n";
+    std::cout << "      → fidelity < 1 时, 说明原基底没覆盖这些移位 ECG,\n";
+    std::cout << "        投影丢了信息. (策略 HTML 里 Strategy A vs C 的核心)\n";
     #pragma endregion
 
     #pragma region Step 4: 踢之后的观测量 + 理论对比
@@ -645,6 +653,484 @@ static void task3_single_kick(int K) {
 #pragma endregion
 
 
+#pragma region 任务 D: Route 1 target-fitting TDVP + finite-diff 验证
+// ============================================================================
+// 【任务 D】Route 1 目标拟合 TDVP（单次 kick 用虚拟 H_eff target-fit）
+//
+// 数学：|ψ_tar⟩ = e^{-iκcos(2k_L x)}|ψ_0⟩ 用 Jacobi-Anger 截断到 |n|≤n_max
+//       H_eff = -|ψ_tar⟩⟨ψ_tar|/N_tar
+//       g_α = -(A/N_tar)·b_α, A = ⟨ψ_tar|ψ⟩, b_α = ⟨∂_α ψ|ψ_tar⟩
+//       TDVP: C·ż = -g
+//
+// 两个子命令：
+//   --task4           跑完整 target-fitting 循环，对比 task3 的 apply_analytic_kick
+//   --verify-g-alpha  用中心差分对拍 assemble_grad_target_fit 的 g_α 公式
+// ============================================================================
+
+// Compute E_unnorm(z) = <psi(z)|H_eff|psi(z)> = -|A(z)|^2 / N_tar (unnormalized
+// by <psi|psi>). Analytic g_alpha matches ∂E_unnorm/∂z_alpha^* (P⊥ absorbs the S
+// normalization in the full energy -|A|^2/(N_tar·S)).
+static Cd compute_E_unnorm(const std::vector<BasisParams>& trial,
+                           const TargetBasis& target,
+                           Cd N_tar,
+                           const PermutationSet& perms) {
+    Cd A = cross_overlap(target, trial, perms);
+    return -A * std::conj(A) / N_tar;
+}
+
+// Perturb basis along a single AlphaIndex by complex amount `delta` using
+// update_basis_function. Returns a perturbed copy.
+static std::vector<BasisParams> perturb_basis(const std::vector<BasisParams>& basis,
+                                              const AlphaIndex& alpha,
+                                              Cd delta) {
+    std::vector<BasisParams> perturbed = basis;
+    std::vector<AlphaIndex> single{alpha};
+    VectorXcd dz(1);
+    dz(0) = delta;
+    update_basis_function(perturbed, dz, 1.0, single, /*updata_constant=*/0);
+    return perturbed;
+}
+
+// Central-difference Wirtinger derivative: ∂E/∂z_α^* ≈ 0.5·(FD_x + i·FD_y)
+// where FD_x = (E(+δ)-E(-δ))/(2δ) with real δ perturbation of u_α (or A/B/R)
+// and FD_y = (E(+iδ)-E(-iδ))/(2δ) with imaginary perturbation.
+static Cd finite_diff_g_alpha(const std::vector<BasisParams>& basis,
+                              const AlphaIndex& alpha,
+                              const TargetBasis& target,
+                              Cd N_tar,
+                              const PermutationSet& perms,
+                              double delta) {
+    Cd E_px = compute_E_unnorm(perturb_basis(basis, alpha, Cd(+delta, 0)),
+                               target, N_tar, perms);
+    Cd E_mx = compute_E_unnorm(perturb_basis(basis, alpha, Cd(-delta, 0)),
+                               target, N_tar, perms);
+    Cd FD_x = (E_px - E_mx) / (2.0 * delta);
+
+    Cd E_py = compute_E_unnorm(perturb_basis(basis, alpha, Cd(0, +delta)),
+                               target, N_tar, perms);
+    Cd E_my = compute_E_unnorm(perturb_basis(basis, alpha, Cd(0, -delta)),
+                               target, N_tar, perms);
+    Cd FD_y = (E_py - E_my) / (2.0 * delta);
+
+    return 0.5 * (FD_x + Cd(0, 1) * FD_y);
+}
+
+// Prepare a K=1 ground-state ECG basis (mirrors task3 Step 1, trimmed to essentials).
+// For K=1 harmonic oscillator, SVM finds the exact ground state (single Gaussian),
+// so we skip TDVP iff the initial energy is already at 0.5 (within 1e-8). Otherwise
+// run a short TDVP pass (max 50 steps) as a safety net.
+static std::vector<BasisParams> prepare_ground_state_K1(int K) {
+    const int N = 1;
+    auto terms = HamiltonianTerms::kinetic_harmonic();
+    PermutationSet perms = PermutationSet::generate(N);
+
+    SvmResult svm = svm_build_basis(N, K, 2000, terms, 42, 0.0);
+    std::vector<BasisParams> basis = svm.basis;
+    set_u_from_eigenvector(basis, svm.H, svm.S);
+
+    Cd E_init = compute_total_energy(basis, terms);
+    if (std::abs(E_init.real() - 0.5 * N) < 1e-8) {
+        return basis;   // exactly at ground state; no need for TDVP
+    }
+
+    std::vector<AlphaIndex> alpha_z_list;
+    for (int i = 0; i < K; i++) alpha_z_list.push_back({1, i, 0, 0});
+    for (int i = 0; i < K; i++)
+        for (int j = 0; j < N; j++) alpha_z_list.push_back({2, i, j, 0});
+    for (int i = 0; i < K; i++)
+        for (int j = 0; j < N; j++) alpha_z_list.push_back({3, i, j, 0});
+    for (int i = 0; i < K; i++)
+        for (int j = 0; j < N; j++)
+            for (int k = j; k < N; k++) alpha_z_list.push_back({4, i, j, k});
+
+    SolverConfig cfg;
+    cfg.lambda_C = 1e-8;
+    cfg.rcond = 1e-4;
+    cfg.resolve_u = true;
+    cfg.dtao_grow = 1.5;
+    cfg.dtao_max = 10.0;
+    cfg.energy_tol = 1e-12;
+    cfg.optimize_A = true;
+    cfg.optimize_B = true;
+    cfg.optimize_R = true;
+
+    evolution(alpha_z_list, basis, 1e-3, /*max_steps=*/50, 1e-12, terms, cfg, &perms);
+    auto [H_gs, S_gs] = build_HS(basis, perms, terms);
+    set_u_from_eigenvector(basis, H_gs, S_gs);
+    return basis;
+}
+
+static void verify_g_alpha(int K, int n_max, double delta) {
+    std::cout << "\n=====================================================\n";
+    std::cout << " 验证 g_α：有限差分对拍 (K=" << K << ", n_max=" << n_max
+              << ", δ=" << delta << ")\n";
+    std::cout << "=====================================================\n";
+
+    const int N = 1;
+    PermutationSet perms = PermutationSet::generate(N);
+
+    // Step 1: K=1 pre-kick 基态（rebalance 使 B>0 便于 kick 编码）
+    std::cout << "\n--- Step 1: 准备 K=" << K << " 基态 ---\n";
+    std::vector<BasisParams> basis_raw = prepare_ground_state_K1(K);
+    std::vector<BasisParams> basis = rebalance_AB_for_kick(basis_raw, /*b_min=*/0.5);
+    std::cout << "  rebalanced basis (A+B 不变, B>=0.5 使 kick 编码良定):\n";
+    print_basis("rebalanced basis", basis);
+
+    // Step 2: 故意扰动使 z ≠ 最优（否则 g_α 全是 0，看不出 bug）
+    std::cout << "\n--- Step 2: 扰动 basis 使其离最优点 ---\n";
+    for (int i = 0; i < K; i++) {
+        basis[i].A(0, 0) += Cd(0.05 * (i + 1), 0.02);
+        basis[i].B(0, 0) += Cd(0.03, -0.01);
+        basis[i].R(0)    += Cd(0.1, -0.05);
+        basis[i].u       += Cd(0.01, 0.02);
+    }
+    print_basis("扰动后 trial basis", basis);
+
+    // Step 3: target（同样从 rebalanced 基底构造）
+    std::cout << "\n--- Step 3: 构造目标态 ---\n";
+    std::vector<BasisParams> pre_kick_raw = prepare_ground_state_K1(K);
+    std::vector<BasisParams> pre_kick_basis = rebalance_AB_for_kick(pre_kick_raw, 0.5);
+    TargetBasis target = build_kicked_target(pre_kick_basis, kappa, k_L, n_max);
+    std::cout << "  |target| = " << target.size()
+              << " (K=" << K << " × (2·" << n_max << "+1))\n";
+    Cd N_tar = target_norm(target, perms);
+    std::cout << "  N_tar = " << N_tar << " (虚部应 ≈ 0)\n";
+
+    // Step 4: alpha_z_list (全部参数)
+    std::vector<AlphaIndex> alpha_z_list;
+    for (int i = 0; i < K; i++) alpha_z_list.push_back({1, i, 0, 0});
+    for (int i = 0; i < K; i++) alpha_z_list.push_back({2, i, 0, 0});
+    for (int i = 0; i < K; i++) alpha_z_list.push_back({3, i, 0, 0});
+    for (int i = 0; i < K; i++) alpha_z_list.push_back({4, i, 0, 0});
+
+    // Step 5: analytic g
+    std::cout << "\n--- Step 5: 解析 g_α ---\n";
+    Cd A_val, N_chk;
+    VectorXcd g_analytic = assemble_grad_target_fit(alpha_z_list, basis, target,
+                                                    perms, A_val, N_chk);
+    std::cout << "  A(z) = " << A_val << "\n";
+    std::cout << "  |A|^2 / N_tar = " << std::norm(A_val) / N_tar.real() << "\n";
+
+    // Step 6: finite diff 对每个 alpha
+    std::cout << "\n--- Step 6: 有限差分 g_α 对拍 ---\n";
+    std::cout << std::setw(4) << "idx"
+              << std::setw(4) << "a1"
+              << std::setw(4) << "a2"
+              << std::setw(4) << "a3"
+              << std::setw(4) << "a4"
+              << std::setw(36) << "g_analytic"
+              << std::setw(36) << "g_finite_diff"
+              << std::setw(14) << "|rel_err|\n";
+    std::cout << std::string(102, '-') << "\n";
+
+    double max_rel_err = 0.0;
+    int n_pass = 0, n_fail = 0;
+    const double tol = 1e-5;
+
+    for (int a = 0; a < static_cast<int>(alpha_z_list.size()); a++) {
+        Cd g_num = finite_diff_g_alpha(basis, alpha_z_list[a], target,
+                                       N_tar, perms, delta);
+        Cd g_ana = g_analytic(a);
+        double denom = std::max(std::abs(g_ana), 1e-10);
+        double rel_err = std::abs(g_num - g_ana) / denom;
+        if (rel_err > max_rel_err) max_rel_err = rel_err;
+        const char* mark = (rel_err < tol) ? "PASS" : "FAIL";
+        if (rel_err < tol) n_pass++; else n_fail++;
+
+        std::cout << std::setw(4) << a
+                  << std::setw(4) << alpha_z_list[a].a1
+                  << std::setw(4) << alpha_z_list[a].a2
+                  << std::setw(4) << alpha_z_list[a].a3
+                  << std::setw(4) << alpha_z_list[a].a4
+                  << "  " << std::setw(34) << fmt_cd(g_ana, 6)
+                  << "  " << std::setw(34) << fmt_cd(g_num, 6)
+                  << "  " << std::scientific << std::setprecision(3)
+                  << std::setw(11) << rel_err << " " << mark
+                  << std::defaultfloat << "\n";
+    }
+
+    std::cout << "\n--- 结果 ---\n";
+    std::cout << "  PASS: " << n_pass << " / " << alpha_z_list.size() << "\n";
+    std::cout << "  FAIL: " << n_fail << " / " << alpha_z_list.size() << "\n";
+    std::cout << "  max |rel_err| = " << std::scientific << max_rel_err
+              << std::defaultfloat << "   (tol=" << tol << ")\n";
+    std::cout << "  "
+              << (n_fail == 0 ? "✓ g_α 公式验证通过" : "✗ g_α 公式有偏差！")
+              << "\n";
+}
+
+static void task4_target_fitting_tdvp(int K_pre, int n_max, int n_mom,
+                                       TargetFitConfig::UMode u_mode) {
+    std::cout << "\n=====================================================\n";
+    std::cout << " 任务 D: Route 1 target-fitting TDVP (K_pre=" << K_pre
+              << ", n_max=" << n_max
+              << ", n_mom=" << n_mom
+              << ", u_mode="
+              << (u_mode == TargetFitConfig::UPDATE_LINEAR ? "LINEAR" : "RESOLVE")
+              << ")\n";
+    std::cout << "=====================================================\n";
+
+    const int N = 1;
+    PermutationSet perms = PermutationSet::generate(N);
+
+    // Step 1: K=1 pre-kick 基态（作为 trial 初值 + target 构造源）
+    std::cout << "\n--- Step 1: 准备 pre-kick 基态 ---\n";
+    std::vector<BasisParams> pre_kick_raw = prepare_ground_state_K1(K_pre);
+    std::vector<BasisParams> pre_kick_basis = rebalance_AB_for_kick(pre_kick_raw, 0.5);
+    print_basis("pre-kick basis (rebalanced, B≥0.5)", pre_kick_basis);
+
+    // Step 2: 踢之前观测量（确认基态正确）
+    std::cout << "\n--- Step 2: 踢之前观测量 ---\n";
+    StateObs before = compute_observables(pre_kick_basis);
+    print_observables("踢之前", before);
+
+    // Step 3: 目标态
+    std::cout << "\n--- Step 3: 构造目标态 |ψ_tar⟩ ---\n";
+    TargetBasis target = build_kicked_target(pre_kick_basis, kappa, k_L, n_max);
+    Cd N_tar = target_norm(target, perms);
+    std::cout << "  |target| = " << target.size() << "\n";
+    std::cout << "  N_tar = " << N_tar << "\n";
+
+    // Step 3.5: 动量扩基 —— K_pre=1 的单高斯装不下多动量扇区，
+    // 所以在 target-fitting 之前先用 augment_basis_with_momentum 把 n=±1,...,±n_mom
+    // 动量副本加进 trial basis。TDVP 再微调每个分量的 (u, A, B, R)。
+    std::cout << "\n--- Step 3.5: 动量扩基 (augment_basis_with_momentum, n_mom=" << n_mom
+              << ") ---\n";
+    std::vector<BasisParams> trial_init = augment_basis_with_momentum(
+        pre_kick_basis, k_L, /*n_mom=*/n_mom, /*b_val=*/0.5, /*max_cond=*/1e6);
+    const int K_trial = static_cast<int>(trial_init.size());
+    std::cout << "  K_pre=" << pre_kick_basis.size()
+              << " → K_trial=" << K_trial << "\n";
+    print_basis("扩基后 trial basis", trial_init);
+
+    // 初始 fidelity（trial = 扩基后, target = kicked state）
+    // 新加入的动量副本 u=0, 先做一次 optimal-u 再看 F，否则数字会非常难看
+    {
+        VectorXcd u_init = solve_optimal_u(trial_init, target, perms);
+        for (int i = 0; i < K_trial; i++) trial_init[i].u = u_init(i);
+    }
+    Cd A0 = cross_overlap(target, trial_init, perms);
+    Cd S0 = overlap(trial_init);
+    double F0 = std::norm(A0) / (N_tar.real() * S0.real());
+    std::cout << "  初始 F(augmented trial | target) = " << std::setprecision(10) << F0
+              << ", 1-F = " << std::scientific << (1.0 - F0)
+              << std::defaultfloat << "\n";
+
+    // Step 4: alpha_z_list（对 K_trial 个基函数的 u, B, R, A 全放开）
+    std::vector<AlphaIndex> alpha_z_list;
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({1, i, 0, 0});
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({2, i, 0, 0});
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({3, i, 0, 0});
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({4, i, 0, 0});
+
+    // Step 5: target-fitting evolution
+    std::cout << "\n--- Step 5: Target-fitting TDVP 主循环 ---\n";
+    TargetFitConfig fit_cfg;
+    fit_cfg.u_mode = u_mode;
+    fit_cfg.max_steps = 2000;
+    fit_cfg.dtao_init = 1e-3;
+    fit_cfg.fidelity_tol = 1e-10;
+    fit_cfg.verbose = true;
+    fit_cfg.print_every = 50;
+
+    TargetFitResult result = target_fitting_evolution(alpha_z_list,
+                                                      trial_init,
+                                                      target, fit_cfg);
+
+    // Step 6: 结果
+    std::cout << "\n--- Step 6: 收敛后基底 & 观测量 ---\n";
+    print_basis("收敛后 basis", result.basis);
+    StateObs after = compute_observables(result.basis);
+    print_observables("Route 1 后", after);
+
+    // 理论值（与 task3 Step 4 相同）
+    double x2_expected = 0.5;
+    double sin2_avg    = 0.5 * (1.0 - std::exp(-4.0 * k_L * k_L));
+    double p2_expected = 0.5 + 4.0 * kappa * kappa * k_L * k_L * sin2_avg;
+    double E_expected  = 0.5 * (p2_expected + x2_expected);
+
+    std::cout << "\n--- 与理论对比 ---\n";
+    std::cout << std::setw(12) << "量" << std::setw(18) << "Route 1"
+              << std::setw(18) << "理论" << std::setw(14) << "误差\n";
+    std::cout << std::string(62, '-') << "\n";
+    std::cout << std::setprecision(8);
+    std::cout << std::setw(12) << "E"
+              << std::setw(18) << after.E
+              << std::setw(18) << E_expected
+              << std::setw(14) << std::scientific << (after.E - E_expected)
+              << std::defaultfloat << "\n";
+    std::cout << std::setw(12) << "⟨x²⟩"
+              << std::setw(18) << after.x2
+              << std::setw(18) << x2_expected << "\n";
+    std::cout << std::setw(12) << "⟨p²⟩"
+              << std::setw(18) << after.p2
+              << std::setw(18) << p2_expected
+              << std::setw(14) << std::scientific << (after.p2 - p2_expected)
+              << std::defaultfloat << "\n";
+
+    std::cout << "\n--- 摘要 ---\n";
+    std::cout << "  F_final        = " << std::setprecision(12) << result.F_final << "\n";
+    std::cout << "  1 - F_final    = " << std::scientific << (1.0 - result.F_final) << std::defaultfloat << "\n";
+    std::cout << "  Steps          = " << result.n_steps << "\n";
+    std::cout << "  Line-search fails = " << result.line_search_fails << "\n";
+}
+#pragma endregion
+
+
+#pragma region 任务 E: Route 1 踢后态的实时 TDVP 演化（T+V_ho）
+// ============================================================================
+// 【任务 E】对任务 D 得到的 kick 后态跑实时 TDVP，哈密顿量 H = T + V_ho
+//
+// 物理：
+//   单粒子谐振子，经典轨迹周期 T_ω = 2π/ω = 2π（ω=1）
+//   ⟨x²⟩(t), ⟨p²⟩(t) 应该做周期 π 的振荡（因为 x² ~ cos²(ωt+φ) 周期 π）
+//   回归：|⟨ψ(0)|ψ(T_ω)⟩|² 应该 = 1（模全局相位）
+//   能量 E(t) 严格守恒（H 不含 t，TDVP 保能量）
+//
+// 实现：
+//   - 共用任务 D 的踢后态准备流程（rebalance + augment + Route 1 target-fit）
+//   - 主循环 realtime_tdvp_evolution 默认用 RK4 + dt=1e-3
+//   - 采样 E/norm/⟨x²⟩/⟨p²⟩/⟨ψ(0)|ψ(t)⟩ 轨迹
+// ============================================================================
+
+// 复用任务 D 的踢后态准备流程，返回 Route 1 收敛后的 basis（K_trial 维）
+static std::vector<BasisParams> prepare_kicked_state_route1(
+    int K_pre, int n_max, int n_mom,
+    TargetFitConfig::UMode u_mode = TargetFitConfig::UPDATE_RESOLVE,
+    bool verbose = false) {
+
+    const int N = 1;
+    PermutationSet perms = PermutationSet::generate(N);
+
+    std::vector<BasisParams> pre_kick_raw = prepare_ground_state_K1(K_pre);
+    std::vector<BasisParams> pre_kick_basis = rebalance_AB_for_kick(pre_kick_raw, 0.5);
+
+    TargetBasis target = build_kicked_target(pre_kick_basis, kappa, k_L, n_max);
+    std::vector<BasisParams> trial_init = augment_basis_with_momentum(
+        pre_kick_basis, k_L, n_mom, 0.5, 1e6);
+    const int K_trial = static_cast<int>(trial_init.size());
+
+    // 初始 u 解析最优化
+    {
+        VectorXcd u_init = solve_optimal_u(trial_init, target, perms);
+        for (int i = 0; i < K_trial; i++) trial_init[i].u = u_init(i);
+    }
+
+    std::vector<AlphaIndex> alpha_z_list;
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({1, i, 0, 0});
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({2, i, 0, 0});
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({3, i, 0, 0});
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({4, i, 0, 0});
+
+    TargetFitConfig fit_cfg;
+    fit_cfg.u_mode = u_mode;
+    fit_cfg.max_steps = 2000;
+    fit_cfg.dtao_init = 1e-3;
+    fit_cfg.fidelity_tol = 1e-12;
+    fit_cfg.verbose = verbose;
+
+    TargetFitResult result = target_fitting_evolution(alpha_z_list, trial_init,
+                                                      target, fit_cfg);
+    if (verbose) {
+        std::cout << "  [prepare_kicked_state_route1] F_final=" << std::setprecision(10)
+                  << result.F_final << "\n";
+    }
+    return result.basis;
+}
+
+static void task5_realtime_evolve_kicked(int n_max, int n_mom,
+                                          double T_total, double dt,
+                                          RtIntegrator integrator) {
+    std::cout << "\n=====================================================\n";
+    std::cout << " 任务 E: Route 1 踢后态的实时 TDVP 演化 (H = T + V_ho)\n";
+    std::cout << "   n_max=" << n_max << ", n_mom=" << n_mom
+              << ", T_total=" << T_total << ", dt=" << dt
+              << ", integrator=" << (integrator == RtIntegrator::RK4 ? "RK4" : "Euler")
+              << "\n";
+    std::cout << "=====================================================\n";
+
+    const int N = 1;
+
+    // Step 1: 踢后态
+    std::cout << "\n--- Step 1: 准备 kick 后的 ECG 态 (Route 1) ---\n";
+    std::vector<BasisParams> kicked_basis = prepare_kicked_state_route1(
+        /*K_pre=*/1, n_max, n_mom, TargetFitConfig::UPDATE_RESOLVE, /*verbose=*/false);
+    const int K_trial = static_cast<int>(kicked_basis.size());
+    std::cout << "  K_trial = " << K_trial << "\n";
+
+    // 初始观测
+    StateObs init = compute_observables(kicked_basis);
+    print_observables("t=0 (踢后)", init);
+
+    // Step 2: alpha_z_list 全开（u, B, R, A 都演化）
+    std::vector<AlphaIndex> alpha_z_list;
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({1, i, 0, 0});
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({2, i, 0, 0});
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({3, i, 0, 0});
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({4, i, 0, 0});
+
+    // Step 3: 实时 TDVP 演化
+    std::cout << "\n--- Step 2: 实时 TDVP 演化 t ∈ [0, " << T_total << "] ---\n";
+    HamiltonianTerms terms = HamiltonianTerms::kinetic_harmonic();  // 只含 T + V_ho
+    SolverConfig solver_cfg;
+    solver_cfg.lambda_C = 0.0;   // 实时演化，去掉 Tikhonov 以保幺正性
+    solver_cfg.rcond = 1e-4;
+
+    RealtimeEvolutionConfig rt_cfg;
+    rt_cfg.dt = dt;
+    rt_cfg.integrator = integrator;
+    rt_cfg.sample_every = std::max(1, static_cast<int>(std::round(T_total / dt / 40)));
+    rt_cfg.verbose = true;
+    rt_cfg.print_every = std::max(50, rt_cfg.sample_every * 5);
+
+    RealtimeEvolutionResult rt = realtime_tdvp_evolution(
+        alpha_z_list, kicked_basis, T_total, terms, solver_cfg, rt_cfg);
+
+    // Step 4: 轨迹打印
+    std::cout << "\n--- Step 3: 轨迹 E(t), ⟨x²⟩(t), ⟨p²⟩(t), norm(t), |F(t)|² ---\n";
+    std::cout << std::setw(10) << "t"
+              << std::setw(14) << "E"
+              << std::setw(14) << "norm"
+              << std::setw(14) << "<x²>"
+              << std::setw(14) << "<p²>"
+              << std::setw(16) << "|<psi0|psi(t)>|²\n";
+    std::cout << std::string(82, '-') << "\n";
+    double norm0 = rt.trace.norm[0];
+    for (size_t k = 0; k < rt.trace.t.size(); k++) {
+        double fid = std::norm(rt.trace.overlap0[k]) / (norm0 * rt.trace.norm[k]);
+        std::cout << std::setw(10) << std::fixed << std::setprecision(4) << rt.trace.t[k]
+                  << std::setw(14) << std::setprecision(8) << rt.trace.E[k]
+                  << std::setw(14) << rt.trace.norm[k]
+                  << std::setw(14) << rt.trace.x2[k]
+                  << std::setw(14) << rt.trace.p2[k]
+                  << std::setw(16) << fid << "\n";
+    }
+
+    // 守恒量偏差
+    double E_init = rt.trace.E.front();
+    double E_final = rt.trace.E.back();
+    double norm_final = rt.trace.norm.back();
+    double dE_max = 0.0, dnorm_max = 0.0;
+    for (size_t k = 0; k < rt.trace.t.size(); k++) {
+        dE_max = std::max(dE_max, std::abs(rt.trace.E[k] - E_init));
+        dnorm_max = std::max(dnorm_max, std::abs(rt.trace.norm[k] - norm0) / norm0);
+    }
+    double fid_T = std::norm(rt.trace.overlap0.back()) / (norm0 * norm_final);
+
+    std::cout << "\n--- 守恒量 & 周期性 ---\n";
+    std::cout << "  E(0)           = " << std::setprecision(10) << E_init << "\n";
+    std::cout << "  E(T_total)     = " << E_final << "\n";
+    std::cout << "  max |ΔE|       = " << std::scientific << dE_max
+              << std::defaultfloat << "\n";
+    std::cout << "  max |Δnorm|/n0 = " << std::scientific << dnorm_max
+              << std::defaultfloat << "\n";
+    std::cout << "  |⟨ψ₀|ψ(T)⟩|²  = " << std::setprecision(10) << fid_T
+              << "  (T=2π 理论 → 1.0)\n";
+    std::cout << "  收敛步数       = " << rt.n_steps << "\n";
+}
+#pragma endregion
+
+
 #pragma region 入口 main: 命令行解析 & 任务分发
 // ============================================================================
 // 入口函数
@@ -657,10 +1143,21 @@ int main(int argc, char** argv) {
     bool run_task1 = false;
     bool run_task2 = false;
     bool run_task3 = false;
+    bool run_task4 = false;
+    bool run_task5 = false;
+    bool run_verify = false;
     int  task1_N   = 1;   // 任务 A: 粒子数
     int  task1_K   = 1;   // 任务 A: 基函数数量
-    int  n_kicks   = 10;  // 任务 B: kick 次数
+    int  n_kicks   = 40;  // 任务 B: kick 次数
     int  task3_K   = 5;   // 任务 C: 基函数数量（N=1）
+    int  task4_K   = 1;   // 任务 D: K_pre (pre-kick 基底数, 默认 1 够 harmonic ground state)
+    int  task4_nmax = 4;  // 任务 D: Jacobi-Anger 截断
+    int  task4_nmom = 2;  // 任务 D: 动量扩基每侧个数 (trial K' = K_pre + 2·n_mom 个 momentum 副本)
+    std::string task4_umode = "resolve"; // "resolve" 或 "linear"
+    double verify_delta = 1e-5;
+    double task5_T      = 2.0 * M_PI;     // 任务 E: 演化时长 (一个谐振周期)
+    double task5_dt     = 1e-3;           // 任务 E: 积分步长
+    std::string task5_integrator = "rk4"; // "rk4" 或 "euler"
 
     // 解析命令行
     for (int i = 1; i < argc; i++) {
@@ -668,22 +1165,35 @@ int main(int argc, char** argv) {
         if      (arg == "--task1")   run_task1 = true;
         else if (arg == "--task2")   run_task2 = true;
         else if (arg == "--task3")   run_task3 = true;
+        else if (arg == "--task4")   run_task4 = true;
+        else if (arg == "--task5")   run_task5 = true;
+        else if (arg == "--verify-g-alpha") run_verify = true;
         else if (arg == "--N"        && i + 1 < argc) task1_N  = std::stoi(argv[++i]);
         else if (arg == "--K"        && i + 1 < argc) task1_K  = std::stoi(argv[++i]);
         else if (arg == "--K3"       && i + 1 < argc) task3_K  = std::stoi(argv[++i]);
+        else if (arg == "--K4"       && i + 1 < argc) task4_K  = std::stoi(argv[++i]);
+        else if (arg == "--n-max"    && i + 1 < argc) task4_nmax = std::stoi(argv[++i]);
+        else if (arg == "--n-mom"    && i + 1 < argc) task4_nmom = std::stoi(argv[++i]);
+        else if (arg == "--u-mode"   && i + 1 < argc) task4_umode = argv[++i];
+        else if (arg == "--delta"    && i + 1 < argc) verify_delta = std::stod(argv[++i]);
+        else if (arg == "--T-free"   && i + 1 < argc) task5_T = std::stod(argv[++i]);
+        else if (arg == "--dt"       && i + 1 < argc) task5_dt = std::stod(argv[++i]);
+        else if (arg == "--integrator" && i + 1 < argc) task5_integrator = argv[++i];
         else if (arg == "--n-kicks"  && i + 1 < argc) n_kicks  = std::stoi(argv[++i]);
         else {
             std::cerr << "未知参数: " << arg << "\n";
             std::cerr << "用法: " << argv[0]
-                      << " [--task1] [--task2] [--task3]"
+                      << " [--task1] [--task2] [--task3] [--task4] [--verify-g-alpha]"
                       << " [--N 粒子数] [--K 基函数数(任务A)]"
-                      << " [--K3 基函数数(任务C)] [--n-kicks N]\n";
+                      << " [--K3 基函数数(C)] [--K4 K_pre(D,默认1)]"
+                      << " [--n-max 4] [--n-mom 2] [--u-mode resolve|linear]"
+                      << " [--delta 1e-5] [--n-kicks N]\n";
             return 1;
         }
     }
 
-    // 不指定则全部都跑
-    if (!run_task1 && !run_task2 && !run_task3) {
+    // 不指定则全部都跑（只含 A/B/C；task4/5/verify 要显式触发）
+    if (!run_task1 && !run_task2 && !run_task3 && !run_task4 && !run_task5 && !run_verify) {
         run_task1 = true;
         run_task2 = true;
         run_task3 = true;
@@ -692,6 +1202,19 @@ int main(int argc, char** argv) {
     if (run_task1) task1_harmonic_ground_state(task1_N, task1_K);
     if (run_task2) task2_grid_kicked_rotor(n_kicks);
     if (run_task3) task3_single_kick(task3_K);
+
+    if (run_verify) verify_g_alpha(task4_K, task4_nmax, verify_delta);
+    if (run_task4) {
+        TargetFitConfig::UMode mode = TargetFitConfig::UPDATE_RESOLVE;
+        if (task4_umode == "linear") mode = TargetFitConfig::UPDATE_LINEAR;
+        task4_target_fitting_tdvp(task4_K, task4_nmax, task4_nmom, mode);
+    }
+    if (run_task5) {
+        RtIntegrator itg = (task5_integrator == "euler")
+                           ? RtIntegrator::Euler
+                           : RtIntegrator::RK4;
+        task5_realtime_evolve_kicked(task4_nmax, task4_nmom, task5_T, task5_dt, itg);
+    }
 
     return 0;
 }

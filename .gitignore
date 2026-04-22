@@ -1,5 +1,6 @@
 build/
 *.csv
+.codex
 
 # LaTeX auxiliary files
 *.aux

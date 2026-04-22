@@ -34,6 +34,8 @@ add_executable(ecg1d
     src/kicked_exact.cpp
     src/kick_operator.cpp
     src/observables.cpp
+    src/target_fitting.cpp
+    src/realtime_tdvp.cpp
 )
 
 target_include_directories(ecg1d PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -57,6 +59,8 @@ add_executable(stepb_test
     src/kicked_exact.cpp
     src/kick_operator.cpp
     src/observables.cpp
+    src/target_fitting.cpp
+    src/realtime_tdvp.cpp
 )
 target_include_directories(stepb_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(stepb_test PRIVATE Eigen3::Eigen)
@@ -76,6 +80,8 @@ add_executable(ecg1d_simple
     src/tdvp_solver.cpp
     src/svm.cpp
     src/kick_operator.cpp
+    src/target_fitting.cpp
+    src/realtime_tdvp.cpp
 )
 target_include_directories(ecg1d_simple PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(ecg1d_simple PRIVATE Eigen3::Eigen)
