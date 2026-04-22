@@ -1,6 +1,7 @@
 #include "kick_operator.hpp"
 #include "pair_cache.hpp"
 #include "svm.hpp"
+#include "bessel.hpp"
 #include <cmath>
 #include <iostream>
 #include <iomanip>
@@ -22,7 +23,7 @@ static Cd single_particle_kick_kernel(const PairCache& c, int a,
     Cd q = 2.0 * k_L * c.mu(a);          // phase factor
 
     // n=0 term: (-i)^0 J_0(kappa) exp(0) = J_0(kappa)
-    Cd result = std::cyl_bessel_j(0, kappa);
+    Cd result = bessel_j(0, kappa);
 
     // Precompute (-i)^n for n=1,2,3,4 and cycle: (-i)^1=-i, (-i)^2=-1, (-i)^3=i, (-i)^4=1
     Cd neg_i(0.0, -1.0);
@@ -31,7 +32,7 @@ static Cd single_particle_kick_kernel(const PairCache& c, int a,
     for (int n = 1; n <= n_max; n++) {
         neg_i_power *= neg_i;  // (-i)^n
 
-        double Jn = std::cyl_bessel_j(n, kappa);
+        double Jn = bessel_j(n, kappa);
         if (std::abs(Jn) < 1e-30) continue;  // skip negligible terms
 
         // Gaussian damping: exp(-n^2 * s)

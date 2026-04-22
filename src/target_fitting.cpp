@@ -2,6 +2,7 @@
 #include "hamiltonian.hpp"
 #include "pair_cache.hpp"
 #include "derivatives.hpp"
+#include "bessel.hpp"
 #include <Eigen/Dense>
 #include <stdexcept>
 #include <cmath>
@@ -67,10 +68,8 @@ TargetBasis build_kicked_target(const std::vector<BasisParams>& pre_kick_basis,
         }
 
         for (int n = -n_max; n <= n_max; ++n) {
-            // J_{-n}(kappa) = (-1)^n J_n(kappa); std::cyl_bessel_j requires n>=0
-            int abs_n = std::abs(n);
-            double Jn = std::cyl_bessel_j(abs_n, kappa);
-            if (n < 0 && (abs_n % 2 == 1)) Jn = -Jn;
+            // bessel_j handles negative n internally via J_{-n}=(-1)^n J_n
+            double Jn = bessel_j(n, kappa);
             if (std::abs(Jn) < k_threshold) continue;
 
             // (-i)^n for n in Z via cycle: n mod 4 -> {1, -i, -1, i}
