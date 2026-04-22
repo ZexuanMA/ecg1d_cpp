@@ -899,6 +899,9 @@ static void task4_target_fitting_tdvp(int K_pre, int n_max, int n_mom,
     std::vector<BasisParams> trial_init = augment_basis_with_momentum(
         pre_kick_basis, k_L, /*n_mom=*/n_mom, /*b_val=*/0.5, /*max_cond=*/1e6);
     const int K_trial = static_cast<int>(trial_init.size());
+    // 关键: 重置 name = 索引 i (augment_basis_with_momentum 把 name 设为 1000*n,
+    // 不符合 partial_z_lnmg 的 alpha_2 == basis.name 约定 → TDVP 梯度会恒为零)
+    for (int i = 0; i < K_trial; ++i) trial_init[i].name = i;
     std::cout << "  K_pre=" << pre_kick_basis.size()
               << " → K_trial=" << K_trial << "\n";
     print_basis("扩基后 trial basis", trial_init);
@@ -1009,6 +1012,11 @@ static std::vector<BasisParams> prepare_kicked_state_route1(
     std::vector<BasisParams> trial_init = augment_basis_with_momentum(
         pre_kick_basis, k_L, n_mom, 0.5, 1e6);
     const int K_trial = static_cast<int>(trial_init.size());
+
+    // 关键: 重置 name = 索引 i, 因为 augment_basis_with_momentum 把新基的 name 设为
+    // 1000*n (动量编号), 跟 partial_z_lnmg 期望的 alpha_2 == basis.name 约定不符,
+    // 会导致 TDVP 梯度对新动量副本为零。任何同组基底 name 必须 = 索引。
+    for (int i = 0; i < K_trial; ++i) trial_init[i].name = i;
 
     // 初始 u 解析最优化
     {
