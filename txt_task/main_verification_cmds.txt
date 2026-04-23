@@ -1,0 +1,51 @@
+Task: Create main_verification.cpp
+
+Main goal: Verify the correctness of the program by cross-checking two (or more) independent computations of the ground state, and then run real-time TDVP evolution to confirm the dynamics behave correctly (with energy conservation as the primary sanity check).
+
+Scope for this first pass
+- Particle number: start with N = 1, then N = 2.
+- Basis size K: small enough to iterate quickly; pick a value that already gives converged ECG results for the chosen N.
+
+Step 1 — Imaginary-time ground state (ECG basis)
+- Build H_full = kinetic energy + harmonic trap + cos (kicking-style) potential.
+- Run imaginary-time evolution on the ECG variational basis until convergence.
+- Output: |psi_ECG>, E_ECG.
+
+Step 2 — Brute-force / reference ground state (multiple methods)
+- Compute the ground state of the same H_full using several independent methods so we can cross-compare:
+  - real-space grid diagonalization,
+  - DVR,
+  - Fock / Hermite basis expansion,
+  - any other reasonable reference solver.
+- Output: |psi_ref_method>, E_ref_method for each method.
+
+Step 3 — Cross-check
+- Compare E_ECG against every E_ref_method (absolute and relative error).
+- Compare wavefunctions: overlap |<psi_ECG|psi_ref>|, density profile n(x), and momentum distribution n(k).
+- Also cross-compare the reference methods against each other as a consistency check.
+
+Step 4 — Real-time TDVP evolution
+- Take the verified ground state from Step 1 (ECG representation).
+- Turn off the cos potential: H_evolve = kinetic + harmonic trap.
+- Evolve in real time using TDVP in the ECG basis.
+- Primary sanity check: energy <H_evolve> must stay constant along the trajectory.
+- Secondary diagnostics: track <p>, <x>, density n(x, t), and momentum distribution n(k, t) over time.
+- The goal here is simply to see that the real-time dynamics are well-behaved and to visualize how the wavefunction evolves.
+
+Deliverables
+- New main_verification.cpp exercising Steps 1–4.
+- CSV / logged output containing: E_ECG, each E_ref_method, overlaps, density snapshots, and the time series of <H>, <p>, <x>, n(x, t), n(k, t).
+- A Python plotting script that reads the output and produces the comparison plots and evolution visualizations.
+
+Code organization
+- Keep each of the four steps cleanly separated so each piece is easy to read, reuse, and run on its own.
+- Concretely: put each step behind its own function (or a small dedicated module / header + cpp pair), e.g.
+  - step1_imag_time_ecg(...)
+  - step2_reference_ground_states(...)   (with one sub-function per reference method)
+  - step3_cross_check(...)
+  - step4_realtime_tdvp(...)
+- main_verification.cpp should be a thin driver that wires these pieces together.
+- Each step should be independently callable and should write its own clearly named CSV output so I can inspect intermediate results without re-running everything.
+
+ The code's structure
+- Discuss the concrete layout (files, functions, plotting script structure, choice of K and grid sizes, reference-method details) in plan mode before writing any code.

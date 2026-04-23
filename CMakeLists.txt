@@ -95,3 +95,37 @@ add_executable(ecg1d_simple
 target_include_directories(ecg1d_simple PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(ecg1d_simple PRIVATE Eigen3::Eigen)
 target_compile_options(ecg1d_simple PRIVATE -O2 -march=native)
+
+# Verification executable: cross-checks ECG+TDVP ground state against FD grid / DVR,
+# then runs real-time TDVP as a dynamical sanity check.
+add_executable(ecg1d_verify
+    main_verification.cpp
+    src/basis_params.cpp
+    src/permutation.cpp
+    src/pair_cache.cpp
+    src/interaction_kernels.cpp
+    src/hamiltonian.cpp
+    src/derivatives.cpp
+    src/observable_derivatives.cpp
+    src/hamiltonian_gradient.cpp
+    src/tdvp_solver.cpp
+    src/svm.cpp
+    src/kicked_evolution.cpp
+    src/kicked_exact.cpp
+    src/kick_operator.cpp
+    src/observables.cpp
+    src/target_fitting.cpp
+    src/realtime_tdvp.cpp
+    src/h_squared.cpp
+    src/rothe_operator.cpp
+    src/rothe_step.cpp
+    src/verify/common.cpp
+    src/verify/ecg_wavefunction.cpp
+    src/verify/step1_imag_time_ecg.cpp
+    src/verify/step2_reference_gs.cpp
+    src/verify/step3_cross_check.cpp
+    src/verify/step4_realtime_tdvp.cpp
+)
+target_include_directories(ecg1d_verify PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(ecg1d_verify PRIVATE Eigen3::Eigen)
+target_compile_options(ecg1d_verify PRIVATE -O2 -march=native)

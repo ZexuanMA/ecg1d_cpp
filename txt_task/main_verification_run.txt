@@ -1,0 +1,39 @@
+# Commands for ecg1d_verify (main_verification).
+# Run from /home/gyqyan/zexuan/ecg1d_cpp.
+
+# ---- Build ----
+cd build && make ecg1d_verify && cd ..
+
+# ---- Full pipelines (all four steps) ----
+./build/ecg1d_verify --N 1 --K 3 --T 5.0 --dt 2e-3
+./build/ecg1d_verify --N 2 --K 5 --T 5.0 --dt 2e-3
+
+# ---- Per-step iteration ----
+./build/ecg1d_verify --N 1 --K 3 --run-step1
+./build/ecg1d_verify --N 1 --K 3 --run-step2
+./build/ecg1d_verify --N 1 --K 3 --run-step3     # needs step1+step2 in the same run
+./build/ecg1d_verify --N 1 --K 3 --run-step4     # loads cached step1 basis from disk
+
+# Combine flags as needed (e.g. skip the long real-time step):
+./build/ecg1d_verify --N 1 --K 3 --run-step1 --run-step2 --run-step3
+
+# ---- All flags ----
+./build/ecg1d_verify --help
+
+# ---- Plots ----
+python scripts/plot_verification.py
+# outputs under out/verify/:
+#   fig_step3_energy.png, fig_step3_density.png, fig_step3_momentum.png,
+#   fig_step4_energy_trace.png, fig_step4_observables.png, fig_step4_snapshots.png
+
+# ---- Output CSVs ----
+# out/verify/step1_ecg_{energy,basis,density,nk}_N{N}_K{K}.csv
+# out/verify/step2_{grid,dvr}_{energy,density,nk,psi}_N{N}.csv
+# out/verify/step3_crosscheck_N{N}.csv
+# out/verify/step4_{trace,snapshots}_N{N}_K{K}.csv
+
+
+Run it
+cd /home/gyqyan/zexuan/ecg1d_cpp/build && make ecg1d_verify && cd ..
+./build/ecg1d_verify --N 1 --K 3 --run-step1 --run-step2 --run-step3
+python scripts/plot_verification.py
