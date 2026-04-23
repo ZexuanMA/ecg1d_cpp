@@ -16,7 +16,7 @@ namespace ecg1d {
 // `dt` is a real positive step; integrator options (order 1 Euler or order 4 RK4).
 //
 // Returns dz as VectorXcd of size = alpha_z_list.size(); caller applies to basis.
-enum class RtIntegrator { Euler, RK4 };
+enum class RtIntegrator { Euler, RK4, RK45 };
 
 struct RealtimeStepResult {
     std::vector<BasisParams> basis;   // updated basis
@@ -65,6 +65,16 @@ struct RealtimeEvolutionConfig {
     // This decouples the non-linear {A,R} flow from the linear u flow; avoids
     // the pathology where TDVP tries to absorb u dynamics into {A,R} drift.
     bool u_split_trotter = false;
+
+    // RK45 (Dormand-Prince 5(4)) adaptive stepping — ignored unless integrator=RK45
+    //   rk45_abs_tol: absolute tolerance
+    //   rk45_rel_tol: relative tolerance
+    //   rk45_dt_min/max: clamp on step size
+    //   The initial dt is taken from rt_cfg.dt.
+    double rk45_abs_tol = 1e-6;
+    double rk45_rel_tol = 1e-6;
+    double rk45_dt_min  = 1e-8;
+    double rk45_dt_max  = 1.0;
 
     // If true, after each step rescale u so that <psi|psi> == initial_norm
     // (where initial_norm is computed at t=0 from basis_init). This is a

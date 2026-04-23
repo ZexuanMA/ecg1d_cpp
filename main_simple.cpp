@@ -1313,6 +1313,352 @@ static void task6_realtime_ground_state(double T_total, double dt,
 #pragma endregion
 
 
+#pragma region 任务 10: K=3 固定 u_0 + Wiener + 脉冲 kick-only
+// ============================================================================
+// 任务 10: K=3 Route-1, 固定 u_0, 其他 u/A/B/R 全开, Wiener + λ_C=0, dt=1e-3
+// ----------------------------------------------------------------------------
+// 设计:
+//   1. 起点: Route-1 踢后态 K_cap=3 (同 task7)
+//   2. alpha_z_list (11 参数):
+//      - u_1, u_2  (u_0 固定, 不进 TDVP)
+//      - B_0, B_1, B_2
+//      - R_0, R_1, R_2
+//      - A_0, A_1, A_2
+//   3. 阶段 A (t ∈ [0, T_free]): H = T + V_ho
+//      - Wiener 平滑伪逆 (task5 当前成功点)
+//      - lambda_C = 0 (必要: Wiener 下要真 gauge 严格压零)
+//      - dt = 1e-3, RK4
+//      - enforce_norm = true
+//   4. 阶段 B (t ∈ [T_free, T_free+T_pulse]): H = (κ/T_pulse)·cos(2k_L x) only
+//      - 同 solver 配置
+//      - 同 alpha_z_list
+//
+// 动机: 固定 u_0 消除"整体相位 gauge"方向 (u_i → e^iα u_i 的一个自由度),
+//       同时保留 u_1, u_2 响应 kick 后的动量重分布。Wiener 处理近零 sv 平滑。
+// ============================================================================
+static void task10_k3_fix_u0(double T_free, double T_pulse, double dt,
+                              RtIntegrator integrator,
+                              double rcond, double lambda_C,
+                              bool enforce_norm, bool wiener_smooth) {
+    std::cout << "\n=====================================================\n";
+    std::cout << " 任务 10: K=3 固定 u_0 + Wiener + 脉冲 kick-only\n";
+    std::cout << "   T_free=" << T_free << ", T_pulse=" << T_pulse
+              << ", dt=" << dt
+              << ", wiener=" << (wiener_smooth ? "ON" : "OFF")
+              << ", λ_C=" << lambda_C
+              << ", enforce_norm=" << (enforce_norm ? "ON" : "OFF")
+              << "\n";
+    std::cout << "=====================================================\n";
+
+    // ---- Step 1: Route-1 踢后态 K_cap=3 ----
+    std::cout << "\n--- Step 1: Route-1 踢后态 (K_cap=3) ---\n";
+    std::vector<BasisParams> state0 = prepare_kicked_state_route1(
+        /*K_pre=*/1, /*n_max=*/4, /*n_mom=*/2,
+        TargetFitConfig::UPDATE_RESOLVE,
+        /*verbose=*/true, /*max_cond=*/1e6, /*max_K=*/3);
+    const int K_trial = static_cast<int>(state0.size());
+    std::cout << "  K_trial = " << K_trial << "\n";
+    print_basis("Route-1 K=3 踢后态", state0);
+
+    StateObs obs_t0 = compute_observables(state0);
+    print_observables("t=0", obs_t0);
+
+    // ---- Step 2: alpha_z_list - u_0 固定, 其他 u/A/B/R 全开 ----
+    std::vector<AlphaIndex> alpha_z_list;
+    // u: skip u_0, include u_1, u_2
+    for (int i = 1; i < K_trial; i++) alpha_z_list.push_back({1, i, 0, 0});
+    // B, R, A: 全开
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({2, i, 0, 0});  // B
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({3, i, 0, 0});  // R
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({4, i, 0, 0});  // A
+    std::cout << "  TDVP 变分参数: " << alpha_z_list.size()
+              << " (u_1, u_2, B_all, R_all, A_all; u_0 固定)\n";
+
+    SolverConfig solver_cfg;
+    solver_cfg.lambda_C      = lambda_C;
+    solver_cfg.rcond         = rcond;
+    solver_cfg.wiener_smooth = wiener_smooth;
+
+    // ==================== 阶段 A: 自由演化 ====================
+    std::cout << "\n============================================================\n";
+    std::cout << "  阶段 A: t ∈ [0, " << T_free << "], H = T + V_ho\n";
+    std::cout << "============================================================\n";
+
+    HamiltonianTerms terms_free = HamiltonianTerms::kinetic_harmonic();
+
+    RealtimeEvolutionConfig rt_cfg_A;
+    rt_cfg_A.dt              = dt;
+    rt_cfg_A.integrator      = integrator;
+    rt_cfg_A.sample_every    = 1;
+    rt_cfg_A.verbose         = true;
+    rt_cfg_A.print_every     = std::max(1, static_cast<int>(std::round(T_free / dt / 20)));
+    rt_cfg_A.u_split_trotter = false;  // u_1, u_2 在 alpha_z_list, u_0 固定 — 不能用 u_split
+    rt_cfg_A.enforce_norm    = enforce_norm;
+
+    RealtimeEvolutionResult res_A = realtime_tdvp_evolution(
+        alpha_z_list, state0, T_free, terms_free, solver_cfg, rt_cfg_A);
+
+    StateObs obs_A = compute_observables(res_A.basis_final);
+    print_observables("阶段 A 末 (t = T_free)", obs_A);
+
+    double E_A0 = res_A.trace.E.front();
+    double dE_A_max = 0.0, dnorm_A_max = 0.0;
+    double norm0 = res_A.trace.norm.front();
+    for (size_t k = 0; k < res_A.trace.t.size(); k++) {
+        dE_A_max    = std::max(dE_A_max, std::abs(res_A.trace.E[k] - E_A0));
+        dnorm_A_max = std::max(dnorm_A_max,
+                               std::abs(res_A.trace.norm[k] - norm0) / norm0);
+    }
+    std::cout << "  阶段 A 守恒: max|ΔE|       = " << std::scientific << dE_A_max
+              << std::defaultfloat << "\n";
+    std::cout << "  阶段 A 守恒: max|Δnorm|/n0 = " << std::scientific << dnorm_A_max
+              << std::defaultfloat << "\n";
+
+    // ==================== 阶段 B: 脉冲 kick-only ====================
+    std::cout << "\n============================================================\n";
+    std::cout << "  阶段 B: t ∈ [T_free, T_free+" << T_pulse
+              << "], H = (κ/T_pulse)·cos(2k_L x) only\n";
+    std::cout << "============================================================\n";
+
+    HamiltonianTerms terms_pulse;
+    terms_pulse.kinetic       = false;
+    terms_pulse.harmonic      = false;
+    terms_pulse.delta         = false;
+    terms_pulse.gaussian      = false;
+    terms_pulse.kicking       = true;
+    terms_pulse.kicking_scale = 1.0 / T_pulse;
+    std::cout << "  kicking_scale = " << terms_pulse.kicking_scale << "\n";
+
+    RealtimeEvolutionConfig rt_cfg_B;
+    rt_cfg_B.dt              = dt;
+    rt_cfg_B.integrator      = integrator;
+    rt_cfg_B.sample_every    = 1;
+    rt_cfg_B.verbose         = true;
+    rt_cfg_B.print_every     = std::max(1, static_cast<int>(std::round(T_pulse / dt / 20)));
+    rt_cfg_B.u_split_trotter = false;
+    rt_cfg_B.enforce_norm    = enforce_norm;
+
+    RealtimeEvolutionResult res_B = realtime_tdvp_evolution(
+        alpha_z_list, res_A.basis_final, T_pulse,
+        terms_pulse, solver_cfg, rt_cfg_B);
+
+    StateObs obs_B = compute_observables(res_B.basis_final);
+    print_observables("阶段 B 末 (t = T_free+T_pulse)", obs_B);
+
+    double E_B0 = res_B.trace.E.front();
+    double dE_B_max = 0.0;
+    for (size_t k = 0; k < res_B.trace.t.size(); k++) {
+        dE_B_max = std::max(dE_B_max, std::abs(res_B.trace.E[k] - E_B0));
+    }
+    std::cout << "  实测 Δ⟨x²⟩ = " << std::setprecision(6)
+              << (obs_B.x2 - obs_A.x2) << "  (瞬时极限 → 0)\n";
+    std::cout << "  实测 Δ⟨p²⟩ = " << (obs_B.p2 - obs_A.p2) << "\n";
+    std::cout << "  实测 ΔE    = " << (obs_B.E - obs_A.E) << "\n";
+    std::cout << "  阶段 B max|ΔE|(轨迹) = " << std::scientific << dE_B_max
+              << std::defaultfloat << "\n";
+
+    // ---- 摘要 ----
+    std::cout << "\n=====================================================\n";
+    std::cout << " 任务 10 摘要\n";
+    std::cout << "=====================================================\n";
+    std::cout << "  t = 0              : E = " << std::setprecision(8) << obs_t0.E
+              << ", ⟨x²⟩ = " << obs_t0.x2 << ", ⟨p²⟩ = " << obs_t0.p2 << "\n";
+    std::cout << "  t = T_free         : E = " << obs_A.E
+              << ", ⟨x²⟩ = " << obs_A.x2 << ", ⟨p²⟩ = " << obs_A.p2 << "\n";
+    std::cout << "  t = T_free+T_pulse : E = " << obs_B.E
+              << ", ⟨x²⟩ = " << obs_B.x2 << ", ⟨p²⟩ = " << obs_B.p2 << "\n";
+    std::cout << "  网格精确 (kick 2)  : E = 0.8526\n";
+    std::cout << "  阶段 A max|ΔE|     = " << std::scientific << dE_A_max << std::defaultfloat << "\n";
+    std::cout << "  阶段 B Δ⟨x²⟩       = " << (obs_B.x2 - obs_A.x2) << "\n";
+}
+#pragma endregion
+
+
+#pragma region 任务 9: target 基直接当起点 (验证 HTML 4.5 待试实验)
+// ============================================================================
+// 任务 9: 直接用 Jacobi-Anger target 基当 task7 起点
+// ----------------------------------------------------------------------------
+// 动机: HTML tdvp_full_report.html §4.5 的观察——
+//   target 本身就是 ECG, φ_n = e^(i n 2k_L x)·ψ_0 是 Gaussian。直接拿 2n_max+1
+//   个单宽度 target 基当 TDVP 起点, F=1 trivially, 不用 Route-1 的 augment+target-fit。
+//
+// 假设: 对 HO 自由演化, 相干态宽度不变 → 单宽度 target 基比多宽度 Route-1 trial 更稳.
+//   - 预期阶段 A max|ΔE| 与 K=3 trial (1.6e-5) 相当或更好
+//   - 预期 cond(C) 比 K=9 Route-1 trial 好 (没有多宽度共线)
+//
+// 流程 = task7 但 step 1 换:
+//   1. K=1 HO 基态 ψ_0
+//   2. rebalance_AB_for_kick B≥0.5 (R 编码需要)
+//   3. build_kicked_target(pre_kick, κ, k_L, n_max) → 2n_max+1 个 Gaussian
+//   4. name 重置为 0..K-1 (TDVP gradient 需要 name == index)
+//   5. 阶段 A + B 同 task7
+// ============================================================================
+
+// 构造"target 基直接当起点"的初态
+static std::vector<BasisParams> prepare_kicked_state_target_direct(int n_max) {
+    std::vector<BasisParams> pre_kick_raw = prepare_ground_state_K1(/*K=*/1);
+    std::vector<BasisParams> pre_kick = rebalance_AB_for_kick(pre_kick_raw, /*b_min=*/0.5);
+
+    TargetBasis target = build_kicked_target(pre_kick, kappa, k_L, n_max);
+
+    // name 必须 = 索引 i (partial_z_lnmg 约定 alpha_2 == basis.name)
+    for (int i = 0; i < static_cast<int>(target.size()); ++i) {
+        target[i].name = i;
+    }
+    return target;
+}
+
+static void task9_target_basis_direct(double T_free, double T_pulse, double dt,
+                                        RtIntegrator integrator,
+                                        double rcond, double lambda_C,
+                                        bool enforce_norm,
+                                        bool wiener_smooth,
+                                        int n_max = 4) {
+    std::cout << "\n=====================================================\n";
+    std::cout << " 任务 9: target 基直接当 task7 起点 (n_max=" << n_max
+              << ", K_trial=" << (2*n_max+1)
+              << ", T_free=" << T_free << ", T_pulse=" << T_pulse
+              << ", dt=" << dt << ")\n";
+    std::cout << "=====================================================\n";
+
+    // ---- Step 1: target 基直接当初态 ----
+    std::cout << "\n--- Step 1: 构造 target 基 (Jacobi-Anger |n|≤" << n_max << ") ---\n";
+    std::vector<BasisParams> state0 = prepare_kicked_state_target_direct(n_max);
+    const int K_trial = static_cast<int>(state0.size());
+    std::cout << "  K_trial = " << K_trial << " (预期 = 2·" << n_max << "+1 = "
+              << (2*n_max+1) << ")\n";
+    print_basis("target 基（直接当起点, 单宽度）", state0);
+
+    // 初始 F 应 trivially = 1 (target 本身就是它自己)
+    // 只是形式验证: 和 task7 的 0.9894 对比
+    PermutationSet perms = PermutationSet::generate(1);
+    TargetBasis self_target_check = state0;  // target 就是自己
+    Cd A_self = cross_overlap(self_target_check, state0, perms);
+    Cd N_self = target_norm(self_target_check, perms);
+    Cd S_self = overlap(state0);
+    double F_self = std::norm(A_self) / (N_self.real() * S_self.real());
+    std::cout << "  F(初态|target) = " << std::setprecision(10) << F_self
+              << " (预期 = 1.0 严格)\n";
+
+    StateObs obs_t0 = compute_observables(state0);
+    print_observables("t=0 (target 基踢后态)", obs_t0);
+    std::cout << "  (理论: ⟨x²⟩=0.5, ⟨p²⟩≈0.816, E≈0.658)\n";
+
+    // ---- Step 2: alpha_z_list 同 task7: A+R, u 走 Lie-Trotter, B 冻结 ----
+    std::vector<AlphaIndex> alpha_z_list;
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({3, i, 0, 0});  // R
+    for (int i = 0; i < K_trial; i++) alpha_z_list.push_back({4, i, 0, 0});  // A
+    std::cout << "  TDVP 变分参数: " << alpha_z_list.size()
+              << " (A+R, u Lie-Trotter)\n";
+
+    SolverConfig solver_cfg;
+    solver_cfg.lambda_C      = lambda_C;
+    solver_cfg.rcond         = rcond;
+    solver_cfg.wiener_smooth = wiener_smooth;
+
+    // ---- 阶段 A: 自由演化 t ∈ [0, T_free], H = T + V_ho ----
+    std::cout << "\n=============================================================\n";
+    std::cout << "  阶段 A: 自由演化 t ∈ [0, " << T_free << "], H = T + V_ho\n";
+    std::cout << "=============================================================\n";
+
+    HamiltonianTerms terms_free = HamiltonianTerms::kinetic_harmonic();
+
+    RealtimeEvolutionConfig rt_cfg_free;
+    rt_cfg_free.dt              = dt;
+    rt_cfg_free.integrator      = integrator;
+    rt_cfg_free.sample_every    = 1;     // 每步记录 trace
+    rt_cfg_free.verbose         = true;
+    rt_cfg_free.print_every     = 1;     // 每步打印
+    rt_cfg_free.u_split_trotter = true;   // u 走 Lie-Trotter
+    rt_cfg_free.enforce_norm    = enforce_norm;
+
+    RealtimeEvolutionResult free_res = realtime_tdvp_evolution(
+        alpha_z_list, state0, T_free, terms_free, solver_cfg, rt_cfg_free);
+
+    StateObs obs_after_A = compute_observables(free_res.basis_final);
+    print_observables("阶段 A 末 (t = T_free)", obs_after_A);
+
+    double E_A0 = free_res.trace.E.front();
+    double dE_A_max = 0.0, dnorm_A_max = 0.0;
+    double norm0 = free_res.trace.norm.front();
+    for (size_t k = 0; k < free_res.trace.t.size(); k++) {
+        dE_A_max    = std::max(dE_A_max, std::abs(free_res.trace.E[k] - E_A0));
+        dnorm_A_max = std::max(dnorm_A_max,
+                               std::abs(free_res.trace.norm[k] - norm0) / norm0);
+    }
+    std::cout << "\n  阶段 A 守恒: max|ΔE|       = " << std::scientific << dE_A_max
+              << std::defaultfloat << "\n";
+    std::cout << "  阶段 A 守恒: max|Δnorm|/n0 = " << std::scientific << dnorm_A_max
+              << std::defaultfloat << "\n";
+
+    // ---- 阶段 B: 有限脉冲, H_pulse = (κ/T_pulse)·cos(2k_L x), kick only ----
+    std::cout << "\n=============================================================\n";
+    std::cout << "  阶段 B: 脉冲 t ∈ [T_free, T_free+" << T_pulse
+              << "], H = (κ/T_pulse)·cos(2k_L x)\n";
+    std::cout << "=============================================================\n";
+
+    HamiltonianTerms terms_pulse;
+    terms_pulse.kinetic       = false;
+    terms_pulse.harmonic      = false;
+    terms_pulse.delta         = false;
+    terms_pulse.gaussian      = false;
+    terms_pulse.kicking       = true;
+    terms_pulse.kicking_scale = 1.0 / T_pulse;
+    std::cout << "  kicking_scale = " << terms_pulse.kicking_scale << "\n";
+
+    RealtimeEvolutionConfig rt_cfg_pulse;
+    rt_cfg_pulse.dt              = dt;
+    rt_cfg_pulse.integrator      = integrator;
+    rt_cfg_pulse.sample_every    = 1;    // 每步记录 trace
+    rt_cfg_pulse.verbose         = true;
+    rt_cfg_pulse.print_every     = 1;    // 每步打印
+    rt_cfg_pulse.u_split_trotter = true;
+    rt_cfg_pulse.enforce_norm    = enforce_norm;
+
+    RealtimeEvolutionResult pulse_res = realtime_tdvp_evolution(
+        alpha_z_list, free_res.basis_final, T_pulse,
+        terms_pulse, solver_cfg, rt_cfg_pulse);
+
+    StateObs obs_after_B = compute_observables(pulse_res.basis_final);
+    print_observables("阶段 B 末 (t = T_free+T_pulse)", obs_after_B);
+
+    std::cout << "\n  实测 Δ⟨x²⟩ = " << std::setprecision(6)
+              << (obs_after_B.x2 - obs_after_A.x2)
+              << "  (瞬时极限 → 0)\n";
+    std::cout << "  实测 Δ⟨p²⟩ = " << (obs_after_B.p2 - obs_after_A.p2) << "\n";
+    std::cout << "  实测 ΔE    = " << (obs_after_B.E - obs_after_A.E) << "\n";
+
+    double E_B0 = pulse_res.trace.E.front();
+    double dE_B_max = 0.0;
+    for (size_t k = 0; k < pulse_res.trace.t.size(); k++) {
+        dE_B_max = std::max(dE_B_max, std::abs(pulse_res.trace.E[k] - E_B0));
+    }
+    std::cout << "  阶段 B 守恒: max|ΔE|       = " << std::scientific << dE_B_max
+              << std::defaultfloat << "\n";
+
+    // ---- 与 task7 (Route-1 trial 基) 对比 ----
+    std::cout << "\n--- 与 task7 Route-1 trial 基 (K=3, 6 参数) 对比 ---\n";
+    std::cout << "  量              | task9 target 基 | task7 trial 基\n";
+    std::cout << "  ----------------+-----------------+----------------\n";
+    std::cout << "  F_init          | " << std::setprecision(10) << F_self
+              << "      | 0.9894093635\n";
+    std::cout << "  K_trial         | " << K_trial
+              << "               | 3\n";
+    std::cout << "  阶段 A max|ΔE|  | " << std::scientific << dE_A_max
+              << std::defaultfloat << "      | 1.6109207818e-05\n";
+    std::cout << "  阶段 B E(末)    | " << std::setprecision(6) << obs_after_B.E
+              << "        | 1.2968584\n";
+    std::cout << "  阶段 B Δ⟨x²⟩    | " << (obs_after_B.x2 - obs_after_A.x2)
+              << "        | 0.0255496\n";
+    std::cout << "  网格精确 E(末)  | 0.8526          | 0.8526\n";
+
+    std::cout << "\n=====================================================\n";
+    std::cout << " 任务 9 结束\n";
+    std::cout << "=====================================================\n";
+}
+#pragma endregion
+
+
 #pragma region 任务 G: 双 kick 有限脉冲 TDVP (K=3, 参数全开)
 // ============================================================================
 // 【任务 G】双 kick + 有限脉冲 TDVP (K=3, 参数全开)
@@ -1819,6 +2165,8 @@ int main(int argc, char** argv) {
     bool run_task5 = false;
     bool run_task6 = false;
     bool run_task7 = false;
+    bool run_task9 = false;
+    bool run_task10 = false;
     bool run_task8 = false;
     bool run_task8_test_h2 = false;
     bool run_verify = false;
@@ -1858,6 +2206,8 @@ int main(int argc, char** argv) {
         else if (arg == "--task5")   run_task5 = true;
         else if (arg == "--task6")   run_task6 = true;
         else if (arg == "--task7")   run_task7 = true;
+        else if (arg == "--task9")   run_task9 = true;
+        else if (arg == "--task10")  run_task10 = true;
         else if (arg == "--T-pulse"  && i + 1 < argc) task7_T_pulse = std::stod(argv[++i]);
         else if (arg == "--task7-K"  && i + 1 < argc) task7_K_cap = std::stoi(argv[++i]);
         else if (arg == "--task8")          run_task8 = true;
@@ -1901,9 +2251,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 不指定则全部都跑（只含 A/B/C；task4/5/6/7/8/verify 要显式触发）
+    // 不指定则全部都跑（只含 A/B/C；task4/5/6/7/8/9/verify 要显式触发）
     if (!run_task1 && !run_task2 && !run_task3 && !run_task4 && !run_task5 && !run_task6
-        && !run_task7 && !run_task8 && !run_task8_test_h2 && !run_verify) {
+        && !run_task7 && !run_task9 && !run_task10 && !run_task8 && !run_task8_test_h2 && !run_verify) {
         run_task1 = true;
         run_task2 = true;
         run_task3 = true;
@@ -1920,9 +2270,10 @@ int main(int argc, char** argv) {
         task4_target_fitting_tdvp(task4_K, task4_nmax, task4_nmom, mode);
     }
     if (run_task5) {
-        RtIntegrator itg = (task5_integrator == "euler")
-                           ? RtIntegrator::Euler
-                           : RtIntegrator::RK4;
+        RtIntegrator itg;
+        if      (task5_integrator == "euler") itg = RtIntegrator::Euler;
+        else if (task5_integrator == "rk45")  itg = RtIntegrator::RK45;
+        else                                   itg = RtIntegrator::RK4;
         task5_realtime_evolve_kicked(task4_nmax, task4_nmom, task5_T, task5_dt,
                                       itg, task5_max_cond, task5_u_split,
                                       task5_evolve_B, task5_lambda_C,
@@ -1930,23 +2281,46 @@ int main(int argc, char** argv) {
                                       task5_K_cap, task5_wiener);
     }
     if (run_task6) {
-        RtIntegrator itg = (task5_integrator == "euler")
-                           ? RtIntegrator::Euler
-                           : RtIntegrator::RK4;
+        RtIntegrator itg;
+        if      (task5_integrator == "euler") itg = RtIntegrator::Euler;
+        else if (task5_integrator == "rk45")  itg = RtIntegrator::RK45;
+        else                                   itg = RtIntegrator::RK4;
         task6_realtime_ground_state(task5_T, task5_dt, itg,
                                      task5_rcond, task5_lambda_C,
                                      task5_enforce_norm, task5_wiener);
     }
     if (run_task7) {
-        RtIntegrator itg = (task5_integrator == "euler")
-                           ? RtIntegrator::Euler
-                           : RtIntegrator::RK4;
+        RtIntegrator itg;
+        if      (task5_integrator == "euler") itg = RtIntegrator::Euler;
+        else if (task5_integrator == "rk45")  itg = RtIntegrator::RK45;
+        else                                   itg = RtIntegrator::RK4;
         // task5_T 默认 2π; 若用户显式传 --T-free 会覆盖, 这里尊重 task7 自己的默认
         double T_free_used = (task5_T == 2.0 * M_PI) ? task7_T_free : task5_T;
         task7_double_kick_finite_pulse(task7_K_cap, T_free_used,
                                          task7_T_pulse, task5_dt, itg,
                                          task5_rcond, task5_lambda_C,
                                          task5_enforce_norm, task5_wiener);
+    }
+    if (run_task9) {
+        RtIntegrator itg;
+        if      (task5_integrator == "euler") itg = RtIntegrator::Euler;
+        else if (task5_integrator == "rk45")  itg = RtIntegrator::RK45;
+        else                                   itg = RtIntegrator::RK4;
+        double T_free_used = (task5_T == 2.0 * M_PI) ? task7_T_free : task5_T;
+        task9_target_basis_direct(T_free_used, task7_T_pulse, task5_dt, itg,
+                                    task5_rcond, task5_lambda_C,
+                                    task5_enforce_norm, task5_wiener,
+                                    /*n_max=*/task4_nmax);
+    }
+    if (run_task10) {
+        RtIntegrator itg;
+        if      (task5_integrator == "euler") itg = RtIntegrator::Euler;
+        else if (task5_integrator == "rk45")  itg = RtIntegrator::RK45;
+        else                                   itg = RtIntegrator::RK4;
+        double T_free_used = (task5_T == 2.0 * M_PI) ? task7_T_free : task5_T;
+        task10_k3_fix_u0(T_free_used, task7_T_pulse, task5_dt, itg,
+                          task5_rcond, task5_lambda_C,
+                          task5_enforce_norm, task5_wiener);
     }
     if (run_task8_test_h2) task8_unit_test_H2();
     if (run_task8)         task8_rothe_K1_ho(task8_T, task8_dt);

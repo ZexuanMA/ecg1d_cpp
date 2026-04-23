@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>task10 汇报：固定 u_0 + 11 参数 TDVP 实验系列 · 2026-04-23</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+       max-width: 960px; margin: 2em auto; padding: 0 1.5em; color: #24292e; line-height: 1.7; }
+h1 { color: #0366d6; border-bottom: 2px solid #0366d6; padding-bottom: 0.3em; }
+h2 { color: #0366d6; margin-top: 2em; }
+h3 { color: #57606a; margin-top: 1.5em; }
+h4 { color: #24292e; }
+code, pre { font-family: Menlo, Consolas, monospace; }
+code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; font-size: 0.92em; }
+pre  { background: #f6f8fa; padding: 1em 1.2em; border-radius: 6px; overflow-x: auto;
+       font-size: 0.9em; line-height: 1.5; border-left: 4px solid #d0d7de; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.93em; }
+th, td { border: 1px solid #d0d7de; padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: #f6f8fa; font-weight: 600; }
+.math { font-style: italic; font-family: "Cambria Math", "Latin Modern Math", Georgia, serif; }
+.math-block { text-align: center; font-size: 1.05em; margin: 0.8em 0;
+              font-family: "Cambria Math", Georgia, serif; font-style: italic;
+              padding: 0.6em 1em; background: #f6f8fa; border-radius: 4px; }
+.box { border: 1px solid #d0d7de; border-left: 4px solid #0366d6; padding: 0.8em 1.2em; margin: 1em 0; background: #f6f8fa; }
+.box.ok   { border-left-color: #1a7f37; background: #dafbe1; }
+.box.warn { border-left-color: #bf8700; background: #fff8c5; }
+.box.bad  { border-left-color: #cf222e; background: #ffebe9; }
+.box.theorem { border-left-color: #8250df; background: #fbf0ff; }
+.small { font-size: 0.85em; color: #57606a; }
+.pass { color: #1a7f37; font-weight: 600; }
+.fail { color: #cf222e; font-weight: 600; }
+.todo { color: #bf8700; font-weight: 600; }
+.best { background: #dafbe1; font-weight: 600; }
+.worst { background: #ffebe9; font-weight: 600; }
+.label { display: inline-block; padding: 2px 8px; border-radius: 3px;
+         font-size: 0.82em; font-weight: 600; }
+.label.exact { background: #dafbe1; color: #1a7f37; }
+.label.approx { background: #fff8c5; color: #9a6700; }
+.label.bad { background: #ffebe9; color: #cf222e; }
+</style>
+</head>
+<body>
+
+<h1>task10 汇报：固定 u<sub>0</sub> + 11 参数 TDVP 实验系列</h1>
+<p class="small">2026-04-23 · 目的：在 K=3 Route-1 踢后态上，验证"固定 u<sub>0</sub> 消整体相位 gauge + 放开其他 11 参数"能否改善 TDVP 稳定性</p>
+
+<div class="box">
+<b>TL;DR</b>：三个变体（V1 硬截断 / V2 Wiener / V3 RK45+Wiener）都<b>没超过</b> task7 的 6 参数 <span class="math">A+R+u</span>-Lie-Trotter baseline。Wiener 是本系列亮点（阶段 A ΔE=2.3e-4），但 RK45 反而最差。核心原因：<b>多 5 个参数带来的冗余方向 &gt; 固定 u<sub>0</sub> 消掉的 1 个整体相位方向</b>；且 RK45 的误差估计对非光滑的 TDVP+Wiener 流场失效。
+</div>
+
+<h2>1. 动机与设计</h2>
+
+<h3>1.1 想法</h3>
+
+<p>task7 用 6 参数（<span class="math">A_i, R_i</span>，u 走 Lie-Trotter，B 冻结）达到阶段 A max|ΔE| = 1.6e-5，但阶段 B 末 E=1.30（网格精确 0.85）。我们猜测放开 u 和 B 能让流形响应更灵活；固定 u<sub>0</sub> 消掉整体相位 gauge（<span class="math">u<sub>i</sub> → e<sup>iα</sup> u<sub>i</sub></span> 是 C 的精确零方向）。</p>
+
+<h3>1.2 配置</h3>
+
+<ul>
+<li><b>起点</b>：Route-1 踢后态 K=3（同 task7），F<sub>init</sub> = 0.9894</li>
+<li><b>alpha_z_list</b>（11 参数）：
+<pre>u_1, u_2         (u_0 固定, 不进 TDVP)
+B_0, B_1, B_2    (放开)
+R_0, R_1, R_2    (放开)
+A_0, A_1, A_2    (放开)</pre>
+</li>
+<li><b>阶段 A</b>：<span class="math">Ĥ = T̂ + V̂<sub>ho</sub></span>, T=1.0, dt=1e-3, enforce_norm=true</li>
+<li><b>阶段 B</b>：<span class="math">Ĥ<sub>pulse</sub> = (κ/T<sub>pulse</sub>) cos(2k<sub>L</sub>x)</span>, T<sub>pulse</sub>=0.5（kicking_scale=2）</li>
+</ul>
+
+<h2>2. 三个变体实测</h2>
+
+<table>
+<tr><th>量</th>
+    <th>V1: 硬截断<br>λ<sub>C</sub>=1e-8, RK4</th>
+    <th>V2: <b>Wiener</b><br>λ<sub>C</sub>=0, RK4</th>
+    <th>V3: Wiener + <b>RK45</b><br>λ<sub>C</sub>=0</th></tr>
+<tr><td>阶段 A max|ΔE|</td>
+    <td class="fail">2.7e-2</td>
+    <td class="best">2.3e-4</td>
+    <td class="fail">8.0e-3</td></tr>
+<tr><td>阶段 A 末 E（理论守恒 ≈ 0.658）</td>
+    <td>0.684</td>
+    <td class="best">0.658</td>
+    <td>0.651</td></tr>
+<tr><td>阶段 A ⟨x²⟩（初 0.485）</td>
+    <td>0.742</td>
+    <td>0.816</td>
+    <td>0.537</td></tr>
+<tr><td>阶段 A ⟨p²⟩（初 0.831）</td>
+    <td>0.627</td>
+    <td>0.499</td>
+    <td>0.764</td></tr>
+<tr><td>Ehrenfest π 周期 <span class="math">⟨x²⟩↔⟨p²⟩</span> 换位</td>
+    <td>部分</td>
+    <td class="best">精准 ✓</td>
+    <td class="fail">乱走</td></tr>
+<tr><td>sv<sub>min3</sub> 最小</td>
+    <td class="fail">1e-8（3 个底）</td>
+    <td>1e-17（无底）</td>
+    <td>1e-22（无底）</td></tr>
+<tr><td>cond(C) max</td>
+    <td>1e9</td>
+    <td>1e20</td>
+    <td>1e24</td></tr>
+<tr><td>步数 / 拒绝</td>
+    <td>1000 / —</td>
+    <td>1000 / —</td>
+    <td class="fail">3708 / 1007 (27%)</td></tr>
+<tr><td><b>阶段 B 末 E</b>（网格 0.8526）</td>
+    <td class="fail">27.9</td>
+    <td>6.78</td>
+    <td class="worst">623.6 💀</td></tr>
+<tr><td>阶段 B Δ⟨x²⟩（理论 0）</td>
+    <td>0.086</td>
+    <td>-0.058</td>
+    <td>-0.042</td></tr>
+<tr><td>阶段 B Δ⟨p²⟩</td>
+    <td>54.4</td>
+    <td>12.3</td>
+    <td class="worst">1246</td></tr>
+<tr><td>阶段 B 崩？</td>
+    <td>无</td>
+    <td>无（但飘）</td>
+    <td class="fail">step 1235 崩（cond 1e30）</td></tr>
+</table>
+
+<h3>2.1 V3 RK45 的最终状态（崩溃 dump）</h3>
+
+<p>阶段 B step 1235 的 basis 被 cond_abort=1e30 guard 停下：</p>
+
+<pre>[0] u=(1.4e-15, -3.2e-16)     A=(-0.20, 0.03)    B=(0.53, 0.31)     R=(-0.55, -0.19)
+[1] u=(6.6e-10, -7.7e-10)     A=(6.84, -0.91)    B=(10.4, 0.26)     R=(-1.19, -1.61)
+[2] u=(-6.2e-16, 1.4e-15)     A=(150, 415)       B=(446, 197)       R=(777, 297)</pre>
+
+<p>Gaussian #2 完全飞出物理区（<span class="math">R = 777</span> 意味着高斯中心在 x = 777 处，宽度 <span class="math">1/(2·Re(A+B)) ≈ 1/1200</span> 像 δ 函数），Gaussian #1 的 R 也漂到 (-1.19, -1.61)。u 系数已塌到 1e-10~1e-15，说明 TDVP 流场在"追 ε 方向"把参数推向无穷。</p>
+
+<h2>3. 各操作的效果归因</h2>
+
+<table>
+<tr><th>操作</th><th>期望效果</th><th>实际效果</th><th>评价</th></tr>
+
+<tr><td><b>固定 u<sub>0</sub></b></td>
+    <td>消 1 个 u-phase gauge 方向</td>
+    <td>sv<sub>min3</sub> 仍 3 个 1e-8 底（11 参数多出的 5 个方向新增近零）</td>
+    <td class="fail">得不偿失</td></tr>
+
+<tr><td><b>Wiener (V2 vs V1)</b></td>
+    <td>连续阻尼伪逆 <span class="math">sv/(sv²+λ²)</span>, 消阶梯跳</td>
+    <td>阶段 A ΔE 改善 <b>100×</b>（2.7e-2 → 2.3e-4）<br>阶段 B E 改善 4×（27.9 → 6.78）</td>
+    <td class="pass">明显有效</td></tr>
+
+<tr><td><b>λ<sub>C</sub>=0 + Wiener</b></td>
+    <td>真零方向严格归零；真信息方向阻尼反转</td>
+    <td>Ehrenfest π 周期 <span class="math">⟨x²⟩↔⟨p²⟩</span> 换位在 T=1（半周期）<b>精准命中</b></td>
+    <td class="pass">物理正确</td></tr>
+
+<tr><td><b>RK45 自适应（V3 vs V2）</b></td>
+    <td>高阶精度 + 误差控制 → 更准</td>
+    <td>阶段 A ΔE <b>差 35×</b>（2.3e-4 → 8e-3）<br>阶段 B 炸到 E=623（比 V2 差 100×）</td>
+    <td class="fail">反而最差</td></tr>
+</table>
+
+<h2>4. 对照 task7 baseline</h2>
+
+<table>
+<tr><th>量</th>
+    <th>task7（6 参数 A+R+u Lie-Trotter）</th>
+    <th>task10 V2（11 参数 固定 u<sub>0</sub> + Wiener）</th></tr>
+<tr><td>参数数</td><td>6</td><td>11</td></tr>
+<tr><td>阶段 A max|ΔE|</td>
+    <td class="best">1.6e-5</td>
+    <td>2.3e-4（差 <b>14×</b>）</td></tr>
+<tr><td>阶段 B E(末) vs 网格 0.8526</td>
+    <td class="best">1.297（偏 +0.44）</td>
+    <td>6.78（偏 +5.9，差 <b>5×</b>）</td></tr>
+<tr><td>阶段 B Δ⟨x²⟩</td>
+    <td>0.026</td>
+    <td>-0.058</td></tr>
+</table>
+
+<div class="box warn">
+<b>task7 保持占优</b>：6 参数 A+R + u Lie-Trotter（所有 u 精确 <span class="math">exp(-iH·dt)</span> 处理）比 11 参数 + 固定 u<sub>0</sub> + Wiener 整体表现更好。
+</div>
+
+<h2>5. 核心诊断</h2>
+
+<h3>5.1 为什么固定 u<sub>0</sub> 没帮助</h3>
+
+<p>固定 u<sub>0</sub> 确实消掉 1 个整体相位 gauge 方向（<span class="math">u<sub>i</sub> → e<sup>iα</sup> u<sub>i</sub></span>），但<b>同时放开</b>:</p>
+
+<ul>
+<li>u<sub>1</sub>, u<sub>2</sub> → 新的"子空间相位"方向</li>
+<li>B<sub>0</sub>, B<sub>1</sub>, B<sub>2</sub> → 对角 B 与 A 对角平行的冗余方向</li>
+</ul>
+
+<p>净增 <b>4 个以上</b>近零方向。V1 实测 <span class="math">sv<sub>min3</sub> = (1e-8, 1e-8, 1e-8)</span> 三个方向都被 Tikhonov floor 抬上来——<b>消一增三</b>的净亏。</p>
+
+<h3>5.2 为什么 Wiener 在 V2 表现好</h3>
+
+<p>Wiener 公式 <span class="math">sinv = sv/(sv²+λ²)</span> 有三个关键性质：</p>
+
+<ol>
+<li>sv=0 严格给 0（真 gauge 方向被压制）</li>
+<li>sv 连续（无阶梯跳，克制 task5 的模式 C）</li>
+<li>最大放大 <span class="math">1/(2λ)</span> 封顶（比硬截断温和）</li>
+</ol>
+
+<p>V2 阶段 A ΔE 降到 2.3e-4，⟨x²⟩/⟨p²⟩ 做完美 π 周期换位——物理上对了。但代价是<b>有偏差</b>，每步 <span class="math">O(λ²/sv)</span> 的系统误差随时间积累，dt 必须小。</p>
+
+<h3>5.3 为什么 RK45 反而最差</h3>
+
+<div class="box theorem">
+<b>定理级观察</b>：Dormand-Prince 5(4) 的误差估计 <span class="math">err = |y<sub>5</sub> − y<sub>4</sub>|</span> 假设流场是<b>光滑的</b>。TDVP + Wiener 的有效流场在不同 sv 量级方向给<b>不同的"有效微分"</b>（<span class="math">sv/(sv²+λ²)</span> 随 sv 变化）——等价于流场在 sv ≈ λ 附近不可微。RK45 无法一致估计 <b>z 各分量</b>的误差，步长控制器被"假误差"牵着鼻子走。
+</div>
+
+<p>实测佐证：</p>
+
+<ul>
+<li><b>27% 拒绝率</b>（健康系统 &lt; 10%）——大量重试打在近零方向的震荡上</li>
+<li>dt 从 1e-3 被缩到 1e-5 ~ 1e-6，3708 步中有 1007 被拒绝</li>
+<li>阶段 A 的物理（⟨x²⟩, ⟨p²⟩）反而不如固定 dt 的 V2 准确</li>
+<li>阶段 B 的 kick 脉冲把本已近病态的流场推到崩溃点</li>
+</ul>
+
+<h3>5.4 阶段 B 共通痛点：流形误差 ε 主导</h3>
+
+<p>即便 V2（最好的组合）阶段 B 末 E 也是 6.78（vs 网格 0.85，差 8×）。原因<b>不在积分器、不在伪逆、不在 gauge</b>：</p>
+
+<div class="math-block">
+第二次 kick = e<sup>−iκcos(2k<sub>L</sub>x)</sup> · ψ(T<sub>free</sub>) ≈ Σ<sub>n=−∞</sub><sup>∞</sup> J<sub>n</sub>(κ) · 平移(n·2k<sub>L</sub>) · ψ(T<sub>free</sub>)
+</div>
+
+<p>ψ(T<sub>free</sub>) 本身已经含有 <span class="math">|n|≤2</span> 动量模式（来自第一次 kick）；第二次 kick 卷上新一层 Jacobi-Anger，总共需要 <b>|n|≤4</b> 动量模式。K=3 的基底只有 <span class="math">n=0, ±1</span>——装不下。TDVP 流场试图在<b>错的流形</b>里追逐<b>正确的演化方向</b>，参数被推到无穷。</p>
+
+<h2>6. 教训</h2>
+
+<ol>
+<li><b>参数数量 ≫ 局部 gauge 消除</b>：多 5 个参数带来的冗余方向 &gt; 固定 u<sub>0</sub> 消掉的 1 个方向。</li>
+<li><b>Wiener 是当前最好的伪逆策略</b>：V2 阶段 A 2.3e-4 + Ehrenfest 物理精准，证明 Wiener 在合理参数数下物理正确。</li>
+<li><b>自适应积分器救不了非光滑流场</b>：TDVP + Wiener 的 z 依赖在近零 sv 方向不可微，RK45 的误差估计失效。固定 dt + 少参数比自适应 dt + 多参数更稳。</li>
+<li><b>阶段 B 的 ε 主导</b>：任何 K 固定的 TDVP 组合都无法把 E(末) 拉近 0.85，因为流形本质装不下二次 kick 后态。</li>
+</ol>
+
+<h2>7. 底线</h2>
+
+<div class="box bad">
+<b>固定 u<sub>0</sub> 的探索已穷尽</b>，三个变体都没超过 task7 baseline。加 Wiener（V2）在 11 参数下<b>接近但没超过</b> task7 的 6 参数。RK45 反而最差（V3）。结构性结论：<b>K 固定的 TDVP 路径已经卡在流形误差 ε 上，调 alpha 组合 / 积分器 / 伪逆都无法突破</b>。
+</div>
+
+<h3>下一步：切 Rothe</h3>
+
+<p>Rothe 方法（Schrader-Pedersen-Kvaal JCP 2025）两大优势正好打这个痛点：</p>
+
+<ol>
+<li><b>不反 C</b>，改反 overlap 类 <span class="math">S̃</span>（总是良定）→ gauge 冗余问题消失</li>
+<li><b>自适应加基</b>：残差超阈值就 <span class="math">basis.push_back(新 Gaussian)</span> → 流形跟着物理态长大，ε 可控</li>
+</ol>
+
+<p>task8 的 M1（H² 矩阵元）+ M2（K=1 HO 单步）已通过。M3 是 K=2–3 踢后态 Rothe 演化，对比网格精确 <b>E(kick 2) = 0.8526</b>。若 Rothe 能把 E 拉到 0.85 附近，就切换为主线方法继续 MBDL。</p>
+
+<h2>8. 相关文件</h2>
+
+<table>
+<tr><th>文件</th><th>内容</th></tr>
+<tr><td><code>main_simple.cpp</code> <code>task10_k3_fix_u0</code></td><td>task10 函数实现</td></tr>
+<tr><td><code>src/realtime_tdvp.{hpp,cpp}</code></td><td>RK45 (Dormand-Prince) 实现 + 自适应步长</td></tr>
+<tr><td><code>task10_cmds.txt</code>, <code>task10_rk45_cmds.txt</code></td><td>V1/V2/V3 命令集</td></tr>
+<tr><td><code>/tmp/task10_no_wiener.log</code></td><td>V1 完整日志</td></tr>
+<tr><td><code>/tmp/task10_main.log</code></td><td>V2 完整日志</td></tr>
+<tr><td><code>/tmp/task10_rk45_wiener.log</code></td><td>V3 完整日志</td></tr>
+<tr><td><code>html/tdvp_full_report.html</code></td><td>整体 TDVP 汇报（含 §4.5 固定 u<sub>0</sub> 的 gauge 分析）</td></tr>
+</table>
+
+<p class="small" style="margin-top: 3em; border-top: 1px solid #d0d7de; padding-top: 1em;">
+ECG1D C++ 项目 · task10 实验系列汇报 · 2026-04-23
+</p>
+
+</body>
+</html>
