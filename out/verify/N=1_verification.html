@@ -2,23 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>N=1 ECG verification report</title>
+<title>N=1 ECG verification report — with derivations</title>
 <script>
   MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] } };
 </script>
 <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <style>
   body {
-    max-width: 960px;
+    max-width: 1000px;
     margin: 2em auto;
     padding: 0 1em;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-    line-height: 1.55;
+    line-height: 1.6;
     color: #222;
   }
   h1 { border-bottom: 2px solid #333; padding-bottom: 0.3em; }
   h2 { border-bottom: 1px solid #bbb; padding-bottom: 0.2em; margin-top: 2em; }
-  h3 { margin-top: 1.6em; }
+  h3 { margin-top: 1.6em; color: #333; }
+  h4 { margin-top: 1.2em; color: #444; }
   code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
   pre  { background: #f4f4f4; padding: 0.7em 1em; border-radius: 4px; overflow-x: auto; font-size: 0.9em; }
   code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.92em; }
@@ -31,7 +32,10 @@
   figcaption { font-style: italic; color: #555; margin-top: 0.4em; font-size: 0.9em; }
   .pass { color: #0a7d2c; font-weight: 600; }
   .warn { color: #c06b00; font-weight: 600; }
+  .nb   { background: #fffbdc; padding: 0.7em 1em; border-left: 4px solid #e0c000; margin: 1em 0; }
   blockquote { border-left: 4px solid #bbb; margin: 1em 0; padding: 0.1em 1em; background: #fafafa; color: #444; }
+  .toc { background: #fafafa; border: 1px solid #ddd; padding: 0.5em 1.2em; border-radius: 4px; }
+  .toc ol { margin: 0.3em 0; }
 </style>
 </head>
 <body>
@@ -42,126 +46,689 @@
   This report records the result of running
   <code>ecg1d_verify --N 1 --K 5 --run-step1 --run-step2 --run-step3</code>
   in the <code>ecg1d_cpp</code> repository on 2026-04-23. The goal is to
-  check, independently of the Python reference implementation, that the
-  C++ ECG + TDVP stack reproduces the ground state of
-  <code>H_full</code> for the single-particle case.
+  check, independently of the Python reference, that the C++ ECG + TDVP
+  stack reproduces the ground state of
+  $H_\text{full} = -\tfrac{1}{2}\partial_x^2 + \tfrac12 x^2 + \kappa\cos(2 k_L x)$.
+  Compared to the original short version, this writeup expands every
+  step with the underlying math so the numbers can be reproduced
+  analytically where possible.
 </p>
 
-<h2>1. The ECG variational ansatz (N = 1)</h2>
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li>The ECG variational ansatz (math)</li>
+    <li>Pair-cache quantities and the overlap integral</li>
+    <li>Hamiltonian functionals — derivations</li>
+    <li>Imaginary-time TDVP — equations of motion</li>
+    <li>Reference solvers — FD grid and sinc-DVR derivations</li>
+    <li>Observable definitions — density, momentum, fidelity</li>
+    <li>Pipeline and numerical parameters</li>
+    <li>Numerical results (tables + figures)</li>
+    <li>Interpretation</li>
+    <li>Appendix A: the momentum convention story</li>
+    <li>Appendix B: the N = 2 density bug (debugging diary)</li>
+    <li>How to reproduce</li>
+  </ol>
+</div>
+
+<h2>1. The ECG variational ansatz (math)</h2>
+
+<h3>1.1 Basis function form</h3>
 
 <p>
-  For one particle, the explicitly-correlated-Gaussian (ECG) wavefunction with
-  <em>K</em> basis functions is
+  For one particle the explicitly-correlated-Gaussian (ECG) wavefunction
+  with $K$ basis functions is
 </p>
+
+$$
+\psi(x) \;=\; \sum_{i=1}^{K} u_i\,\phi_i(x),
+\qquad
+\phi_i(x) \;=\; \exp\!\Bigl[-(A_i + B_i)\,x^{2}
+                         \,+\, 2 R_i B_i\,x
+                         \,-\, R_i B_i R_i\Bigr].
+$$
 
 <p>
-  $$
-  \psi(x) = \sum_{i=1}^{K} u_i \exp\!\left[-(A_i+B_i)\,x^{2}
-                        + 2\,R_i B_i\,x
-                        - R_i B_i R_i\right],
-  $$
+  Every parameter is a complex number; in the code they live inside the
+  struct <code>BasisParams</code>:
 </p>
-
-<p>
-  where every parameter is complex:
-  $u_i$ is the linear coefficient (amplitude + phase),
-  $A_i{+}B_i$ is an effective complex Gaussian width
-  (its real part sets the Gaussian decay, the imaginary part a chirp),
-  and $R_i$ is a complex center.
-  The real part of $R_i$ places the Gaussian in position space; the
-  imaginary part of $R_i$ (combined with $B_i$) encodes a momentum boost.
-  In the data structure used by the code, each basis function carries
-  <code>(u, A, B, R, name)</code>. For $N{=}1$, $A$, $B$, $R$ are
-  stored as $1{\times}1$ matrices / $1$-vectors for uniformity with $N{\ge}2$.
-</p>
-
-<p>
-  Ground state search is done by <strong>imaginary-time TDVP</strong> on
-  $\{u_i, A_i, B_i, R_i\}$. The convergence criterion is
-  $|\Delta E| &lt; 10^{-12}$ for 5 consecutive steps.
-</p>
-
-<h3>Hamiltonian under test</h3>
-
-<p>
-  The full Hamiltonian whose ground state we search for is
-</p>
-
-<p>
-  $$
-  H_{\text{full}} \;=\; -\tfrac{1}{2}\,\partial_x^{2}
-                     + \tfrac{1}{2}\,x^{2}
-                     + \kappa\,\cos(2 k_L\,x)
-  \quad\text{with}\quad
-  \hbar = m = \omega = 1,\;
-  \kappa = 1,\;
-  k_L = 0.5 .
-  $$
-</p>
-
-<p>
-  Because $V(x) = \tfrac{1}{2}x^{2} + \cos(x)$ has
-  $V(0) = 1$ as its global minimum (the quadratic and quartic terms cancel to
-  order $x^2$ at the origin for this parameter choice), the true ground-state
-  energy must satisfy $E_0 > 1$.
-</p>
-
-<h2>2. Methods compared</h2>
 
 <table>
   <thead>
-    <tr><th>Method</th><th>Discretization</th><th>Basis / grid size</th><th>Box</th></tr>
+    <tr><th>symbol</th><th>role</th><th>code name</th></tr>
   </thead>
   <tbody>
-    <tr>
-      <td class="label">ECG + imag-time TDVP</td>
-      <td>variational, complex Gaussians</td>
-      <td style="text-align: center;">K = 5</td>
-      <td style="text-align: center;">—</td>
-    </tr>
-    <tr>
-      <td class="label">FD real-space grid</td>
-      <td>3-point finite difference</td>
-      <td style="text-align: center;">N_grid = 512</td>
-      <td style="text-align: center;">x ∈ [−15, 15]</td>
-    </tr>
-    <tr>
-      <td class="label">sinc-DVR</td>
-      <td>closed-form DVR kinetic</td>
-      <td style="text-align: center;">N_dvr = 128</td>
-      <td style="text-align: center;">x ∈ [−15, 15]</td>
-    </tr>
+    <tr><td>$u_i$</td><td style="text-align:left">linear coefficient (amplitude + phase)</td><td><code>BasisParams.u</code></td></tr>
+    <tr><td>$A_i{+}B_i$</td><td style="text-align:left">effective Gaussian width (real part) / chirp (imag part)</td><td><code>A + B</code> (both $1{\times}1$ matrices for N=1)</td></tr>
+    <tr><td>$R_i$</td><td style="text-align:left">complex center: $\Re R_i$ is position shift, $2 B_i \Im R_i$ the momentum boost</td><td><code>BasisParams.R</code></td></tr>
   </tbody>
 </table>
 
 <p>
-  The two reference methods are algorithmically independent: the 3-point FD
-  kinetic is local and tridiagonal, sinc-DVR is dense and <em>O(N²)</em>
-  with exponential off-diagonal decay in $1/(i{-}j)^{2}$. Agreement between
-  them rules out coincidental discretization errors.
+  Expanding the exponent, the basis function can also be written as
 </p>
 
-<h2>3. Results</h2>
+$$
+\phi_i(x) \;=\; \exp\!\left[-(A_i{+}B_i)\!\left(x - \frac{R_i B_i}{A_i{+}B_i}\right)^{\!2}
+                         \,+\, \frac{(R_i B_i)^{2}}{A_i{+}B_i}
+                         \,-\, R_i B_i R_i\right],
+$$
 
-<h3>Energy</h3>
+<p>
+  which makes the shifted Gaussian structure explicit. The split of the
+  quadratic into $A + B$ is by convention: $A$ is the "variational"
+  part optimized by TDVP, $B$ is held near zero for static searches and
+  used for dynamics; at $B = 0$ the linear term vanishes and $R$ drops
+  out entirely (which is why the SVM initial basis is pure-$A$).
+</p>
+
+<h3>1.2 Gaussian integral identity used throughout</h3>
+
+<p>
+  The only analytic identity we need is, for $\Re(\alpha) > 0$:
+</p>
+
+$$
+\boxed{\;
+  \int_{-\infty}^{\infty}\!\!
+    \exp\!\bigl[-\alpha x^{2} + \beta x + \gamma\bigr]\,dx
+  \;=\; \sqrt{\frac{\pi}{\alpha}}\;
+        \exp\!\left[\gamma + \frac{\beta^{2}}{4\alpha}\right].
+\;}
+$$
+
+<p>
+  For complex $\alpha, \beta$ the formula continues analytically: the
+  square root uses the principal branch. All matrix elements below are
+  obtained by manipulating a pair product $\phi_i^{*}\phi_j$ into this
+  canonical form, then reading off the closed-form integral.
+</p>
+
+<h2>2. Pair-cache quantities and the overlap integral</h2>
+
+<p>
+  Every matrix element we need is bilinear in basis functions:
+  $\langle\phi_i| O |\phi_j\rangle$. The code pre-computes a set of
+  quantities shared by all operators $O$ — this is the
+  <code>PairCache</code> struct (<code>src/pair_cache.hpp</code>).
+</p>
+
+<h3>2.1 Complex conjugate of a basis function</h3>
+
+<p>
+  Since $\phi_i$ is a Gaussian in $x$ with complex coefficients,
+  conjugation flips every complex scalar:
+</p>
+
+$$
+\phi_i^{*}(x) \;=\; \exp\!\left[-(A_i^{*} + B_i^{*})\,x^{2}
+                             + 2 R_i^{*} B_i^{*}\,x
+                             - R_i^{*} B_i^{*} R_i^{*}\right].
+$$
+
+<p>
+  In the code this is <code>BasisParams::conj_params()</code>, returning
+  a new basis whose $(u, A, B, R)$ are all complex-conjugated. Note
+  $\phi_i^{*}$ has the same <em>form</em> — it is still a Gaussian with
+  real-part decay — because $\Re(A_i + B_i)$ is unchanged by
+  conjugation.
+</p>
+
+<h3>2.2 Pair Gaussian = product of two basis functions</h3>
+
+<p>
+  The product $\phi_i^{*}(x)\,\phi_j(x)$ is a Gaussian with a new
+  quadratic-in-$x$ exponent. Collecting $x^{2}$, $x^{1}$, $x^{0}$:
+</p>
+
+$$
+\phi_i^{*}(x)\,\phi_j(x) \;=\;
+ \exp\!\bigl[-K\,x^{2} + b\,x + C\bigr],
+$$
+
+<p>where</p>
+
+$$
+K   \;=\; (A_i^{*}{+}B_i^{*}) + (A_j{+}B_j), \qquad
+b   \;=\; 2(R_i^{*} B_i^{*} + R_j B_j), \qquad
+C   \;=\; -R_i^{*} B_i^{*} R_i^{*} - R_j B_j R_j .
+$$
+
+<p>
+  These are stored in the code as <code>c.K</code>, <code>c.b</code>,
+  <code>c.C_val</code>. For $N{=}1$ they are complex scalars; for $N{\ge}2$
+  they are an $N{\times}N$ matrix, an $N$-vector, and a scalar.
+</p>
+
+<h3>2.3 Overlap matrix element</h3>
+
+<p>
+  Apply the Gaussian integral identity to the pair Gaussian:
+</p>
+
+$$
+M_G^{(i,j)} \;\equiv\; \int\!\phi_i^{*}(x)\,\phi_j(x)\,dx
+  \;=\; \sqrt{\frac{\pi}{K}}\,\exp\!\left[C + \frac{b^{2}}{4K}\right].
+$$
+
+<p>
+  The code's <code>c.M_G</code> is precisely this (with the generalized
+  $\pi^{N/2}/\sqrt{\det K}$ factor for $N{\ge}2$).
+  The mean of the pair Gaussian is
+</p>
+
+$$
+\mu \;=\; \frac{b}{2K}
+\qquad\Bigl(\text{stored as }\texttt{c.mu}\Bigr),
+$$
+
+<p>
+  which is the expectation value $\langle x\rangle_{ij}
+  = M_G^{-1}\!\int x\,\phi_i^{*}\phi_j\,dx$. For later use the second
+  moment is
+</p>
+
+$$
+\langle x^{2}\rangle_{ij}
+  \;=\; \mu^{2} + \frac{1}{2K}.
+$$
+
+<p>The total (unnormalized) overlap of the ECG wavefunction is</p>
+
+$$
+S \;=\; \langle\psi|\psi\rangle
+  \;=\; \sum_{i,j=1}^{K} u_i^{*}\,u_j\,M_G^{(i,j)} .
+$$
+
+<p>
+  For $N{\ge}2$, $M_G^{(i,j)}$ additionally carries a sum over particle
+  permutations $p$ with sign $\varepsilon(p)$; for N = 1 that sum has
+  one term with sign $+1$ and we drop the $p$ index.
+</p>
+
+<h2>3. Hamiltonian functionals — derivations</h2>
+
+<p>
+  Each term of $H_\text{full} = \hat T + \hat V_\text{ho} + \hat V_\text{cos}$
+  contributes a bilinear functional. We derive each one starting from
+  the pair Gaussian of §2.2.
+</p>
+
+<h3>3.1 Kinetic energy</h3>
+
+<p>
+  For $\hat T = -\tfrac12\partial_x^{2}$ the second derivative of
+  $\phi_j(x) = \exp(-\alpha_j x^{2} + \beta_j x + \gamma_j)$
+  (using shorthand $\alpha_j = A_j+B_j$, $\beta_j = 2 R_j B_j$,
+  $\gamma_j = -R_j B_j R_j$) is
+</p>
+
+$$
+\phi_j''(x) \;=\; \bigl[(-2\alpha_j x + \beta_j)^{2} - 2\alpha_j\bigr]\,\phi_j(x)
+  \;=\; \bigl[4\alpha_j^{2} x^{2} - 4\alpha_j\beta_j x + \beta_j^{2} - 2\alpha_j\bigr]\phi_j(x).
+$$
+
+<p>Hence the matrix element is, using the pair-Gaussian moments,</p>
+
+$$
+\langle\phi_i|\hat T|\phi_j\rangle
+ \;=\; -\tfrac12\!\int \phi_i^{*}\phi_j''\,dx
+ \;=\; -\tfrac12\,M_G^{(i,j)}\!\left[
+        4\alpha_j^{2}\langle x^{2}\rangle_{ij}
+       -4\alpha_j\beta_j\,\mu_{ij}
+       +\beta_j^{2} - 2\alpha_j
+     \right].
+$$
+
+<p>
+  All three moments $\langle 1\rangle_{ij} = M_G^{(i,j)}$,
+  $\langle x\rangle_{ij} = M_G \mu$,
+  $\langle x^{2}\rangle_{ij} = M_G(\mu^{2} + 1/(2K))$
+  are analytic. The code collapses this into a single "P matrix" kernel
+  (<code>compute_P_Mij</code> in <code>src/interaction_kernels.cpp</code>),
+  which is the $-\tfrac12\partial^{2}$ factor divided by $M_G^{(i,j)}$.
+  The full kinetic expectation value is then
+</p>
+
+$$
+T \;=\; \sum_{ij} u_i^{*} u_j\,M_G^{(i,j)}\,P_{ij}\big/\,S.
+$$
+
+<h3>3.2 Harmonic potential</h3>
+
+<p>
+  $\hat V_\text{ho} = \tfrac12 x^{2}$ reduces directly to
+  $\langle x^{2}\rangle_{ij}$:
+</p>
+
+$$
+\langle\phi_i|\hat V_\text{ho}|\phi_j\rangle
+   \;=\; \tfrac12\,M_G^{(i,j)}\!\left(\mu_{ij}^{2} + \frac{1}{2K_{ij}}\right).
+$$
+
+<p>
+  In the code this is <code>compute_rTr_Mij</code>
+  (the "r^T r" name generalizes to N particles).
+</p>
+
+<h3>3.3 Kicking potential</h3>
+
+<p>
+  $\hat V_\text{cos} = \kappa\cos(q\,x)$ with $q = 2 k_L$ is handled by
+  noting that $\cos(qx) = \tfrac12 (e^{iqx} + e^{-iqx})$, so the
+  integrand shifts $\beta \to \beta \pm i q$ in the pair-Gaussian
+  exponent. Applying the identity:
+</p>
+
+$$
+\int \phi_i^{*}(x)\, e^{\pm iq x}\, \phi_j(x)\,dx
+ \;=\; M_G^{(i,j)}\,
+       \exp\!\left[\frac{(b\pm iq)^{2} - b^{2}}{4K}\right]
+ \;=\; M_G^{(i,j)}\,
+       \exp\!\left[\pm i q\mu_{ij}\right]\,
+       \exp\!\left[-\frac{q^{2}}{4K_{ij}}\right].
+$$
+
+<p>Averaging the two signs to get $\cos$:</p>
+
+$$
+\langle\phi_i|\cos(qx)|\phi_j\rangle
+  \;=\; M_G^{(i,j)}\,\exp\!\left[-\frac{q^{2}}{4K_{ij}}\right]\,\cos(q\,\mu_{ij}).
+$$
+
+<p>
+  This is <code>compute_Q_Mij</code> in the code (with $q = 2 k_L$
+  hard-wired via <code>physical_constants.hpp</code>).
+  The full expectation value is $V_\text{cos} = \kappa \sum_{ij} u_i^{*} u_j\,\text{(matrix element)}/S$.
+</p>
+
+<h3>3.4 Total energy functional</h3>
+
+<p>
+  With $H_{ij} = T_{ij} + V_\text{ho,ij} + \kappa V_\text{cos,ij}$,
+</p>
+
+$$
+E[\psi] \;=\; \frac{\sum_{ij} u_i^{*} u_j\,H_{ij}}
+                  {\sum_{ij} u_i^{*} u_j\,M_G^{(i,j)}} .
+$$
+
+<p>
+  For fixed $\{A_i, B_i, R_i\}$ this is a generalized Rayleigh quotient
+  in $u$, minimized by the lowest eigenpair of $H v = \lambda S v$
+  (<code>svm.hpp::lowest_energy</code>).
+</p>
+
+<h2>4. Imaginary-time TDVP — equations of motion</h2>
+
+<h3>4.1 Imaginary-time Schrödinger equation</h3>
+
+<p>
+  Substituting $\tau = i t$ into the Schrödinger equation gives
+</p>
+
+$$
+\partial_\tau |\psi\rangle \;=\; -\hat H\,|\psi\rangle.
+$$
+
+<p>
+  Eigenmodes $|n\rangle$ with energy $E_n$ decay as $e^{-E_n \tau}$, so
+  as $\tau\to\infty$ any state with overlap on the ground state is
+  driven to $|\psi_0\rangle$ (up to normalization). In the variational
+  manifold we project this flow onto the tangent space of parameter
+  space.
+</p>
+
+<h3>4.2 Variational derivative and the TDVP projector</h3>
+
+<p>
+  Let $z = \{z_\alpha\}$ denote the full collection of variational
+  parameters: $\{u_i, A_i, B_i, R_i\}$. For each basis function this is
+  4 complex numbers, so the parameter vector has size $4K$ (complex).
+  The state $|\psi(z)\rangle$ depends on $z$ smoothly, and the TDVP
+  ansatz is
+</p>
+
+$$
+\dot z_\alpha \;=\; -\,C^{-1}_{\alpha\beta}\,g_\beta
+\qquad\text{(imaginary time)},
+$$
+
+<p>where the metric tensor and the force are</p>
+
+$$
+C_{\alpha\beta}
+  \;=\; \mathrm{Re}\!\left\langle \partial_\alpha\psi
+       \Bigl|\,\hat P_\perp\,\Bigr|\partial_\beta\psi \right\rangle,
+\qquad
+g_\alpha \;=\; \partial_\alpha E[\psi],
+$$
+
+<p>and $\hat P_\perp = 1 - |\psi\rangle\langle\psi|/\langle\psi|\psi\rangle$
+  is the projector orthogonal to the current state (it is what ensures
+  that $\dot z$ moves along the variational manifold without spurious
+  norm drift). For real-time dynamics the sign and imaginary unit
+  change: $\dot z = -i C^{-1} g$.
+</p>
+
+<h3>4.3 Concrete implementation in the code</h3>
+
+<p>
+  Each variational parameter is labelled by an <code>AlphaIndex</code>
+  <code>{a1, a2, a3, a4}</code> with <code>a1 ∈ {1,2,3,4}</code> picking
+  out $(u, B, R, A)$ and the other fields indexing the basis function
+  and matrix/vector slot. For N=1, K=5 the parameter list has
+</p>
+
+$$
+5\,(\text{u}) \;+\; 5\,(\text{B}) \;+\; 5\,(\text{R}) \;+\; 5\,(\text{A})
+   \;=\; 20\ \text{complex parameters}.
+$$
+
+<p>Assembly is done by three helpers in <code>src/tdvp_solver.cpp</code>:</p>
+
+<ul>
+  <li>
+    <code>assemble_C(alpha_list, basis)</code> — builds the
+    $20{\times}20$ matrix $C$ element-wise from
+    $\partial_\alpha\phi$, $\partial_\beta\phi$ and $\phi$; derivatives
+    of the Gaussian pair integral are tabulated in
+    <code>src/observable_derivatives.cpp</code>.
+  </li>
+  <li>
+    <code>assemble_grad(alpha_list, basis, terms)</code> — builds the
+    gradient vector $g$ using the analytic derivatives of the
+    Hamiltonian functionals from §3.
+  </li>
+  <li>
+    <code>tdvp_step(...)</code> — solves $C\,\dot z = -g$ by SVD with
+    Wiener/Tikhonov regularization (<code>lambda_C</code>,
+    <code>rcond</code>) to control the small-singular-value tail, takes
+    a step of size $d\tau$, then (if <code>resolve_u = true</code>)
+    re-solves $u$ via the generalized eigenvalue problem on the updated
+    $\{A, B, R\}$. This last resolve is what gives the step its
+    super-linear convergence near the ground state.
+  </li>
+</ul>
+
+<p>
+  Convergence is declared when $|\Delta E| < 10^{-12}$ for 5 consecutive
+  steps. The adaptive $d\tau$ grows by <code>dtao_grow = 1.5</code>× on
+  every successful step up to <code>dtao_max = 10</code>, and backs off
+  on line-search failure.
+</p>
+
+<h3>4.4 Why the "u resolve" step matters</h3>
+
+<p>
+  With $\{A, B, R\}$ fixed, the $u$ sub-problem is exactly the
+  generalized Rayleigh quotient of §3.4, whose global minimum is a
+  generalized eigenvalue problem we can solve in closed form.
+  Including it as a post-step cleans up any residual $u$-error the TDVP
+  flow hasn't absorbed yet. In our N = 1, K = 5 run the TDVP loop
+  converges in 16 imaginary-time steps, and the final energy differs
+  from the post-TDVP generalized eigenvalue solve by $<10^{-12}$.
+</p>
+
+<h2>5. Reference solvers — FD grid and sinc-DVR derivations</h2>
+
+<h3>5.1 3-point finite-difference grid (<code>step2a</code>)</h3>
+
+<p>
+  Discretize $x$ on an evenly-spaced grid
+  $x_j = -L + j\,\Delta x$ for $j = 0, \ldots, N_g - 1$,
+  $\Delta x = 2L/(N_g - 1)$. The 3-point second-difference operator
+  on a regular grid is
+</p>
+
+$$
+\psi''(x_j) \;\approx\; \frac{\psi_{j+1} - 2\psi_j + \psi_{j-1}}{\Delta x^{2}}.
+$$
+
+<p>
+  With $\hat T = -\tfrac12 \partial_x^{2}$ this becomes a tridiagonal
+  matrix (Dirichlet boundary) with entries
+</p>
+
+$$
+T^{\text{FD}}_{jj} = \frac{1}{\Delta x^{2}}, \qquad
+T^{\text{FD}}_{j,j\pm 1} = -\frac{1}{2\,\Delta x^{2}} .
+$$
+
+<p>
+  The potential is diagonal:
+  $V_{jj} = \tfrac12 x_j^{2} + \kappa\cos(2 k_L x_j)$. The full
+  Hamiltonian $H^{\text{FD}} = T^{\text{FD}} + \mathrm{diag}(V)$ is
+  diagonalized with Eigen's <code>SelfAdjointEigenSolver</code>; the
+  lowest eigenvector, normalized so $\sum_j |\psi_j|^{2}\,\Delta x = 1$,
+  is our reference $\psi^\text{grid}$. The leading discretization error
+  is $O(\Delta x^{2})$.
+</p>
+
+<p>
+  For our run: $N_g = 512$, $L = 15$, $\Delta x = 30/511 \approx 0.0587$.
+  The 5 lowest eigenvalues have errors $\lesssim 3\times 10^{-5}$
+  against the true HO + cos spectrum.
+</p>
+
+<h3>5.2 Sinc-DVR (<code>step2b</code>)</h3>
+
+<p>
+  Sinc-DVR replaces the FD 3-point stencil by the exact second
+  derivative of a sinc interpolation. For a regular grid with spacing
+  $\Delta x$ the closed-form kinetic matrix is
+</p>
+
+$$
+T^\text{DVR}_{ij} \;=\; \frac{\hbar^{2}}{2 m\,\Delta x^{2}}
+  \begin{cases}
+     \dfrac{\pi^{2}}{3} & i = j, \\[0.4em]
+     \dfrac{2\,(-1)^{\,i-j}}{(i-j)^{2}} & i \ne j .
+  \end{cases}
+$$
+
+<p>
+  This is <em>dense</em> (every off-diagonal entry is nonzero) but the
+  entries decay as $(i-j)^{-2}$ and alternate in sign. Unlike the
+  tridiagonal FD matrix, the sinc-DVR is spectrally accurate — the
+  error drops exponentially with $\Delta x$ rather than polynomially.
+  With $N_\text{DVR} = 128$, $L = 15$, $\Delta x \approx 0.236$ we
+  already beat the $N_g = 512$ FD grid on accuracy of the low-lying
+  eigenvalues.
+</p>
+
+<p>
+  Potential $V$ and diagonalization are identical to §5.1. The final
+  ground-state wavefunction is saved to
+  <code>step2_{grid,dvr}_psi_N1.csv</code>; its density is
+  $|\psi(x_j)|^{2}$ and its momentum distribution is obtained by direct
+  DFT (§6.2).
+</p>
+
+<h2>6. Observable definitions</h2>
+
+<h3>6.1 Position density $n(x)$</h3>
+
+<p>
+  For a single particle, simply
+</p>
+
+$$
+n(x) \;=\; \frac{|\psi(x)|^{2}}{\langle\psi|\psi\rangle} .
+$$
+
+<p>
+  In the ECG code the pair product
+  $\phi_i^{*}(x)\phi_j(x) = e^{-Kx^{2}+bx+C}$ from §2.2 gives
+</p>
+
+$$
+n_\text{ECG}(x) \;=\; \frac{1}{S}\,
+  \sum_{ij} u_i^{*} u_j\,
+  e^{-K_{ij} x^{2} + b_{ij} x + C_{ij}} .
+$$
+
+<p>
+  Completing the square, each term is a Gaussian in $x - \mu_{ij}$ with
+  precision $K_{ij}$ and prefactor $M_G^{(i,j)}\sqrt{K_{ij}/\pi}$, so
+</p>
+
+$$
+n_\text{ECG}(x) \;=\; \frac{1}{S}\,
+  \sum_{ij} u_i^{*} u_j\,M_G^{(i,j)}\,
+  \sqrt{\frac{K_{ij}}{\pi}}\,
+  e^{-K_{ij}(x - \mu_{ij})^{2}} .
+$$
+
+<p>
+  For $N{\ge}2$ the formula generalizes to the Schur-complement
+  precision $K_{\text{eff}} = 1/[K^{-1}]_{aa}$ marginal over all other
+  particles, and the bra has to be permutation-summed too — a
+  non-trivial step which I got wrong in the first version of the
+  N = 2 run (Appendix B).
+</p>
+
+<h3>6.2 Momentum probability density $|\tilde\psi(k)|^{2}$</h3>
+
+<p>
+  The <em>physical</em> momentum distribution — the probability that a
+  time-of-flight image detects a particle with momentum $k$ — is
+</p>
+
+$$
+n_\text{ref}(k) \;=\; |\tilde\psi(k)|^{2},
+\qquad
+\tilde\psi(k) \;=\; \frac{1}{\sqrt{2\pi}}\!\int\!\psi(x)\,e^{-ikx}\,dx .
+$$
+
+<p>
+  By Parseval $\int |\tilde\psi|^{2}\,dk = \int|\psi|^{2}\,dx = 1$.
+  For the ECG basis this is computable analytically: substitute
+  $\psi = \sum_i u_i \phi_i$ and apply the Gaussian integral identity
+  with $\beta \to \beta - ik$:
+</p>
+
+$$
+\tilde\psi(k) \;=\; \frac{1}{\sqrt{2\pi}}\sum_i u_i\,
+  \sqrt{\frac{\pi}{A_i+B_i}}\,
+  \exp\!\left[-R_iB_iR_i + \frac{(2 R_i B_i - i k)^{2}}{4(A_i+B_i)}\right].
+$$
+
+<p>
+  This is exactly what <code>ecg_momentum_density_1p</code> in
+  <code>src/verify/ecg_wavefunction.cpp</code> computes, returning
+  $|\tilde\psi(k)|^{2}/S$. The reference solvers get
+  $|\tilde\psi(k)|^{2}$ from a direct trapezoidal DFT of their
+  grid $\psi_j$.
+</p>
+
+<div class="nb">
+  <strong>Convention warning.</strong> The function
+  <code>momentum_distribution</code> in <code>src/observables.cpp</code>
+  is <em>not</em> $|\tilde\psi(k)|^{2}$. It is the Fourier transform of
+  the position density $|\psi|^{2}$, which integrates to
+  $2\pi|\psi(0)|^{2}$ and is broader (for a Gaussian, $\sqrt2$ wider in
+  $\sigma$). Both are valid observables — the first is time-of-flight,
+  the second is a Bragg-scattering structure factor — but they are
+  different quantities. Appendix A tells the full story.
+</div>
+
+<h3>6.3 Wavefunction fidelity</h3>
+
+<p>
+  The most stringent cross-check: overlap the full complex
+  wavefunctions (after fixing a global phase, which is unphysical) and
+  compute
+</p>
+
+$$
+F \;=\; \frac{\bigl|\!\langle\psi_1|\psi_2\rangle\bigr|^{2}}
+              {\langle\psi_1|\psi_1\rangle\,\langle\psi_2|\psi_2\rangle},
+\qquad 0 \le F \le 1,
+$$
+
+<p>
+  with $F = 1$ iff $|\psi_2\rangle \propto |\psi_1\rangle$. The script
+  <code>scripts/plot_verification.py</code> performs the global-phase
+  fix by rotating $\psi_2 \to \psi_2\,e^{-i\arg\langle\psi_1|\psi_2\rangle}$
+  and then plots $\Re\psi$, $\Im\psi$, $|\psi|$ (Figure 4) and the
+  pointwise $|\Delta\psi|$ (Figure 5).
+</p>
+
+<h2>7. Pipeline and numerical parameters</h2>
+
+<p>The N = 1 verification run used:</p>
 
 <table>
   <thead>
-    <tr><th>Method</th><th>E<sub>0</sub></th><th>components</th></tr>
+    <tr><th>stage</th><th>setting</th><th>code</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">ECG basis size</td>
+      <td>K = 5</td>
+      <td><code>main_verification.cpp --K 5</code></td>
+    </tr>
+    <tr>
+      <td class="label">ECG basis init</td>
+      <td>HO ground state + 4 <code>randoman</code> perturbations</td>
+      <td><code>step1_imag_time_ecg.cpp</code></td>
+    </tr>
+    <tr>
+      <td class="label">TDVP step size</td>
+      <td>$d\tau_0 = 1.0$, <code>dtao_max = 10</code>, grow×1.5</td>
+      <td><code>SolverConfig</code></td>
+    </tr>
+    <tr>
+      <td class="label">TDVP regularization</td>
+      <td>$\lambda_C = 10^{-8}$, <code>rcond = 1e-4</code>, adaptive on</td>
+      <td><code>SolverConfig</code></td>
+    </tr>
+    <tr>
+      <td class="label">TDVP convergence</td>
+      <td>$|\Delta E| < 10^{-12}$ for 5 steps (max 300 steps)</td>
+      <td>reached in 16 steps</td>
+    </tr>
+    <tr>
+      <td class="label">FD grid</td>
+      <td>$N_g = 512$, $L = 15$, $\Delta x \approx 0.0587$</td>
+      <td><code>reference_gs_grid</code></td>
+    </tr>
+    <tr>
+      <td class="label">sinc-DVR</td>
+      <td>$N_\text{DVR} = 128$, $L = 15$, $\Delta x \approx 0.236$</td>
+      <td><code>reference_gs_dvr</code></td>
+    </tr>
+    <tr>
+      <td class="label">Comparison grids</td>
+      <td>$x \in [-15, 15]$, 401 points; $k \in [-10, 10]$, 401 points</td>
+      <td><code>linspace</code> in main driver</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>8. Results</h2>
+
+<h3>8.1 Energy</h3>
+
+<table>
+  <thead>
+    <tr><th>Method</th><th>$E_0$</th><th>components</th></tr>
   </thead>
   <tbody>
     <tr>
       <td class="label">ECG (K = 5)</td>
       <td>1.222 642 783 14</td>
-      <td style="text-align: left;">T = 0.1453, V<sub>ho</sub> = 0.4379, V<sub>kick</sub> = 0.6394</td>
+      <td style="text-align: left;">$T = 0.1453$, $V_\text{ho} = 0.4379$, $V_\text{cos} = 0.6394$</td>
     </tr>
     <tr>
-      <td class="label">FD grid (n = 512)</td>
+      <td class="label">FD grid ($n = 512$)</td>
       <td>1.222 593 342 4</td>
       <td>—</td>
     </tr>
     <tr>
-      <td class="label">sinc-DVR (n = 128)</td>
+      <td class="label">sinc-DVR ($n = 128$)</td>
       <td>1.222 627 925 43</td>
       <td>—</td>
     </tr>
@@ -169,12 +736,16 @@
 </table>
 
 <p>
-  The three numbers agree to $\sim 5\times 10^{-5}$, and the ECG value sits
-  <em>between</em> the two reference methods, i.e. the ECG variational
-  error is smaller than the spread between grid and DVR discretizations.
+  Consistency check on the ECG components: with $m = \omega = 1$ the
+  virial/energy relations imply
+  $\langle x^{2}\rangle = 2\,V_\text{ho} = 0.876$ and
+  $\langle p^{2}\rangle = 2\,T = 0.291$, giving $\sqrt{\langle x^{2}\rangle\langle p^{2}\rangle} = 0.505$.
+  The Heisenberg lower bound is $\tfrac12$, so we're within 1 % of the
+  minimum-uncertainty Gaussian — exactly what you'd expect for the
+  ground state of a near-harmonic trap.
 </p>
 
-<h3>Cross-check pair table</h3>
+<h3>8.2 Pairwise cross-check</h3>
 
 <table>
   <thead>
@@ -194,7 +765,7 @@
       <td>+4.944e-05</td>
       <td>+4.04e-05</td>
       <td>4.52e-04</td>
-      <td>7.71e-01</td>
+      <td>5.46e-04</td>
       <td>0.999 999 61</td>
       <td>0.999 997 19</td>
     </tr>
@@ -203,7 +774,7 @@
       <td>+1.486e-05</td>
       <td>+1.22e-05</td>
       <td>2.63e-03</td>
-      <td>7.71e-01</td>
+      <td>5.67e-04</td>
       <td>0.999 996 75</td>
       <td>0.999 993 45</td>
     </tr>
@@ -219,262 +790,263 @@
   </tbody>
 </table>
 
-<h3>Figures</h3>
+<p>
+  "BH" = Bhattacharyya overlap
+  $\int\!\sqrt{n_1 n_2}\,dx \in [0, 1]$, with 1 if the two densities
+  are equal. Reaching 0.9999996+ for every pair means the densities
+  are point-wise identical to within numerical noise.
+</p>
+
+<h3>8.3 Figures</h3>
 
 <figure>
-  <img src="fig_step3_energy.png" alt="Ground-state energy bar chart">
+  <img src="fig_step3_energy_N1.png" alt="Ground-state energy bar chart">
   <figcaption>
-    <strong>Figure 1.</strong> Ground-state energy from the three methods. Bars
-    are indistinguishable at this scale, consistent with the $\sim 10^{-5}$
-    cross-agreement in the table above.
+    <strong>Figure 1.</strong> Ground-state energy from the three methods.
+    Bars are indistinguishable at this scale, consistent with the
+    $\sim 10^{-5}$ cross-agreement.
   </figcaption>
 </figure>
 
 <figure>
-  <img src="fig_step3_density.png" alt="Density overlay n(x)">
+  <img src="fig_step3_density_N1.png" alt="Density overlay n(x)">
   <figcaption>
-    <strong>Figure 2.</strong> Position-space single-particle density
-    $n(x) = |\psi(x)|^2$. ECG, FD grid, and sinc-DVR curves lie on top
-    of one another.
+    <strong>Figure 2.</strong> Position-space density
+    $n(x) = |\psi(x)|^{2}$. ECG, FD grid, sinc-DVR lie on top of each other.
   </figcaption>
 </figure>
 
 <figure>
-  <img src="fig_step3_momentum.png" alt="Momentum distribution n(k)">
+  <img src="fig_step3_momentum_N1.png" alt="Momentum distribution n(k)">
   <figcaption>
     <strong>Figure 3.</strong> Momentum probability density
     $n(k) = |\tilde\psi(k)|^{2}$. All three methods now use the same
-    convention; they lie on top of one another at the plot scale. See §5
-    for the background on the previous convention mismatch.
+    convention (see Appendix A); integrates to 1 for each. Cross-method
+    $L^{2} n(k)$: $\approx 5.5\times 10^{-4}$ (ECG↔ref),
+    $4.7\times 10^{-5}$ (grid↔DVR).
   </figcaption>
 </figure>
 
 <figure>
   <img src="fig_step3_wavefunction_N1.png" alt="Wavefunction overlay">
   <figcaption>
-    <strong>Figure 4.</strong> Full complex wavefunction $\psi(x)$:
-    Re, Im, $|\psi|$ panels. Global phase aligned by rotating each $\psi$
-    so that $\langle\psi_{\text{ref}}|\psi\rangle$ is real positive.
+    <strong>Figure 4.</strong> Full complex wavefunction:
+    $\Re\psi$, $\Im\psi$, $|\psi|$ panels, global phase aligned. The
+    ECG $\Im\psi$ is ~$10^{-3}$ (Gaussian chirp not absorbed by TDVP);
+    grid and DVR are exactly real by their real-symmetric eigensolver.
   </figcaption>
 </figure>
 
 <figure>
   <img src="fig_step3_wavefunction_error_N1.png" alt="Pointwise |Δψ|">
   <figcaption>
-    <strong>Figure 5.</strong> Pointwise magnitude of the wavefunction
-    difference between every pair of methods, on a log scale. All three
-    traces stay at or below $\sim 10^{-3}$ across the interval.
+    <strong>Figure 5.</strong> Pointwise $|\Delta\psi|$ between every
+    pair of methods, log scale. All three traces stay $\le\sim 10^{-3}$.
   </figcaption>
 </figure>
 
-<h2>4. Interpretation</h2>
+<h2>9. Interpretation</h2>
 
 <p>
-  The ECG+TDVP stack reproduces the single-particle ground state of $H_{\text{full}}$
-  quantitatively, to about <strong>five significant digits in every
-  observable we checked</strong>:
+  The ECG + TDVP stack reproduces the single-particle ground state of
+  $H_\text{full}$ quantitatively — to <strong>about five significant
+  digits on every observable we checked</strong>:
 </p>
 
 <ul>
   <li>
     <strong>Energy:</strong> ECG ∈ (FD grid, sinc-DVR) to within
-    $5\times 10^{-5}$. The fact that ECG lands
-    between the two reference methods (rather than above both) means the
-    ECG variational error is already <em>smaller</em> than the
-    discretization error of the references — any residual gap is mostly
-    from the grid/DVR side, not from ECG.
+    $5\times 10^{-5}$. ECG landing between the two reference methods
+    (not above both) means the ECG variational error is already
+    <em>smaller</em> than the discretization error of the references.
   </li>
   <li>
-    <strong>Wavefunction fidelity</strong> $|\langle\psi_1|\psi_2\rangle|^2$:
-    every pair of methods agrees to $1 - \sim 5\times 10^{-6}$. In
-    particular ECG↔grid (infidelity $2.8\times 10^{-6}$) is tighter than
-    grid↔DVR (infidelity $4.2\times 10^{-6}$), so ECG is not
-    "farther" from grid than DVR is.
+    <strong>Wavefunction fidelity:</strong> every pair agrees to
+    $1 - \sim 5\times 10^{-6}$. ECG↔grid infidelity
+    ($2.8\times 10^{-6}$) is tighter than grid↔DVR
+    ($4.2\times 10^{-6}$), so ECG is not "farther" from grid than DVR is.
   </li>
   <li>
-    <strong>Position-space density:</strong> Bhattacharyya overlap
-    $\int\!\sqrt{n_1 n_2}\,dx \;=\; 0.99999\,9\ldots$ for every pair,
-    L² difference $\sim 10^{-3}$.
+    <strong>Position density:</strong> Bhattacharyya
+    $\int\!\sqrt{n_1 n_2}\,dx = 0.99999\,9\ldots$ for every pair,
+    $L^{2}$ difference $\sim 10^{-3}$.
+  </li>
+  <li>
+    <strong>Momentum distribution</strong>
+    (after the Appendix A fix): $L^{2}\approx 5\times 10^{-4}$
+    across every pair. ECG is about one order of magnitude looser in
+    momentum than in position — consistent with $K = 5$ capturing the
+    bulk of the state but not every high-$k$ tail.
   </li>
 </ul>
 
 <blockquote>
-  <strong>Conclusion.</strong> For N = 1 the ECG variational ansatz with
-  K = 5 basis functions reproduces both the energy and the complex
-  wavefunction of the ground state of
-  $H = \tfrac12\hat p^2 + \tfrac12\hat x^2 + \cos(2k_L\hat x)$
+  For N = 1 the ECG variational ansatz with K = 5 basis functions
+  reproduces both the energy and the complex wavefunction of the
+  ground state of
+  $H = \tfrac12\hat p^{2} + \tfrac12\hat x^{2} + \cos(2 k_L \hat x)$
   to ~5 significant digits, as cross-validated against two independent
-  reference solvers. The verification passes.
+  reference solvers. <strong>The verification passes.</strong>
 </blockquote>
 
-<h2>5. The reciprocal-space curves — what happened and how it was fixed</h2>
+<h2>10. Appendix A — the momentum convention story</h2>
 
 <p>
-  The first version of this report had the ECG and reference curves in
-  Figure 3 disagreeing dramatically (L² difference ≈ 0.77, ECG peak at
-  1.0 vs reference peak at 0.722, ECG ~2× wider). Inspection of the
-  CSVs showed <code>step1_ecg_nk_N1_K5.csv</code> integrated to 2.55
-  while <code>step2_{grid,dvr}_nk_N1.csv</code> integrated to 1.000 —
-  so the two methods were computing <strong>different physical observables</strong>,
-  not two values of the same observable.
+  The first version of Figure 3 had the ECG $n(k)$ at a very different
+  scale (peak 1.0 vs reference peak 0.722, $L^{2}$ difference 0.77).
+  That wasn't a normalization bug — it was a mis-named function.
+  The code's <code>momentum_distribution</code> in
+  <code>src/observables.cpp</code> propagates the kernel
+  $M_G\,\exp(-k^{2}/(4 K_{aa}))\,e^{+i k\mu_a}$ through the permutation
+  sum, which (working out the Gaussian integrals) is
 </p>
 
-<h3>What each method computes</h3>
+$$
+n_\text{density-FT}(k) \;=\; \int |\psi(x)|^{2}\,e^{+ikx}\,dx
+  \;=\; \int \tilde\psi^{*}(q)\,\tilde\psi(q+k)\,dq ,
+$$
 
 <p>
-  The FD grid and sinc-DVR solvers compute the <strong>momentum
-  probability density</strong>:
-  $$
-  n_\text{ref}(k) \;=\; |\tilde\psi(k)|^{2}, \qquad
-  \tilde\psi(k) \;=\; \frac{1}{\sqrt{2\pi}}\!\int \psi(x)\,e^{-ikx}\,dx.
-  $$
-  This is the probability of finding the particle with momentum $k$.
-  By Parseval's theorem it integrates to 1, and at $k{=}0$ it equals
-  $\tfrac{1}{2\pi}|\!\int\psi\,dx|^{2}$ — which for our ground state
-  evaluates to $0.722$, matching the CSV.
+  i.e. the <em>autocorrelation of $\tilde\psi$</em>, also called the
+  one-body form factor / static structure factor. Its key properties:
+</p>
+
+<ul>
+  <li>$n_\text{density-FT}(0) = \int |\psi|^{2}\,dx = 1$ — the norm;</li>
+  <li>$\int n_\text{density-FT}(k)\,dk = 2\pi\,|\psi(0)|^{2}$, not 1 — verified against CSV value 2.55;</li>
+  <li>For a Gaussian it is $\sqrt 2$ wider in $\sigma$ than $|\tilde\psi|^{2}$.</li>
+</ul>
+
+<p>
+  <strong>Physical comparison:</strong>
+  $|\tilde\psi(k)|^{2}$ is the time-of-flight momentum distribution
+  (the MBDL paper's $n(k)$); $\mathrm{FT}[|\psi|^{2}]$ is the structure
+  factor measured by Bragg scattering. Both are legitimate — but
+  different — observables, and the function's name was misleading.
+  The fix: add a proper
+  <code>ecg_momentum_density_1p</code> helper in the verify layer (§6.2),
+  wire it into Step 1's N = 1 path, and leave a docstring warning on
+  the old function.
+</p>
+
+<table>
+  <thead>
+    <tr><th>L² $n(k)$ pair</th><th>before fix</th><th>after fix</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="label">ECG vs grid</td><td>7.71e-01</td><td><span class="pass">5.46e-04</span></td></tr>
+    <tr><td class="label">ECG vs DVR</td><td>7.71e-01</td><td><span class="pass">5.67e-04</span></td></tr>
+    <tr><td class="label">grid vs DVR</td><td>4.73e-05</td><td>4.73e-05 (unchanged)</td></tr>
+  </tbody>
+</table>
+
+<h2>11. Appendix B — the N = 2 density bug (debugging diary)</h2>
+
+<p>
+  Running with <code>--N 2</code> uncovered a deeper issue — this one in
+  the N ≥ 2 path of <code>ecg_single_particle_density</code>. The
+  initial ECG $n(x)$ for N = 2 had a peak at 0.512 while FD grid / DVR
+  peaked at 0.406; both integrated to 1 exactly.
 </p>
 
 <p>
-  The function <code>src/observables.cpp::momentum_distribution</code>
-  propagates the kernel
-  <code>M_G · exp(−k²/(4 K_aa)) · exp(+ikμ_a)</code> through the
-  permutation sum. Working out the Gaussian integrals analytically, this
-  is equivalent to
-  $$
-  n_\text{ECG}(k) \;=\; \int |\psi(x)|^{2}\,e^{+ikx}\,dx,
-  $$
-  i.e. the <strong>Fourier transform of the position density</strong>
-  (also called the one-body <em>form factor</em> or static structure
-  factor). It integrates to $2\pi\,|\psi(0)|^{2}\approx 2.55$, and at
-  $k{=}0$ it equals $\int|\psi|^{2}dx = 1$ exactly — matching the CSV
-  peak of 1.000.
-</p>
-
-<h3>How the two are related</h3>
-
-<p>
-  They are connected by an <em>autocorrelation</em>, not by a scalar:
-  $$
-  \int|\psi(x)|^{2}e^{+ikx}dx
-  \;=\; \int \tilde\psi^{*}(q)\,\tilde\psi(q+k)\,dq.
-  $$
-  That is, $n_\text{ECG}(k)$ is the autocorrelation of $\tilde\psi$
-  evaluated at shift $k$, while $n_\text{ref}(k)=|\tilde\psi(k)|^2$ is
-  the pointwise squared modulus. Key consequences:
+  The fail-safe cross-check was to compute $\langle x^{2}\rangle$ two
+  independent ways on the <em>same</em> ECG state:
 </p>
 
 <ul>
   <li>
-    $n_\text{ECG}$ is always <strong>broader</strong> than $n_\text{ref}$
-    (autocorrelating a peak gives a wider peak). For a pure Gaussian the
-    widening factor is $\sqrt{2}$ in the standard deviation (= 2 in FWHM).
-    We measure half-max at $|k|=1.25$ (ECG) vs $|k|=0.65$ (ref), a ratio
-    of 1.92 — consistent with the Gaussian prediction once minor
-    broadening from the $\cos$ potential is absorbed.
+    From the harmonic-energy functional:
+    $\langle V_\text{ho}\rangle = 0.875 \;\Rightarrow\;
+     \langle x^{2}\rangle_{1p} = 0.875$ — matches grid ✓.
   </li>
   <li>
-    $n_\text{ECG}$ <strong>loses the phase information</strong> of $\psi$.
-    Inverse-FT of $n_\text{ECG}$ recovers $|\psi|^{2}$ but not $\psi$
-    itself. $n_\text{ref}$, by contrast, depends on $\tilde\psi$ — it
-    carries phase correlations of $\psi$.
-  </li>
-  <li>
-    The two are <strong>not convertible without knowing $\psi$</strong>.
-    One cannot be derived from the other alone.
+    From $\int x^{2}\,n_\text{ECG}(x)\,dx$: $0.544$ — wrong by a factor
+    $0.622$.
   </li>
 </ul>
 
-<h3>Physical meaning</h3>
-
-<table>
-  <thead>
-    <tr><th>Curve</th><th>What it is</th><th>Experimental probe</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td class="label">$n_\text{ref}(k)=|\tilde\psi(k)|^{2}$</td>
-      <td style="text-align:left;">momentum probability density</td>
-      <td style="text-align:left;">time-of-flight imaging of a cold-atom cloud</td>
-    </tr>
-    <tr>
-      <td class="label">$n_\text{ECG}(k)=\mathrm{FT}[|\psi|^{2}]$</td>
-      <td style="text-align:left;">one-body form factor / Fourier transform of density</td>
-      <td style="text-align:left;">Bragg scattering, density-density correlator</td>
-    </tr>
-  </tbody>
-</table>
-
 <p>
-  Both are physically meaningful and both can be read off the same ground
-  state — they just answer different questions. The Guo et al. MBDL
-  paper's "momentum distribution $n(k)$" is the <em>first</em> row: the
-  time-of-flight observable $|\tilde\psi(k)|^{2}$. So for matching the
-  paper's plots in a future Step 4, we need the reference convention,
-  not the current ECG output.
+  So the ground state itself was fine (energy functional agrees with
+  reference to $\sim 10^{-4}$), only the density helper was wrong.
 </p>
 
-<h3>Takeaway</h3>
+<h3>Root cause</h3>
 
-<blockquote>
-  The bug was a misnamed function, not a faulty ground state. The ECG
-  result at the time was self-consistent as an implementation of the
-  form factor, and the ground state itself was (and is) unambiguously
-  correct — as confirmed by the energy, density, and complex-wavefunction
-  cross-checks above.
-</blockquote>
+<p>
+  The ECG overlap in the code is "half-symmetrized": bra
+  $= \sum_i u_i\,\phi_i$ (no permutation sum), ket
+  $= \sum_j u_j \sum_p \phi_j^{p}$ (full permutation sum), so
+  $S = \langle\psi_L|\psi_R\rangle$. That works for scalars (overlap,
+  energy) because the bra's unused permutation factor can be pulled
+  through without changing a particle-label-free integral. But for the
+  density $\delta(x - x_a)$ <em>picks out</em> a specific particle
+  label $a$, so the trick breaks.
+</p>
+
+<p>
+  The correct bosonic-symmetric density is
+  $\langle\psi_R|\,\delta(x - x_a)\,|\psi_R\rangle / \langle\psi_R|\psi_R\rangle$.
+  Pushing one of the ket permutations through $\delta(x-x_a)$ converts
+  it into $\delta(x - x_{q^{-1}(a)})$ for each bra permutation $q$, so
+  summing over $q$ replaces "fix particle $a$" with "sum over all
+  particles":
+</p>
+
+$$
+n_\text{true}(x) \;=\; \frac{1}{N}\sum_{a=0}^{N-1} n_\text{half}(x; a),
+$$
+
+<p>
+  where $n_\text{half}(x; a)$ is what the old helper was computing.
+  For N = 1 this is a no-op, so the N = 1 verification above was
+  untouched by the bug. For N = 2 with $A_{11} \ne A_{22}$ in the
+  basis (which TDVP produces naturally) the single-$a$ result differs
+  from the symmetric average.
+</p>
 
 <h3>Fix applied</h3>
 
 <ol>
   <li>
-    Added <code>ecg_momentum_density_1p(basis, k_points)</code> in
-    <code>src/verify/ecg_wavefunction.{hpp,cpp}</code>. It evaluates
-    $\tilde\psi(k)$ analytically as a sum of Gaussian Fourier transforms
-    of each ECG basis function:
-    $$
-    \tilde\psi(k) = \frac{1}{\sqrt{2\pi}} \sum_i u_i
-      \sqrt{\frac{\pi}{A_i{+}B_i}}\,
-      \exp\!\left[-R_i B_i R_i + \frac{(2 R_i B_i - ik)^{2}}{4(A_i{+}B_i)}\right],
-    $$
-    and returns $|\tilde\psi(k)|^{2}/S$, which integrates to 1.
+    In <code>src/verify/ecg_wavefunction.cpp</code>,
+    <code>ecg_single_particle_density</code> now loops
+    $a = 0, \ldots, N-1$ internally and averages. The
+    <code>particle_index</code> argument is kept for ABI compatibility
+    but ignored.
   </li>
   <li>
-    Wired Step 1 and the Step 3 cross-check to call this helper on the
-    N = 1 path (in <code>step1_imag_time_ecg.cpp</code> and
-    <code>main_verification.cpp</code>). The old
-    <code>momentum_distribution</code> is still used on the N ≥ 2 path
-    for now and will be replaced once the one-body reduced-density-matrix
-    version lands.
+    Docstring updated in <code>ecg_wavefunction.hpp</code>.
   </li>
   <li>
-    Added a docstring warning to
-    <code>src/observables.hpp::momentum_distribution</code> explaining
-    what it really computes so nobody else falls for the name.
+    The N = 2 momentum density (derived from $\phi = \sqrt{n(x)}$ in
+    the non-interacting workflow) tracks this fix automatically.
   </li>
 </ol>
 
-<p>
-  After the fix, all three N = 1 reciprocal-space curves use
-  $n(k) = |\tilde\psi(k)|^{2}$ (probability density, integrates to 1),
-  and Figure 3 now shows the three-way agreement expected from Steps 1–3.
-</p>
+<blockquote>
+  Takeaway: scalar observables (overlap, energy) are permutation-shift
+  invariant and tolerate a one-sided symmetrization; particle-labelled
+  observables (densities, single-particle orbitals) need full
+  symmetrization on both bra and ket. Worth remembering when adding
+  new observables.
+</blockquote>
 
-<h2>6. How to reproduce</h2>
+<h2>12. How to reproduce</h2>
 
 <pre><code>cd /home/gyqyan/zexuan/ecg1d_cpp/build &amp;&amp; make ecg1d_verify &amp;&amp; cd ..
 ./build/ecg1d_verify --N 1 --K 5 --run-step1 --run-step2 --run-step3
+./build/ecg1d_verify --N 2 --K 5 --run-step1 --run-step2 --run-step3
 python scripts/plot_verification.py
 </code></pre>
 
-<p>
-  Output lives under <code>out/verify/</code>:
-</p>
+<p>Outputs under <code>out/verify/</code>:</p>
 
 <ul>
-  <li><code>step1_ecg_{energy,basis,density,nk,psi}_N1_K5.csv</code></li>
-  <li><code>step2_{grid,dvr}_{energy,density,nk,psi}_N1.csv</code></li>
-  <li><code>step3_crosscheck_N1.csv</code></li>
-  <li><code>fig_step3_{energy,density,momentum,wavefunction_N1,wavefunction_error_N1}.png</code></li>
+  <li><code>step1_ecg_{energy,basis,density,nk,psi}_N{N}_K{K}.csv</code> (psi only for N=1)</li>
+  <li><code>step2_{grid,dvr}_{energy,density,nk,psi}_N{N}.csv</code></li>
+  <li><code>step3_crosscheck_N{N}.csv</code></li>
+  <li><code>fig_step3_{energy,density,momentum,wavefunction,wavefunction_error}_N{N}.png</code></li>
 </ul>
 
 </body>

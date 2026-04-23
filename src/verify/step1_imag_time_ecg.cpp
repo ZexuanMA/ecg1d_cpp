@@ -151,18 +151,18 @@ Step1Result step1_imag_time_ecg(int N, int K,
     write_two_column(out_path("step1_ecg_density" + suffix.str()),
                      "x,n_x", x_grid, n_x);
 
-    // N=1: use the true momentum probability density |psi_tilde(k)|^2 / S
-    //   (matches the FD grid / sinc-DVR convention in step 2).
-    // N>=2: fall back to momentum_distribution from observables.cpp; note that
-    //   this function actually returns the Fourier transform of |psi(x)|^2
-    //   (one-body form factor), NOT the momentum probability density. The
-    //   correct N>=2 quantity requires the one-body reduced density matrix
-    //   and is deferred.
+    // Momentum probability density n(k) = |phi_tilde(k)|^2.
+    //   N=1: analytic Gaussian FT of each basis function (ecg_momentum_density_1p).
+    //   N>=2 (non-interacting bosonic ground state): extract the single-particle
+    //     orbital as phi(x) = sqrt(n(x)) and FT it. Valid here because our
+    //     H_full has no inter-particle interaction, so the exact GS is a
+    //     product state with real non-negative orbital. This helper will need
+    //     to be replaced once we add a real interaction term.
     Eigen::VectorXd n_k;
     if (N == 1) {
         n_k = ecg_momentum_density_1p(basis, k_grid);
     } else {
-        n_k = momentum_distribution(basis, perms, k_grid, 0);
+        n_k = momentum_density_from_density(x_grid, n_x, k_grid);
     }
     write_two_column(out_path("step1_ecg_nk" + suffix.str()),
                      "k,n_k", k_grid, n_k);

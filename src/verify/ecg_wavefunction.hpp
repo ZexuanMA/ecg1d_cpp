@@ -8,11 +8,18 @@
 namespace ecg1d {
 namespace verify {
 
-// Single-particle position-space density on a 1D grid for the ECG many-body state.
+// Single-particle position-space density on a 1D grid for the ECG symmetric
+// many-body state. Returns n(x) integrating to 1 (per-particle probability).
+//
 // For N=1: n(x) = |psi(x)|^2 / <psi|psi>.
-// For N=2: marginal of |psi(x_1,x_2)|^2 over x_{1-particle_index}, normalized by S.
-// Works for any N; uses Gaussian marginalization formula with K_eff = 1/(K^{-1})_{aa}.
-// Output integrates to 1 for a bosonic symmetric state (per-particle probability).
+// For N>=2: AVERAGES the particle-a marginals over a = 0..N-1, which is
+// required to get the true bosonic-symmetric density when the basis functions
+// themselves are not symmetric under particle swap (A_ii can differ across
+// i). If a single a were used, the result would be the "half-symmetrized"
+// <psi_L|delta(x-x_a)|psi_R>/<psi_L|psi_R>, which is wrong for ECG bases
+// with off-diagonal or asymmetric A.
+//
+// The `particle_index` parameter is kept for ABI compatibility but ignored.
 Eigen::VectorXd ecg_single_particle_density(
     const std::vector<BasisParams>& basis,
     const PermutationSet& perms,
@@ -41,6 +48,21 @@ Eigen::VectorXcd ecg_wavefunction_1p(
 // Throws runtime_error if called with N != 1.
 Eigen::VectorXd ecg_momentum_density_1p(
     const std::vector<BasisParams>& basis,
+    const Eigen::VectorXd& k_points);
+
+// Single-particle momentum probability density |phi_tilde(k)|^2 for the
+// NON-INTERACTING bosonic ground state, extracted from the single-particle
+// position density n(x). Valid when the exact ground state is a product
+// state with a REAL NON-NEGATIVE single-particle orbital phi(x), which
+// holds for the N=2 trap + kicking problem here (no inter-particle term).
+// In that case phi(x) = sqrt(n(x)), and
+//   |phi_tilde(k)|^2 = | (2 pi)^{-1/2} * integral phi(x) exp(-i k x) dx |^2.
+// Output integrates to 1 on the supplied k-grid.
+// Do NOT use for interacting systems (ground state may have off-diagonal
+// long-range order that makes sqrt(n(x)) not a valid single-particle orbital).
+Eigen::VectorXd momentum_density_from_density(
+    const Eigen::VectorXd& x_points,
+    const Eigen::VectorXd& n_x,
     const Eigen::VectorXd& k_points);
 
 } // namespace verify

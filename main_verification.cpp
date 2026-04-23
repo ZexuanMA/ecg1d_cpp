@@ -133,12 +133,14 @@ int main_inner(int argc, char** argv) {
         step1 = step1_imag_time_ecg(args.N, args.K, x_grid, k_grid);
         PermutationSet perms = PermutationSet::generate(args.N);
         ecg_n_x = ecg_single_particle_density(step1.basis, perms, x_grid, 0);
-        // N=1: true |psi_tilde(k)|^2; N>=2: form factor (pending N>=2 follow-up).
+        // Momentum probability density n(k) = |phi_tilde(k)|^2.
+        //   N=1: analytic FT of each basis function.
+        //   N>=2 non-interacting bosonic GS: phi = sqrt(n(x)), then FT.
         if (args.N == 1) {
             ecg_psi_x = ecg_wavefunction_1p(step1.basis, x_grid);
             ecg_n_k   = ecg_momentum_density_1p(step1.basis, k_grid);
         } else {
-            ecg_n_k   = momentum_distribution(step1.basis, perms, k_grid, 0);
+            ecg_n_k   = momentum_density_from_density(x_grid, ecg_n_x, k_grid);
         }
         have_step1 = true;
     }
