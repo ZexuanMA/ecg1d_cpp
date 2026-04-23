@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Rothe 方法实施方案（ECG 实时演化替代 TDVP）· 2026-04-22</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+       max-width: 960px; margin: 2em auto; padding: 0 1.5em; color: #24292e; line-height: 1.7; }
+h1 { color: #0366d6; border-bottom: 2px solid #0366d6; padding-bottom: 0.3em; }
+h2 { color: #0366d6; margin-top: 2em; }
+h3 { color: #57606a; margin-top: 1.5em; }
+h4 { color: #24292e; }
+code, pre { font-family: Menlo, Consolas, monospace; }
+code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; font-size: 0.92em; }
+pre  { background: #f6f8fa; padding: 1em 1.2em; border-radius: 6px; overflow-x: auto;
+       font-size: 0.9em; line-height: 1.5; border-left: 4px solid #d0d7de; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.95em; }
+th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; vertical-align: top; }
+th { background: #f6f8fa; font-weight: 600; }
+.math { font-style: italic; font-family: "Cambria Math", "Latin Modern Math", Georgia, serif; }
+.math-block { text-align: center; font-size: 1.1em; margin: 1em 0;
+              font-family: "Cambria Math", Georgia, serif; font-style: italic; }
+.box { border: 1px solid #d0d7de; border-left: 4px solid #0366d6; padding: 0.8em 1.2em; margin: 1em 0; background: #f6f8fa; }
+.box.ok   { border-left-color: #1a7f37; background: #dafbe1; }
+.box.warn { border-left-color: #bf8700; background: #fff8c5; }
+.box.bad  { border-left-color: #cf222e; background: #ffebe9; }
+.small { font-size: 0.85em; color: #57606a; }
+.pass { color: #1a7f37; font-weight: 600; }
+.fail { color: #cf222e; font-weight: 600; }
+.todo { color: #bf8700; font-weight: 600; }
+ul.timeline { list-style: none; padding-left: 0; }
+ul.timeline li { padding: 0.8em 1em; margin-bottom: 0.5em; border-left: 3px solid #d0d7de;
+                 background: #f6f8fa; border-radius: 0 4px 4px 0; }
+</style>
+</head>
+<body>
+
+<h1>Rothe 方法实施方案（ECG 实时演化替代 TDVP）</h1>
+<p class="small">生成于 2026-04-22 · 切换动机、数学核心、复用代码、H² 矩阵元、里程碑</p>
+
+<div class="box warn">
+<b>为什么要切：</b> vMCG 风格 TDVP 实时演化在我们过参数化的 K=10 基下固有不稳定（Gram cond 1e10+，任意 rcond/λ 组合都会在某个 t 爆炸）。Richings 2015 Int. Rev. Phys. Chem. review 原话："When the basis set is complete, C becomes zero. The vMCG EOMs become very unstable." 在 Tikhonov 上继续调不是路。<b>Rothe 方法</b>（Schrader-Pedersen-Kvaal, JCP 2025）根本不反 C，而是把每个时间步变成一个非线性最小二乘问题。已被证明可在 2D Hénon-Heiles 上 30 个 Gaussian 跑出定量结果。
+</div>
+
+<h2>1. 数学核心（三步 + VarPro）</h2>
+
+<h3>Step 1 — Crank-Nicolson 传播子</h3>
+
+<p>TDSE <span class="math">i ∂<sub>t</sub>|ψ⟩ = H|ψ⟩</span>（ℏ=1）。CN 传播子（paper 式 5-6）：</p>
+
+<div class="math-block">
+|ψ(t+dt)⟩ = Â<sub>i</sub><sup>−1</sup> Â<sub>i</sub><sup>†</sup> |ψ(t)⟩,&nbsp;&nbsp;
+Â<sub>i</sub> = 1 + i(dt/2) Ĥ(t<sub>i</sub>+dt/2)
+</div>
+
+<p>优点：对厄米 H 严格幺正、无条件稳定（A-stable）、二阶精度。缺点：Â<sup>−1</sup> 是无穷维算子，一般变分基下没法直接算。</p>
+
+<h3>Step 2 — 换成最小化（Rothe's trick）</h3>
+
+<p>Â<sub>i</sub> |ψ(t+dt)⟩ = Â<sub>i</sub><sup>†</sup> |ψ(t)⟩ 等价于：</p>
+
+<div class="math-block">
+|ψ(t+dt)⟩ = arg min<sub>χ</sub> ‖ Â<sub>i</sub> |χ⟩ − Â<sub>i</sub><sup>†</sup> |ψ(t)⟩ ‖²
+</div>
+
+<p>这个残差 <span class="math">r</span> 叫 <b>Rothe error</b>。核心性质（paper 式 17）：</p>
+
+<div class="math-block">
+‖ |ψ(t+dt)⟩ − Â<sub>i</sub><sup>−1</sup> Â<sub>i</sub><sup>†</sup> |ψ(t)⟩ ‖² ≤ r<sub>opt</sub>
+</div>
+
+<p>→ 每步的 Rothe error 是 CN 真实演化误差的<b>上界</b>；累积 Rothe error 是总误差的上界（paper 式 18-19）。<b>这是 TDVP 不具备的可控性</b>——TDVP 只有 O(dt⁴) 抽象承诺，没有可计算的误差估计。</p>
+
+<h3>Step 3 — ansatz & VarPro（Variable Projection）</h3>
+
+<p>变分 ansatz（paper 式 8）：<span class="math">|χ⟩ = Σ<sub>m</sub> c<sub>m</sub> |φ<sub>m</sub>(α)⟩</span>。α 是非线性参数向量（我们的 A, B, R），c 是线性系数（我们的 u）。</p>
+
+<p><b>VarPro 的魔法</b>（Golub-Pereyra 1973，paper 式 12-14）：给定任意 α，最优 c 可以<b>解析求</b>——就是个普通的线性最小二乘：</p>
+
+<div class="math-block">
+c(α) = S(α)<sup>−1</sup> ρ(α),&nbsp;&nbsp;&nbsp;
+S<sub>mn</sub>(α) = ⟨Â φ<sub>m</sub>(α) | Â φ<sub>n</sub>(α)⟩,&nbsp;&nbsp;
+ρ<sub>m</sub>(α) = ⟨Â φ<sub>m</sub>(α) | Â<sup>†</sup> ψ(t)⟩
+</div>
+
+<div class="box ok">
+<b>关键对比：</b> 这里的 <span class="math">S(α)</span> 是<b>普通 overlap-like 矩阵</b>（Gram 矩阵），不是我们那个病态 TDVP 度量 <span class="math">C</span>。S 几乎总是正定且良好条件。Schrader 2025 实践中只在 t=0 附近 2D 情况下才加 λ=1e-8 Tikhonov 到 S（paper 式 51），其余时刻裸反就行。
+</div>
+
+<p>代回，残差只剩 α 的函数（paper 式 11）：</p>
+
+<div class="math-block">
+r(α) = ‖ Σ<sub>m</sub> c<sub>m</sub>(α) Â φ<sub>m</sub>(α) − Â<sup>†</sup> ψ(t) ‖²
+</div>
+
+<p><b>Step 4 — 对 α 做 BFGS 最小化</b>（paper §II.D）：解析梯度 ∇<sub>α</sub> r(α)，BFGS 迭代，几十次收敛。初值用前两步外推 <span class="math">α<sub>init</sub> = α<sub>i</sub> + δ(α<sub>i</sub> − α<sub>i−1</sub>)</span>，δ 由线搜索选。</p>
+
+<h2>2. TDVP vs Rothe 对照表</h2>
+
+<table>
+<tr><th>项</th><th>TDVP（我们现在）</th><th>Rothe</th></tr>
+<tr><td>每步做什么</td>
+    <td>解 <span class="math">C·ż = −i g</span>（C 病态 → SVD 伪逆 + rcond + Tikhonov）</td>
+    <td>对 α 做 BFGS 最小化 r(α)（每步 ~几十次 iter）</td></tr>
+<tr><td>线性系数 u</td>
+    <td>和 α 一起放进 TDVP（多贡献 gauge 零方向）</td>
+    <td>每步由 c(α) = S⁻¹ρ 解析算</td></tr>
+<tr><td>需反的矩阵</td>
+    <td>TDVP 度量 C（P⊥ 投影，有 gauge 零本征值）</td>
+    <td>overlap 类矩阵 S（正定）</td></tr>
+<tr><td>稳定性</td>
+    <td>条件性（CFL 依赖 dt 和 cond(C)）</td>
+    <td>CN 无条件稳定（A-stable）</td></tr>
+<tr><td>误差估计</td>
+    <td>没有（RK4 的 O(dt⁴) 纯抽象）</td>
+    <td>累积 Rothe error 给显式上界</td></tr>
+<tr><td>基数自适应</td>
+    <td>无</td>
+    <td>r<sub>opt</sub> 超阈值 → 自动加 Gaussian；c<sub>i</sub>/|c|<sub>max</sub> &lt; 1e-6 → 自动删</td></tr>
+<tr><td>幺正性</td>
+    <td>连续 TDVP 严格守 norm，离散 RK4+rcond 破坏</td>
+    <td>CN 幺正，离散 Rothe 近似；可加 Lagrange 约束精确守 norm（paper 式 35，SLSQP）</td></tr>
+</table>
+
+<h2>3. 与 Task D（Route 1 target fitting）的亲缘关系</h2>
+
+<div class="box ok">
+<b>核心观察：Rothe 方法 = Task D 内嵌在外层时间循环。</b>
+</div>
+
+<p>Task D 在做的事：给定 <span class="math">|target⟩</span>，找 ECG 基 {α, c} 使得 <span class="math">‖ |target⟩ − |χ⟩ ‖²</span> 最小（严格说用的是 1−fidelity，但几何上等价）。</p>
+
+<p>Rothe 做的事：给定 <span class="math">|ψ(t)⟩</span>，找下一步的 ECG 基 {α', c'} 使得 <span class="math">‖ Â|χ⟩ − Â<sup>†</sup>|ψ(t)⟩ ‖²</span> 最小。</p>
+
+<p>数学结构完全一致，只是：</p>
+
+<table>
+<tr><th>组件</th><th>Task D</th><th>Rothe</th></tr>
+<tr><td>target</td>
+    <td>固定 |target⟩（Jacobi-Anger 展开的 kick 后态）</td>
+    <td>|ψ̃<sub>t</sub>⟩ = Â<sup>†</sup>|ψ(t)⟩ （每步更新）</td></tr>
+<tr><td>算子作用在 trial</td>
+    <td>无（直接比 |χ⟩ 和 |target⟩）</td>
+    <td>Â = 1 + i(dt/2)H 作用在 |χ⟩</td></tr>
+<tr><td>VarPro</td>
+    <td><code>solve_optimal_u</code>（solve <span class="math">S<sub>trial,trial</sub> u = ρ<sub>target</sub></span>）</td>
+    <td>解 <span class="math">S<sub>Âtrial,Âtrial</sub> c = ρ<sub>Â†ψ</sub></span></td></tr>
+<tr><td>非线性参数更新</td>
+    <td><code>target_fitting_evolution</code>（一阶梯度 + 线搜索）</td>
+    <td>BFGS + 解析梯度 + 前两步外推初值</td></tr>
+</table>
+
+<p><b>工程含义</b>：我们不是从零写一个实时演化，而是在 task D 基础上加 Â 算子作用和外层时间循环。</p>
+
+<h2>4. 新需要的矩阵元：<span class="math">⟨Â φ<sub>m</sub> | Â φ<sub>n</sub>⟩</span> 和 <span class="math">⟨Â φ<sub>m</sub> | Â<sup>†</sup> ψ⟩</span></h2>
+
+<p>展开 Â = 1 + i(dt/2)Ĥ，Â<sup>†</sup> = 1 − i(dt/2)Ĥ（H 厄米）：</p>
+
+<div class="math-block">
+⟨Â φ<sub>m</sub> | Â φ<sub>n</sub>⟩ = ⟨φ<sub>m</sub>|φ<sub>n</sub>⟩ + (dt/2)² ⟨φ<sub>m</sub>|Ĥ²|φ<sub>n</sub>⟩
+&nbsp;&nbsp; + i(dt/2) ( ⟨φ<sub>m</sub>|Ĥ|φ<sub>n</sub>⟩ − ⟨Ĥφ<sub>m</sub>|φ<sub>n</sub>⟩ )
+</div>
+
+<p>最后两项等于 2i(dt/2)·Im⟨φ<sub>m</sub>|Ĥ|φ<sub>n</sub>⟩（H 厄米时）。所以实际要算：</p>
+
+<ol>
+<li><b>Overlap</b> <span class="math">S<sub>mn</sub> = ⟨φ<sub>m</sub>|φ<sub>n</sub>⟩</span> — <span class="pass">已有</span>（<code>overlap()</code>）</li>
+<li><b>H 矩阵元</b> <span class="math">H<sub>mn</sub> = ⟨φ<sub>m</sub>|Ĥ|φ<sub>n</sub>⟩</span> — <span class="pass">已有</span>（<code>build_HS</code>，各 Hamiltonian term 独立写）</li>
+<li><b>H² 矩阵元</b> <span class="math">(H²)<sub>mn</sub> = ⟨φ<sub>m</sub>|Ĥ²|φ<sub>n</sub>⟩</span> — <span class="fail">要新写</span></li>
+</ol>
+
+<div class="box warn">
+<b>H² 是主要工作量。</b> 对我们 H = T + V<sub>ho</sub>（+ 后续 V<sub>δ</sub>, V<sub>kick</sub>）：
+<br>H² = T² + TV + VT + V²
+<br>其中每个都是 Gaussian 上的多项式期望值，用 Isserlis 定理（Wick's probability theorem）解析算。
+</div>
+
+<h3>4.1 H² 矩阵元的结构</h3>
+
+<p>单粒子 1D（N=1）情形，H = p²/2m + (1/2)mω²x²。用 ℏ=m=ω=1：</p>
+
+<table>
+<tr><th>项</th><th>算子</th><th>作用在 Gaussian 上</th></tr>
+<tr><td>T</td><td>−(1/2)∂²<sub>x</sub></td><td>乘出 x² 多项式 × Gaussian（已有实现）</td></tr>
+<tr><td>V</td><td>(1/2)x²</td><td>直接乘 x²</td></tr>
+<tr><td>T²</td><td>(1/4)∂⁴<sub>x</sub></td><td>乘出 x⁰, x², x⁴ 多项式 × Gaussian</td></tr>
+<tr><td>V²</td><td>(1/4)x⁴</td><td>直接乘 x⁴</td></tr>
+<tr><td>TV+VT</td><td>−(1/4)(∂²x² + x²∂²)</td><td>乘出 x⁰, x² 多项式 × Gaussian（应用链式法则）</td></tr>
+</table>
+
+<p>核心积分（paper 式 20-26 的 Isserlis 定理版本）：对两个 Gaussian <span class="math">φ<sub>m</sub>(x) = e<sup>−a<sub>m</sub>x² + 2b<sub>m</sub>x + c<sub>m</sub></sup></span>，<span class="math">φ<sub>n</sub></span> 类似：</p>
+
+<div class="math-block">
+⟨φ<sub>m</sub>|x<sup>k</sup>|φ<sub>n</sub>⟩ = ⟨φ<sub>m</sub>|φ<sub>n</sub>⟩ × M<sub>k</sub>(a<sub>m</sub>+a<sub>n</sub>, b<sub>m</sub>+b<sub>n</sub>)
+</div>
+
+<p>其中 <span class="math">M<sub>k</sub></span> 是关于 k 阶位置矩的封闭公式：<span class="math">⟨x⟩ = b/a</span>, <span class="math">⟨x²⟩ = 1/(2a) + (b/a)²</span>, <span class="math">⟨x⁴⟩ = 3/(4a²) + 3b²/(a³) + (b/a)⁴</span> 等。所有 H² 项都是这些基础矩的加权和。</p>
+
+<div class="box ok">
+<b>好消息：</b> 我们已有的 <code>calculate_Hamiltonian_kinetic</code> 等函数里<b>已经用过类似的 4 阶矩表达式</b>（T 里有 ∂²ψ → 二阶位置矩 × Gaussian）。新写 T²、V²、TV+VT 是沿着同样的模式推一层。预计 N=1 单粒子约 100-200 行 C++。
+</div>
+
+<h3>4.2 多粒子 (N≥2) 的扩展路径</h3>
+
+<p>N 粒子的 H² 需要对所有置换求和（像现有 <code>build_HS</code> 那样循环 PermutationSet）。H² 展开后变成：<br>
+(T<sub>i</sub> + V<sub>i,j</sub>)(T<sub>k</sub> + V<sub>k,l</sub>) = T<sub>i</sub>T<sub>k</sub> + T<sub>i</sub>V<sub>k,l</sub> + V<sub>i,j</sub>T<sub>k</sub> + V<sub>i,j</sub>V<sub>k,l</sub></p>
+
+<p>这是多项式算子作用，Gaussian 上仍封闭。paper 给出 3D/4D Hénon-Heiles 的全套公式（paper §III.A 式 43 附近）。数量级 O(N²) 复杂度，与现有 H 矩阵元匹配。</p>
+
+<h2>5. 复用现有代码清单</h2>
+
+<table>
+<tr><th>现有文件 / 函数</th><th>Rothe 里的角色</th><th>复用度</th></tr>
+<tr><td><code>basis_params.hpp</code>, <code>BasisParams</code></td><td>ECG 非线性参数容器（就是 α）</td><td><span class="pass">100%</span></td></tr>
+<tr><td><code>svm.hpp::build_HS</code></td><td>算 S, H 矩阵；用在 VarPro 里</td><td><span class="pass">100%</span></td></tr>
+<tr><td><code>hamiltonian.hpp</code>（kinetic / harmonic / delta / kicking）</td><td>H 矩阵元</td><td><span class="pass">100%</span></td></tr>
+<tr><td><code>derivatives.hpp</code>, <code>observable_derivatives.hpp</code></td><td>Rothe 残差对 α 的梯度（BFGS 需要）</td><td><span class="pass">~80%</span>（已有 ∂<sub>α</sub>S, ∂<sub>α</sub>H；要新加 ∂<sub>α</sub>H²）</td></tr>
+<tr><td><code>target_fitting.hpp::solve_optimal_u</code></td><td>VarPro 的雏形（target=ψ(t) 无 Â 算子）；Rothe 版要把 Â 加进来</td><td><span class="pass">~70%</span></td></tr>
+<tr><td><code>target_fitting.hpp::target_fitting_evolution</code></td><td>Rothe 里的 α 优化循环的骨架；换成 BFGS + Rothe 残差</td><td><span class="pass">~50%</span></td></tr>
+<tr><td><code>pair_cache.hpp</code>, <code>permutation.hpp</code></td><td>矩阵元计算的基础设施</td><td><span class="pass">100%</span></td></tr>
+<tr><td><code>realtime_tdvp.hpp/cpp</code></td><td>保留，虚时 TDVP 仍有用（基态优化）；实时 TDVP 路径<b>搁置</b></td><td>—</td></tr>
+</table>
+
+<h2>6. 需要新写的模块</h2>
+
+<ol>
+<li><b><code>src/h_squared.hpp / h_squared.cpp</code></b>（约 200-400 行）
+  <ul>
+  <li><code>calculate_H2_kinetic_kinetic(a, b, basis)</code> = ⟨φ<sub>a</sub>|T²|φ<sub>b</sub>⟩</li>
+  <li><code>calculate_H2_harmonic_harmonic(a, b, basis)</code> = ⟨φ<sub>a</sub>|V<sub>ho</sub>²|φ<sub>b</sub>⟩</li>
+  <li><code>calculate_H2_kinetic_harmonic(a, b, basis)</code> = ⟨φ<sub>a</sub>|TV+VT|φ<sub>b</sub>⟩</li>
+  <li><code>build_H2(basis, perms, terms)</code> — 组装 K×K 矩阵，类比 <code>build_HS</code></li>
+  <li>后期扩：delta, kicking 的 H² 分量</li>
+  </ul>
+</li>
+<li><b><code>src/rothe_operator.hpp / rothe_operator.cpp</code></b>（约 100-200 行）
+  <ul>
+  <li><code>build_rothe_matrices(basis_trial, basis_psi, terms, dt)</code> — 返回 <br>
+      S̃ = ⟨Âφ<sub>trial</sub>|Âφ<sub>trial</sub>⟩, ρ̃ = ⟨Âφ<sub>trial</sub>|Â<sup>†</sup>ψ⟩</li>
+  <li>内部用 S + (dt/2)²·H² + i(dt/2)·(H - Hᵀ) 的组合</li>
+  </ul>
+</li>
+<li><b><code>src/rothe_step.hpp / rothe_step.cpp</code></b>（约 300 行）
+  <ul>
+  <li><code>rothe_solve_optimal_c(basis_trial, basis_psi, dt)</code> — VarPro：解线性最小二乘</li>
+  <li><code>compute_rothe_error(basis_trial, basis_psi, dt)</code> — 残差 r(α)</li>
+  <li><code>compute_rothe_gradient(basis_trial, basis_psi, dt)</code> — ∇<sub>α</sub>r</li>
+  <li><code>rothe_step(basis_psi, dt, terms)</code> — 外层：BFGS 优化 α，返回 basis_new + Rothe error</li>
+  </ul>
+</li>
+<li><b><code>main_simple.cpp</code> task G</b>（约 50 行）
+  <ul>
+  <li>CLI flag <code>--task-rothe</code>（避开 task E 那些 flag）</li>
+  <li>循环调 <code>rothe_step</code>，记录 trace（E, norm, fidelity, cumulative Rothe error）</li>
+  </ul>
+</li>
+</ol>
+
+<h3>6.1 BFGS 实现选择</h3>
+
+<ul>
+<li><b>A. 写一个简化的 LBFGS（推荐）</b>：50 行 C++，给梯度即可。Rothe 论文 BFGS 一般 20-60 iter 收敛，不需要特别快的实现。</li>
+<li><b>B. 调用 CMake 时加 <code>ceres-solver</code> 依赖</b>：工业级，但构建更重。</li>
+<li><b>C. 暴力 Gauss-Newton / Levenberg-Marquardt</b>：因为 Rothe 残差是最小二乘形式 r = ||Jα − b||²，LM 往往比 BFGS 快。Eigen 自带 <code>Eigen::LevenbergMarquardt</code>。</li>
+</ul>
+
+<p><b>初版选 A（自写简化 LBFGS）</b>，跑通后再考虑替换。</p>
+
+<h2>7. 里程碑</h2>
+
+<ul class="timeline">
+
+<li><strong>M1：H² 矩阵元 & 单元测试</strong>（~1 天）
+<br>实现 <code>build_H2</code>（单粒子 H = T + V<sub>ho</sub>）。测试：用 Gaussian 基态 φ<sub>0</sub> 的精确本征值 E=0.5 → ⟨φ<sub>0</sub>|H²|φ<sub>0</sub>⟩ = E² = 0.25。验证数值精度 1e-10 级。
+</li>
+
+<li><strong>M2：Rothe step for K=1 谐振子基态</strong>（~0.5 天）
+<br>起点：K=1 ECG 基态（A=0.5, B=0, R=0, u 归一化）。
+<br>预期：α 优化解就是 α 本身不变（基态是 H 的本征态，Â<sup>−1</sup>Â<sup>†</sup> 作用只乘 e<sup>−iE·dt</sup> 相位），c 变为 e<sup>−iE·dt</sup>·u。
+<br>验证：1 步 Rothe error ~1e-15 级；T=2π 跑 628 步，<span class="math">|F(T)|² = 1</span> 严格 1.0（K=1 无 gauge 方向，没有任何病态）。
+</li>
+
+<li><strong>M3：Rothe step for K=2-3 踢后态</strong>（~1 天）
+<br>拿 task D 的 K=1 基+1 动量副本 → K=2 的踢后态作起点。跑 T=2π 真实时演化。
+<br>预期：E 严格守恒（CN 是幺正的），累积 Rothe error &lt; 1e-3。BFGS 每步 ~20-40 iter。
+<br>验证：|F(T)|² 接近 1（谐振子 recurrence 定理）。
+</li>
+
+<li><strong>M4：K 大一点 + 自适应加/删基</strong>（~1 天）
+<br>按 paper 式 50 删 |c<sub>i</sub>|/max|c| &lt; 1e-6 的基；按残差阈值加新 Gaussian。达到任意 K 的稳定演化。
+</li>
+
+<li><strong>M5：delta + kicking 的 H² 扩展</strong>（~2 天）
+<br>多粒子 H = T + V<sub>ho</sub> + V<sub>δ</sub> + V<sub>kick</sub> 的 H² 矩阵元。这是做多体 MBDL 量化模拟的最后一块。
+</li>
+
+</ul>
+
+<h2>8. 风险与降级方案</h2>
+
+<table>
+<tr><th>风险</th><th>概率</th><th>应对</th></tr>
+<tr><td>H² 推导过程中出现符号错</td><td>高</td><td>用 Mathematica/SymPy 对比验证 K=1, 2 的数值；有限差分校验梯度</td></tr>
+<tr><td>BFGS 不收敛 / 局部极小</td><td>中</td><td>用 LM 代替；初值用前两步外推（paper 式 27）；放宽收敛阈值</td></tr>
+<tr><td>S 矩阵病态（基底漂近似共线）</td><td>低</td><td>加 λI with λ=1e-8（paper 式 51）；删冗余基</td></tr>
+<tr><td>H² 多粒子矩阵元复杂度过高</td><td>中</td><td>初版只到 N=2；多粒子按需再做</td></tr>
+</table>
+
+<h2>9. 在这之前的中间步：task F（1-基态 TDVP 自检）</h2>
+
+<div class="box ok">
+<b>目的：</b> 在切 Rothe 之前，先用 <b>K=1 的 HO 基态做一次 TDVP 实时演化自检</b>。如果这个最简情形都不稳，说明问题不是 gauge/过参数化，而是我们 TDVP 装配的 bug；Rothe 要建立在正确的矩阵元上，提前排除。
+</div>
+
+<p>详见 main_simple.cpp 的 <code>task6_realtime_ground_state</code>。</p>
+
+<h2>10. 参考资料</h2>
+
+<table>
+<tr><td><a href="https://pubs.aip.org/aip/jcp/article-abstract/162/2/024109/3329590/">Schrader, Pedersen, Kvaal, JCP 162, 024109 (2025)</a></td>
+    <td>Rothe 方法应用到 ECG wavepacket 的主论文</td></tr>
+<tr><td><a href="https://arxiv.org/abs/2411.05459">arXiv:2411.05459</a></td>
+    <td>同上的 arXiv 版（免费 PDF）</td></tr>
+<tr><td><a href="https://doi.org/10.5281/zenodo.14051076">Zenodo 代码仓库</a></td>
+    <td>Schrader 团队公开代码 + 数据（Python/NumPy）</td></tr>
+<tr><td>本地 <code>reference/Multidimensional quantum dynamics with explicitly correlated Gaussian wave packets using Rothe's method.pdf</code></td>
+    <td>已下载 PDF</td></tr>
+<tr><td><a href="https://www2.chem.ucl.ac.uk/worthgrp/publications/ric15_269.pdf">Richings et al. Int. Rev. Phys. Chem. 34:269 (2015)</a></td>
+    <td>vMCG 综述；诊断我们病根的权威来源</td></tr>
+<tr><td>本地 <code>html/task5_realtime_status.html</code></td>
+    <td>task E（TDVP 实时）尝试历史 + 诊断数据</td></tr>
+</table>
+
+<p class="small" style="margin-top: 3em; border-top: 1px solid #d0d7de; padding-top: 1em;">
+ ECG1D C++ 项目 · Rothe 实施方案 · 2026-04-22
+</p>
+
+</body>
+</html>

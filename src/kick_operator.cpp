@@ -230,7 +230,7 @@ void free_evolve_fixed_basis(std::vector<BasisParams>& basis,
 std::vector<BasisParams> augment_basis_with_momentum(
     const std::vector<BasisParams>& basis,
     double k_L, int n_mom, double b_val,
-    double max_cond) {
+    double max_cond, int max_K) {
 
     int N = basis[0].N();
     std::vector<BasisParams> augmented = basis;
@@ -254,17 +254,45 @@ std::vector<BasisParams> augment_basis_with_momentum(
 
     std::vector<BasisParams> candidates;
     if (N == 1) {
-        for (double w : widths) {
-            for (int n = -n_mom; n <= n_mom; n++) {
-                if (n == 0) continue;
-                MatrixXcd A_new = MatrixXcd::Zero(1, 1);
-                MatrixXcd B_new = MatrixXcd::Zero(1, 1);
-                VectorXcd R_new = VectorXcd::Zero(1);
-                A_new(0, 0) = Cd(w, 0.0);
-                B_new(0, 0) = Cd(b_val, 0.0);
-                R_new(0) = Cd(0.0, static_cast<double>(n) * k_L / b_val);
-                candidates.push_back(BasisParams::from_arrays(
-                    Cd(0.0, 0.0), A_new, B_new, R_new, 1000 * n));
+        // Stratified ordering v2: |n| ascending → width ascending, with the
+        // sign of n ALTERNATING across consecutive candidates.
+        // Rationale: two failure modes to avoid:
+        //   (A) All same width (old width-major order) → identical (A,B) across
+        //       basis; TDVP metric C has exact rank deficiency on A,B subspace.
+        //   (B) ±n pair at SAME width (naive |n|-major order) → x→-x reflection
+        //       gauge in parameter space; C has marginal sv not quite zero,
+        //       rcond can't truncate, pseudoinverse amplifies garbage.
+        // By emitting alternating signs across widths, consecutive greedy picks
+        // differ in BOTH width and momentum sign → no reflection pairs, no
+        // width repeats until the pool is exhausted.
+        //
+        // Pass 1: (w0,-1), (w1,+1), (w2,-1), (w3,+1), ... then (w0,-2), (w1,+2), ...
+        // Pass 2 (if pool not saturated): opposite signs, same sequence.
+        auto emit_candidate = [&](double w, int n) {
+            MatrixXcd A_new = MatrixXcd::Zero(1, 1);
+            MatrixXcd B_new = MatrixXcd::Zero(1, 1);
+            VectorXcd R_new = VectorXcd::Zero(1);
+            A_new(0, 0) = Cd(w, 0.0);
+            B_new(0, 0) = Cd(b_val, 0.0);
+            R_new(0) = Cd(0.0, static_cast<double>(n) * k_L / b_val);
+            candidates.push_back(BasisParams::from_arrays(
+                Cd(0.0, 0.0), A_new, B_new, R_new, 1000 * n));
+        };
+        // Pass 1: start with sign=-1, alternate.
+        for (int abs_n = 1; abs_n <= n_mom; abs_n++) {
+            int sign = -1;
+            for (double w : widths) {
+                emit_candidate(w, sign * abs_n);
+                sign = -sign;
+            }
+        }
+        // Pass 2: start with opposite sign, to capture all (w, n) combinations
+        // not covered in pass 1.
+        for (int abs_n = 1; abs_n <= n_mom; abs_n++) {
+            int sign = +1;
+            for (double w : widths) {
+                emit_candidate(w, sign * abs_n);
+                sign = -sign;
             }
         }
     } else {
@@ -306,6 +334,9 @@ std::vector<BasisParams> augment_basis_with_momentum(
 
     int added = 0;
     for (auto& cand : candidates) {
+        // Early exit if we've hit the cap (basis.size() + added reached max_K)
+        if (max_K > 0 && static_cast<int>(augmented.size()) >= max_K) break;
+
         std::vector<BasisParams> trial = augmented;
         trial.push_back(cand);
 

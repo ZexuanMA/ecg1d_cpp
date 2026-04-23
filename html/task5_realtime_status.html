@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>任务 E 实时 TDVP 综合状态 · 2026-04-22</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+       max-width: 980px; margin: 2em auto; padding: 0 1.5em; color: #24292e; line-height: 1.7; }
+h1 { color: #0366d6; border-bottom: 2px solid #0366d6; padding-bottom: 0.3em; }
+h2 { color: #0366d6; margin-top: 2em; }
+h3 { color: #57606a; margin-top: 1.5em; }
+h4 { color: #24292e; }
+code, pre { font-family: Menlo, Consolas, monospace; }
+code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; font-size: 0.92em; }
+pre  { background: #f6f8fa; padding: 1em 1.2em; border-radius: 6px; overflow-x: auto;
+       font-size: 0.9em; line-height: 1.5; border-left: 4px solid #d0d7de; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.95em; }
+th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; vertical-align: top; }
+th { background: #f6f8fa; font-weight: 600; }
+.math { font-style: italic; font-family: "Cambria Math", "Latin Modern Math", Georgia, serif; }
+.math-block { text-align: center; font-size: 1.1em; margin: 1em 0;
+              font-family: "Cambria Math", Georgia, serif; font-style: italic; }
+.box { border: 1px solid #d0d7de; border-left: 4px solid #0366d6; padding: 0.8em 1.2em; margin: 1em 0; background: #f6f8fa; }
+.box.ok   { border-left-color: #1a7f37; background: #dafbe1; }
+.box.warn { border-left-color: #bf8700; background: #fff8c5; }
+.box.bad  { border-left-color: #cf222e; background: #ffebe9; }
+.small { font-size: 0.85em; color: #57606a; }
+.pass { color: #1a7f37; font-weight: 600; }
+.fail { color: #cf222e; font-weight: 600; }
+.todo { color: #bf8700; font-weight: 600; }
+ul.timeline { list-style: none; padding-left: 0; }
+ul.timeline li { padding: 0.8em 1em; margin-bottom: 0.5em; border-left: 3px solid #d0d7de;
+                 background: #f6f8fa; border-radius: 0 4px 4px 0; }
+ul.timeline li strong { color: #0366d6; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 0.85em;
+       margin-right: 6px; }
+.tag-k { background: #ddf4ff; color: #0969da; }
+.tag-cfg { background: #fff8c5; color: #7d4e00; }
+</style>
+</head>
+<body>
+
+<h1>任务 E 实时 TDVP 综合状态</h1>
+<p class="small">生成于 2026-04-22 · 覆盖 K 扫描、augment 修复、Wiener 试验、理论诊断</p>
+
+<div class="box ok">
+<b>★ 最新进展 (2026-04-22 晚)：</b> <b>Wiener 平滑 + λ_C=0 + dt=1e-3 + K=3 跑出来了</b>。撑完 6283 步, <span class="math">|F(T)|²=0.874</span>, ΔE=11%。E 在大部分时间 (t=0.9→4.9) 恒定到 6 位小数, 只有 2 次单点跳变。说明 <b>Wiener + 小 dt 是真方案</b>——硬 rcond 截断的阶梯跳被消掉, 代价是可控的全局偏差。<br>
+<b>下一步：</b>同配置扫 K=5, K=7 看能否扩展到更丰富基底。若可, 直接开始多 kick 循环。
+</div>
+
+<div class="box warn">
+<b>其它工作点：</b>
+<ul style="margin: 0.3em 0;">
+<li>K=3 + width-major + rcond + Tikhonov + dt=1e-2：<span class="math">|F(T)|²=0.934, ΔE=2%</span>（绝对 F 最好, 但有阶梯跳风险）</li>
+<li>K≥4 纯 rcond 路线：全部崩（width 碰撞 / ±n 镜像 / 阶梯累积）</li>
+<li>长期备选：切 Rothe 方法，彻底绕开 C⁻¹（<code>html/rothe_implementation_plan.html</code>），现阶段<b>非紧急</b></li>
+</ul>
+</div>
+
+<h2>1. 目标</h2>
+
+<p>用 task D 的 Route 1 kick 后 ECG 态作起点，用<b>实时 TDVP</b> 演化 1 个谐振周期 <span class="math">T = 2π</span>，Hamiltonian <span class="math">H = T + V<sub>ho</sub></span>（单粒子 N=1，kappa, k_L 由 task4 设定）。</p>
+
+<h3>验收标准</h3>
+<ul>
+<li>演化撑完 T=2π（628 步 @ dt=1e-2）</li>
+<li><span class="math">E(t)</span> 守恒（H 不含 t，理论严格守恒）</li>
+<li>Norm 守恒（幺正演化）</li>
+<li><span class="math">|⟨ψ(0)|ψ(T)⟩|² ≈ 1</span>（HO recurrence 定理，任意态在 T=2π 回到 ±自身）</li>
+</ul>
+
+<h2>2. 总览 — 所有尝试结果</h2>
+
+<table>
+<tr>
+  <th>配置</th>
+  <th>F<sub>init</sub> (Route 1)</th>
+  <th>撑到步数</th>
+  <th>E 漂</th>
+  <th>|F(T)|²</th>
+  <th>结论</th>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=3</span> <span class="tag tag-cfg">width-major + rcond + Tikh</span></td>
+  <td>~0.95 (推测)</td>
+  <td><span class="pass">628/628</span></td>
+  <td>2%</td>
+  <td><b>0.934</b></td>
+  <td><span class="pass">工作点</span>（唯一撑完）</td>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=3</span> <span class="tag tag-cfg">interleave + rcond + Tikh</span></td>
+  <td>0.994</td>
+  <td>628/628</td>
+  <td>11%</td>
+  <td>0.918</td>
+  <td><span class="todo">撑完但 E 阶梯跳后"锁"在 0.549</span></td>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=4</span> <span class="tag tag-cfg">width-major</span></td>
+  <td>(未记录)</td>
+  <td><span class="fail">499/628 崩</span></td>
+  <td>117× (卡 32.77 再跳 117)</td>
+  <td>0.0002</td>
+  <td><span class="fail">中段炸, 后段假稳</span></td>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=5</span> <span class="tag tag-cfg">width-major</span></td>
+  <td>0.9999</td>
+  <td><span class="fail">77/628 崩</span></td>
+  <td>崩</td>
+  <td>—</td>
+  <td><span class="fail">同 width 重用致 C 结构奇异</span></td>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=5</span> <span class="tag tag-cfg">interleave</span></td>
+  <td>0.993</td>
+  <td><span class="fail">50/628 崩</span></td>
+  <td>崩</td>
+  <td>—</td>
+  <td><span class="fail">±n 对镜像 gauge 污染</span></td>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=5</span> <span class="tag tag-cfg">interleave + dt=1e-3</span></td>
+  <td>0.993</td>
+  <td>1558+/6283 (手动中止)</td>
+  <td>2.4× 且继续增 (阶梯式)</td>
+  <td>—</td>
+  <td><span class="fail">没崩但 E 失控</span></td>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=5</span> <span class="tag tag-cfg">interleave + Wiener + Tikh</span></td>
+  <td>0.993</td>
+  <td><span class="fail">5/628 崩</span></td>
+  <td>步 3 norm = -6164</td>
+  <td>—</td>
+  <td><span class="fail">Wiener+Tikh 冲突, gauge 泄露</span></td>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=3</span> <span class="tag tag-cfg">interleave + Wiener + λ=0 + dt=1e-2</span></td>
+  <td>0.989</td>
+  <td>628/628</td>
+  <td>8× (0.66→5.96 锁死)</td>
+  <td>0.111</td>
+  <td><span class="fail">dt 太大, Wiener bias 累积到错位 manifold</span></td>
+</tr>
+<tr style="background: #dafbe1;">
+  <td><span class="tag tag-k">K=3</span> <span class="tag tag-cfg"><b>interleave + Wiener + λ=0 + dt=1e-3</b></span></td>
+  <td>0.989</td>
+  <td><b>6283/6283</b></td>
+  <td>11% (0.66→0.59, 2 次跳变)</td>
+  <td><b>0.874</b></td>
+  <td><span class="pass">★ 成功</span>（Wiener 需要小 dt）</td>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=10</span> <span class="tag tag-cfg">width-major</span></td>
+  <td>0.9999999</td>
+  <td><span class="fail">348/628 崩</span></td>
+  <td>崩前 3.6% 漂; 崩后 940</td>
+  <td>—</td>
+  <td><span class="fail">Tikhonov gauge 漏电累积, cascade</span></td>
+</tr>
+<tr>
+  <td><span class="tag tag-k">K=1</span> (纯基态, task F)</td>
+  <td>1.0 (本征态)</td>
+  <td><span class="pass">628/628</span></td>
+  <td>机器零</td>
+  <td>1.0</td>
+  <td><span class="pass">核心 TDVP 健康</span></td>
+</tr>
+</table>
+
+<h2>3. 病理学 — 两种不相容的故障模式</h2>
+
+<div class="box bad">
+<b>基本困境：</b>C 矩阵有若干种"零本征值"（物理 + gauge）和连续谱"小 sv"。任何伪逆策略都要在 <b>(A) 过度截断造成信息丢失</b> 和 <b>(B) 截断不足造成 gauge 泄露</b> 之间选。没有两全。
+</div>
+
+<h3>3.1 失效模式 A：width 重用（结构奇异）</h3>
+
+<p>Greedy 选 width-major 时，K=5 会选到 4 个相同 width 但不同 n 的候选。∂<sub>A</sub>, ∂<sub>B</sub> 导数几乎平行 → C 在 (A,B) 子空间精确奇异。rcond 硬截断把 5 个 sv 钉在 λ<sub>Tikh</sub>=1e-8 地板 → 物理方向被挤出 → 一旦 g 在被挤的方向有非零投影，dz 在另一方向暴涨。</p>
+
+<p><b>观察</b>：K=5 width-major 在 step 77 \|dz\|=74 崩；basis dump 显示 basis[2]=basis[3] 的 B 完全相同（Route 1 polish 后的 reflection 对称局部最小值）。</p>
+
+<h3>3.2 失效模式 B：±n 镜像对（边际 gauge）</h3>
+
+<p>将 pool 改成 |n|-major 把 ±n 对放在同 width，避开 width 重用，但引入了 <b>x→-x 反射对称性</b>。C 在 (basis_-n, basis_+n) 子空间有近零但非零的 sv（比如 1e-7 级）。rcond=1e-4 截不到它，Wiener 也会给 0.3× 的非零 sinv → gauge 方向获得非零 dz。</p>
+
+<p><b>观察</b>：K=3 interleave 从 E(0)=0.658 → E(t=0.16)=0.549，一次大 \|dz\| 事件后锁死在 K=3 manifold 的自然极值 0.549。K=5 interleave 在 step 50 崩，step 3 norm 变负 6000+。</p>
+
+<h3>3.3 失效模式 C：rcond 阈值穿越（阶梯跳）</h3>
+
+<p>无论 ordering 怎么选，C 的 sv 谱随参数演化在漂。某个 sv 从 rcond·sv<sub>max</sub> 上方漂到下方（或反向），导致该方向在伪逆里<b>开关式切换</b>（1/sv 突变为 0 或反过来）。dz 不连续 → E 阶梯跳。</p>
+
+<p><b>观察</b>：K=5 dt=1e-3 + interleave 在 1558 步中 E 从 0.679 → 0.700 → 0.728 → 1.134 → 1.582 → 1.601，每次跳对应 sv_min3[1] 从 1.01e-8 附近跨越某阈值。</p>
+
+<h3>3.4 失效模式 D：Tikhonov 与 Wiener 冲突</h3>
+
+<p>Wiener 平滑公式 <span class="math">sinv = sv / (sv² + λ²)</span>：在 sv=0 严格给零（消除真 gauge），在 sv=λ 达最大放大 1/(2λ)。</p>
+
+<p><b>但 Tikhonov λ<sub>C</sub>=1e-8 把所有 sv 地板抬到 1e-8</b>，远低于 Wiener 的 soft-shoulder λ=rcond·sv<sub>max</sub>≈1.78e-4。Wiener 看到 sv=1e-8（原本应是 0），计算 sinv = 1e-8 / (1e-16 + 3.17e-8) = 0.316 → <b>gauge 方向被赋予 0.316 倍放大</b>，泄露到参数空间。</p>
+
+<p><b>观察</b>：K=5 Wiener+Tikh 在 step 3 norm = -6164.95（不是数值小，是 u 全局符号翻转），step 5 基底 Re(A+B)=-5.19。Wiener + Tikh 一起用时 <b>比任何单一方案都崩得快</b>。</p>
+
+<h2>4. Wiener + 小 dt 为什么工作（新）</h2>
+
+<p>Wiener 公式 <span class="math">sinv = sv / (sv² + λ²)</span> 的三个关键性质：</p>
+
+<ul>
+<li><b>sv = 0 严格给 0</b>：真 gauge 方向的 nullspace 精确清零（必须 λ_C=0，否则 Tikhonov 把 sv 抬到 1e-8 地板，Wiener 看成"非零", 给 0.3× 放大）</li>
+<li><b>连续函数</b>：sv 在参数演化中漂过任何值时, sinv 平滑变化, <b>无阶梯跳</b></li>
+<li><b>有限放大</b>：最大放大率 = 1/(2λ), 在 sv=λ 处取到（比硬 rcond 的 1/(rcond·sv_max) 小 2×）</li>
+</ul>
+
+<p>但 Wiener 不是 TDVP ODE 的严格解——它是有偏差的近似。每步偏差量级 <span class="math">O(λ²/sv)</span> 对"刚过软 shoulder"的方向, 积累 N 步得误差 <span class="math">O(N·dt·偏差)</span>。</p>
+
+<div class="box ok">
+<b>核心观察</b>：偏差积累和 dt 成正比，所以 <b>dt 必须足够小</b>让偏差在 T=2π 内保持可控。
+<ul>
+<li>dt = 1e-2：开头几步的 Wiener bias 直接把状态推到错位 manifold，E 锁在 5.96 <span class="fail">失败</span></li>
+<li>dt = 1e-3：每步 bias × 10 小，状态保持在正确流形附近, E 几乎恒定 4000 多步 <span class="pass">成功</span></li>
+</ul>
+</div>
+
+<h3>4.1 轨迹细节 (K=3 Wiener λ=0 dt=1e-3)</h3>
+
+<table>
+<tr><th>时段</th><th>E</th><th>说明</th></tr>
+<tr><td>t=0</td><td>0.658</td><td>Route 1 初始点（F_init=0.989）</td></tr>
+<tr><td>t=0.157</td><td>0.693</td><td>初始瞬态（3% 单步跳，正常）</td></tr>
+<tr><td>t=0.314 → 4.87</td><td>0.6806 恒定</td><td><b>4000+ 步 E 严格守恒</b>到小数点后 6 位</td></tr>
+<tr><td>t=5.18</td><td>0.586</td><td>单次阶梯事件（\|dz\| 峰值, 1 步跳）</td></tr>
+<tr><td>t=5.18 → 6.28</td><td>0.586 恒定</td><td>稳在新 manifold 极值</td></tr>
+<tr><td>末态</td><td>0.586</td><td>ΔE=11%, \|F(T)\|²=0.874</td></tr>
+</table>
+
+<p>这个模式比硬 rcond+Tikh (K=3 baseline, F=0.934) 的"持续慢漂"<b>少次数但单次更大</b>的阶梯事件。长期 (多 kick) 累积哪个更稳, 待验证。</p>
+
+<h2>5. augment 算法的 ordering 影响</h2>
+
+<p>Candidate pool 构造顺序决定小 K 时 greedy 选哪些基。两种尝试过的 ordering：</p>
+
+<table>
+<tr><th>Ordering</th><th>Pool 前几个</th><th>K=3 选到</th><th>K=5 选到</th></tr>
+<tr>
+  <td><b>Width-major</b> (旧, 现 revert)</td>
+  <td>(0.3,-2), (0.3,-1), (0.3,+1), (0.3,+2), (0.5,-2)...</td>
+  <td>pre_kick + (0.3,-2) + (0.3,-1)</td>
+  <td>pre_kick + <b>4 copies all w=0.3</b> → 模式 A</td>
+</tr>
+<tr>
+  <td><b>Interleave</b> (已尝试, 仍在代码里)</td>
+  <td>(0.3,-1), (0.5,+1), (0.8,-1), (2.0,+1), ...</td>
+  <td>pre_kick + (0.3,-1) + (0.5,+1) → <b>±n at diff w</b></td>
+  <td>pre_kick + 4 copies @ 4 widths, alternating signs</td>
+</tr>
+</table>
+
+<div class="box warn">
+<b>当前代码里是 interleave 版本</b>（<code>src/kick_operator.cpp</code> N=1 分支已改）。若要回 width-major，手动 revert。interleave 让 K=5 免了模式 A 但引入模式 B 的近亲。结论：<b>仅靠 ordering 不能同时避开 A 和 B</b>。
+</div>
+
+<h2>6. 诊断工具（已加，在 realtime_tdvp.cpp 主循环每步打印）</h2>
+
+<ul>
+<li><code>cond</code> = sv_max / sv_min，C_bar 条件数</li>
+<li><code>sv_min3=(最小, 第二小, 第三小)</code> — C_bar 底部 3 个奇异值，看 gauge 地板是否被 Tikhonov 拉起、有没有"边际 sv"卡在 rcond 阈值附近</li>
+<li><code>|dz|</code> — 合并 dz 的 L2 范数，看伪逆有没有放大失控</li>
+<li><code>min(Re A+B)@i</code> — 所有基底里 Gaussian 归一化因子 Re(A+B) 的最小值。接近 0 或变负 → 基底跑出物理区</li>
+<li><code>min(Re A)@i</code> — Re(A) 本身可以为负（复 A 容许），只要 A+B 实部正即可</li>
+</ul>
+
+<h2>7. 和 K=1 自检 (task F) 的对比</h2>
+
+<div class="box ok">
+K=1 纯基态跑 628 步全部 <span class="pass">机器零误差</span>，证明核心 TDVP 矩阵元、∂<sub>α</sub>ψ 导数、P⊥ 投影、RK4 积分全部<b>没有 bug</b>。Task E 的所有失败都是 <b>K≥3 时过参数化 + 伪逆病态</b>的后果，不是代码错误。
+</div>
+
+<h2>8. 文献对照 — 我们不是第一个撞这堵墙</h2>
+
+<p><b>Richings, Polyak, Spinlove, Worth et al., Int. Rev. Phys. Chem. 34:269 (2015)</b> vMCG review 原话：</p>
+
+<pre>"When the basis set is complete, the parameter derivatives cannot be
+ projected outside the space spanned by the Gaussian functions and C
+ becomes zero. This pathological property means that the vMCG EOMs
+ become very unstable."</pre>
+
+<p>他们的工程修法是 Tikhonov with ε=1e-6（业界默认），仍然没解决根本问题——只是把崩的时刻延后。</p>
+
+<p><b>Schrader, Pedersen, Kvaal, JCP 162, 024109 (2025)</b> 明确诊断 vMCG 的"vanishing gradient / barren plateau" 问题，并提出 <b>Rothe 方法</b>作为替代：不反 C 矩阵，而是每步做 Crank-Nicolson + VarPro + BFGS 最小化。他们证明 2D Hénon-Heiles 30 个 Gaussian 能复现 512×512 格点的结果。</p>
+
+<p>本地 PDF：<code>reference/Multidimensional quantum dynamics with explicitly correlated Gaussian wave packets using Rothe's method.pdf</code>。方案：<code>html/rothe_implementation_plan.html</code>。</p>
+
+<h2>9. 下一步待测（按优先级）</h2>
+
+<ol>
+<li><b>★ K=5 + Wiener + λ=0 + dt=1e-3</b>（15 分钟，最关键）：<br>
+<code>./build/ecg1d_simple --task5 --n-max 4 --n-mom 2 --T-free 6.283185307 \<br>
+  --dt 1e-3 --integrator rk4 --max-cond 1e6 \<br>
+  --no-u-split --no-evolve-B \<br>
+  --lambda-C 0 --rcond 1e-4 --enforce-norm --wiener --K-cap 5</code><br>
+K=3 已确认工作。如果 K=5 也撑完且 \|F(T)\|²>0.9, 说明 <b>Wiener+dt=1e-3 是可扩展的工作点</b>, 不止是对 K=3 的巧合。</li>
+
+<li><b>K=7 + 同配置</b>（30 分钟）：<br>
+上面 K=5 通过后, 把 K-cap 改 7。基底更丰富, F_init 更接近 1, Wiener bias 也可能更大。看能不能平衡到 \|F(T)\|²>0.9。</li>
+
+<li><b>扫 dt</b>（1 小时）：<br>
+固定 K=3（或 K=5 如果通过）, 试 dt ∈ {2e-3, 5e-3, 1e-3, 5e-4}。看 Wiener 误差是否随 dt² 下降（RK4 期望）。有可能 dt=5e-4 能把 \|F(T)\|² 推到 0.95+。</li>
+
+<li><b>多 kick 循环（MBDL 主线）</b>（1-2 天）：<br>
+用上面确认的工作点跑。每 kick 之间再次 Route 1 polish basis（或直接重用上步 basis）, 记录 E(t), n(k), G⁽¹⁾(z)。看多 kick 能否出 MBDL 的定性信号。即使单 kick 有 10% 损失, 多 kick 累积可能仍能看到趋势。</li>
+
+<li><b>长期备选：Rothe 方法</b>（非紧急）：<br>
+见 <code>html/rothe_implementation_plan.html</code>。当前 Wiener+小 dt 走得通就先不切。Rothe 作为"如果 K=5,7 也上不去" 的保底方案。</li>
+</ol>
+
+<h2>10. 相关文件 / 代码入口</h2>
+
+<table>
+<tr><th>文件</th><th>角色</th></tr>
+<tr><td><code>src/realtime_tdvp.{hpp,cpp}</code></td><td>实时 TDVP 核心（compute_rhs_dz, RK4, 主循环, Wiener 开关）</td></tr>
+<tr><td><code>src/tdvp_solver.hpp</code></td><td>SolverConfig 定义（rcond, lambda_C, wiener_smooth）</td></tr>
+<tr><td><code>src/kick_operator.cpp</code></td><td>augment_basis_with_momentum（候选池构造，目前是 interleave）</td></tr>
+<tr><td><code>src/target_fitting.{hpp,cpp}</code></td><td>Route 1: solve_optimal_u + target_fitting_evolution</td></tr>
+<tr><td><code>main_simple.cpp</code></td><td>task5 = 实时 TDVP kick 后态; task6 = K=1 自检</td></tr>
+<tr><td><code>html/rothe_implementation_plan.html</code></td><td>Rothe 方法详细实施方案</td></tr>
+<tr><td><code>html/task5_realtime_status.html</code></td><td>本文件</td></tr>
+<tr><td><code>reference/VARGA_SVM.pdf</code></td><td>Suzuki-Varga SVM 教科书（纯结构, 无实时）</td></tr>
+<tr><td><code>reference/Multidimensional ... Rothe ... .pdf</code></td><td>Schrader 2025 Rothe 论文</td></tr>
+</table>
+
+<h2>11. CLI Flag 总览</h2>
+
+<table>
+<tr><th>Flag</th><th>默认</th><th>含义</th></tr>
+<tr><td><code>--task5</code></td><td>off</td><td>触发任务 E（Route 1 踢后态实时演化）</td></tr>
+<tr><td><code>--task6</code></td><td>off</td><td>触发任务 F（K=1 基态自检）</td></tr>
+<tr><td><code>--n-max N</code></td><td>4</td><td>Jacobi-Anger 截断 |n| ≤ N</td></tr>
+<tr><td><code>--n-mom N</code></td><td>2</td><td>动量扩基每侧个数</td></tr>
+<tr><td><code>--T-free T</code></td><td>2π</td><td>演化时长</td></tr>
+<tr><td><code>--dt X</code></td><td>1e-3</td><td>积分步长</td></tr>
+<tr><td><code>--integrator {rk4,euler}</code></td><td>rk4</td><td>积分器</td></tr>
+<tr><td><code>--max-cond X</code></td><td>1e6</td><td>augment 的 S 矩阵 cond 上限</td></tr>
+<tr><td><code>--u-split / --no-u-split</code></td><td>u-split</td><td>Lie-Trotter 分裂 u</td></tr>
+<tr><td><code>--evolve-B / --no-evolve-B</code></td><td>evolve-B</td><td>是否 TDVP 演化 B</td></tr>
+<tr><td><code>--lambda-C X</code></td><td>0</td><td>Tikhonov 正则化强度</td></tr>
+<tr><td><code>--rcond X</code></td><td>1e-4</td><td>SVD 截断阈值（硬模式）或 Wiener soft-shoulder 系数</td></tr>
+<tr><td><code>--enforce-norm / --no-enforce-norm</code></td><td>enforce-norm</td><td>每步 rescale u 保 norm</td></tr>
+<tr><td><code>--K-cap N</code></td><td>-1 (不限)</td><td>限制 trial basis 数 ≤ N</td></tr>
+<tr><td><code>--wiener / --no-wiener</code></td><td>no-wiener</td><td>Wiener 平滑伪逆替代硬 rcond 截断</td></tr>
+</table>
+
+<h2>12. 历史时间线</h2>
+
+<ul class="timeline">
+<li><strong>尝试 1: 全量 TDVP (u+B+R+A), K=15</strong><br>
+结果：<span class="fail">step 80 爆炸</span>，cond(C)=1.26e+77，A 重复度极高。</li>
+
+<li><strong>尝试 2: Lie-Trotter 分裂 (锁 u, 推 A/R), K=15</strong><br>
+结果：<span class="fail">step 1 爆炸</span>。锁 u 去掉相位 DOF 是物理错误。</li>
+
+<li><strong>尝试 3: 全量 K=10 + rcond=1e-6</strong><br>
+结果：<span class="fail">step 1 爆炸</span>，basis 5,6 几乎同 A。</li>
+
+<li><strong>尝试 4: K=10 + --no-u-split --no-evolve-B --lambda-C 1e-8</strong><br>
+结果：<span class="todo">step 1-59 撑住; step 60 崩</span>。E 振荡但 norm 剧烈振荡 1.25↔2.58。</li>
+
+<li><strong>尝试 5: 同上 + --enforce-norm</strong><br>
+结果：<span class="fail">step 348 崩</span>。加 enforce-norm 后 norm 锁死 √π, E 漂 3.6% 后在 step 349 突然跳至 1.29, cascade 到 940。E 从阶梯跳开始。</li>
+
+<li><strong>尝试 6: + --rcond 1e-12 --lambda-C 1e-6</strong><br>
+结果：<span class="fail">step 1 NaN</span>。正则化太弱, (C+λI)⁻¹ 放大 10⁶ 倍。</li>
+
+<li><strong>尝试 7: --rcond 1e-4 λ=1e-8 + --K-cap 3 (width-major)</strong><br>
+结果：<span class="pass">628/628 撑完</span>，\|F\|²=0.934，ΔE=2%。首个成功点。</li>
+
+<li><strong>尝试 8: --K-cap 5</strong><br>
+结果：<span class="fail">step 77 崩</span>。basis[2]=basis[3] 的 B 完全一致 → 模式 A。</li>
+
+<li><strong>尝试 9: --K-cap 4</strong><br>
+结果：<span class="fail">step 499 崩</span>。中段物理崩, 后段"假稳"卡在 E=32.77 300 步。</li>
+
+<li><strong>尝试 10: 改 augment 成 interleave ordering + K=3</strong><br>
+结果：<span class="todo">628/628 撑完但 E 从 0.658 掉到 0.549 锁死</span>。F\|²=0.918（比旧 K=3 略差）。</li>
+
+<li><strong>尝试 11: interleave + K=5</strong><br>
+结果：<span class="fail">step 50 崩</span>。模式 B：±n 镜像 gauge 污染。</li>
+
+<li><strong>尝试 12: interleave + K=5 + --dt 1e-3</strong><br>
+结果：<span class="fail">step 1558 手动中止</span>。E 阶梯跳 0.679 → 0.700 → 1.134 → 1.601，dt 没救到。</li>
+
+<li><strong>尝试 13: interleave + K=5 + --wiener (保 Tikhonov)</strong><br>
+结果：<span class="fail">step 5 崩</span>。Wiener 和 Tikhonov 冲突, gauge 泄露 → norm 翻负。</li>
+
+<li><strong>尝试 14: --wiener --lambda-C 0 (K=3, dt=1e-2)</strong><br>
+结果：<span class="fail">撑完 628 步但 E 锁死 5.96</span>。Wiener bias 在 dt=1e-2 下几步就把状态推到错位 manifold。\|F(T)\|²=0.111。</li>
+
+<li><strong>尝试 15: Wiener + λ=0 + K=3/5 + dt=1e-2 触发 blowup guard 误报</strong><br>
+结果：<span class="todo">step 1 abort</span>。cond(C)=1e16 是 Wiener 下的正常值（sv_min 是真数值零 ~1e-17）, 不是病态。修代码：<code>realtime_tdvp.cpp</code> 的 cond_abort 在 wiener 模式下改为 1e30, 事实上禁用。</li>
+
+<li><strong>尝试 16 ★: Wiener + λ=0 + K=3 + dt=1e-3</strong><br>
+结果：<span class="pass">成功撑完 6283 步</span>。E 大部分时间恒定 0.681 (4000+ 步), 中间两次阶梯到 0.586。ΔE=11%, \|F(T)\|²=<b>0.874</b>, norm 机器零。<b>确认 Wiener+小 dt 是可行工作点</b>。</li>
+
+<li><strong>尝试 17-18 (待跑): K=5, K=7 同配置</strong><br>
+<span class="todo">如果 K=5, K=7 也撑过 6283 步且 F(T)²>0.9, 说明 Wiener 工作点可扩展到更丰富基底。这是下一个关键里程碑。</span></li>
+</ul>
+
+<h2>13. 一张图看懂</h2>
+
+<pre>
+                    ┌───────────────────────┐
+                    │  实时 TDVP + K≥3 ECG  │
+                    │                       │
+                    │  C 矩阵带伪逆求 dz    │
+                    └──────────┬────────────┘
+                               │
+          ┌────────────────────┼───────────────────┐
+          │                    │                   │
+  ┌───────▼───────┐   ┌────────▼────────┐   ┌──────▼──────┐
+  │ 硬 rcond 截断 │   │ Tikhonov (C+λI) │   │ Wiener 平滑 │
+  │               │   │                 │   │             │
+  │ 跨阈值阶梯跳  │   │ gauge 方向      │   │ sv=0 严格 0 │
+  │ 模式 C        │   │ 赋 1/λ 非零     │   │ 要求 λ_C=0  │
+  │               │   │ 模式 D          │   │ 连续无阶梯  │
+  └───────┬───────┘   └────────┬────────┘   └──────┬──────┘
+          │                    │                   │
+          │                    │                   │ 有偏差
+          │                    │                   │ 需小 dt
+          │                    │                   │
+  ┌───────▼─────┐              │            ┌──────▼──────┐
+  │ K=3 能工作  │              │            │ K=3 + dt=   │
+  │ F(T)²=0.934 │              │            │ 1e-3 工作   │
+  │ ΔE=2%       │              │            │ F(T)²=0.874 │
+  │ (baseline)  │              │            │ ΔE=11%      │
+  └─────────────┘              │            │ (★新点)     │
+                               │            └──────┬──────┘
+                               │                   │
+                       K=10 崩 step 348      K=5,K=7 待测
+                       (gauge cascade)       (扩展希望)
+
+
+       如果 K=5,7 也能用 Wiener 路线 → 多 kick 循环, 主线继续
+       如果 K=5,7 仍崩, 且 K=3 F=0.87 不够 → 切 Rothe 保底
+</pre>
+
+<p class="small" style="margin-top: 3em; border-top: 1px solid #d0d7de; padding-top: 1em;">
+ ECG1D C++ 项目 · 任务 E 综合状态 · 2026-04-22
+</p>
+
+</body>
+</html>

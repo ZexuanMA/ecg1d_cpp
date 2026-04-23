@@ -250,18 +250,20 @@ VectorXcd solve_optimal_u(const std::vector<BasisParams>& trial,
         b(i) = val;
     }
 
-    // Current norm <psi|S|psi>, to rescale the new u afterwards
-    VectorXcd u_old(K);
-    for (int i = 0; i < K; ++i) u_old(i) = trial[i].u;
-    Cd norm_old = (u_old.adjoint() * S * u_old)(0);
-
     // Solve S u = b via SVD (robust to singular S, same as apply_analytic_kick)
     Eigen::JacobiSVD<MatrixXcd> svd(S, Eigen::ComputeThinU | Eigen::ComputeThinV);
     VectorXcd u_new = svd.solve(b);
 
+    // Rescale u so that <psi|psi> == N_tar (the target's own norm). This is the
+    // physically-correct norm to match — since |psi_tar> has norm N_tar and a
+    // unitary kick preserves the pre-kick ground-state norm sqrt(pi), our trial
+    // should too. Using N_tar as the fixed target avoids the previous drift
+    // where norm_old = u_old^dagger * S_new * u_old shifted arbitrarily as TDVP
+    // moved A/R during target fitting.
+    Cd N_tar = target_norm(target, perms);
     Cd norm_new = (u_new.adjoint() * S * u_new)(0);
-    if (norm_new.real() > 1e-15 && norm_old.real() > 1e-15) {
-        double scale = std::sqrt(norm_old.real() / norm_new.real());
+    if (norm_new.real() > 1e-15 && N_tar.real() > 1e-15) {
+        double scale = std::sqrt(N_tar.real() / norm_new.real());
         u_new *= scale;
     }
     return u_new;

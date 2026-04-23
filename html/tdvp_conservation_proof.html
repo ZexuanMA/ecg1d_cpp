@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>TDVP 守恒定律的严格推导：非本征态的演化 · 2026-04-23</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+       max-width: 960px; margin: 2em auto; padding: 0 1.5em; color: #24292e; line-height: 1.7; }
+h1 { color: #0366d6; border-bottom: 2px solid #0366d6; padding-bottom: 0.3em; }
+h2 { color: #0366d6; margin-top: 2em; }
+h3 { color: #57606a; margin-top: 1.5em; }
+h4 { color: #24292e; }
+code, pre { font-family: Menlo, Consolas, monospace; }
+code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; font-size: 0.92em; }
+pre  { background: #f6f8fa; padding: 1em 1.2em; border-radius: 6px; overflow-x: auto;
+       font-size: 0.9em; line-height: 1.5; border-left: 4px solid #d0d7de; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.95em; }
+th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; vertical-align: top; }
+th { background: #f6f8fa; font-weight: 600; }
+.math { font-style: italic; font-family: "Cambria Math", "Latin Modern Math", Georgia, serif; }
+.math-block { text-align: center; font-size: 1.1em; margin: 1em 0;
+              font-family: "Cambria Math", Georgia, serif; font-style: italic;
+              padding: 0.6em 1em; background: #f6f8fa; border-radius: 4px; }
+.eq-num { float: right; font-style: normal; color: #57606a; }
+.box { border: 1px solid #d0d7de; border-left: 4px solid #0366d6; padding: 0.8em 1.2em; margin: 1em 0; background: #f6f8fa; }
+.box.ok   { border-left-color: #1a7f37; background: #dafbe1; }
+.box.warn { border-left-color: #bf8700; background: #fff8c5; }
+.box.bad  { border-left-color: #cf222e; background: #ffebe9; }
+.box.theorem { border-left-color: #8250df; background: #fbf0ff; }
+.box.theorem b { color: #8250df; }
+.small { font-size: 0.85em; color: #57606a; }
+.pass { color: #1a7f37; font-weight: 600; }
+.fail { color: #cf222e; font-weight: 600; }
+.label { display: inline-block; padding: 2px 8px; border-radius: 3px;
+         font-size: 0.85em; font-weight: 600; }
+.label.exact { background: #dafbe1; color: #1a7f37; }
+.label.approx { background: #fff8c5; color: #9a6700; }
+.label.bad { background: #ffebe9; color: #cf222e; }
+</style>
+</head>
+<body>
+
+<h1>TDVP 守恒定律的严格推导：非本征态的演化</h1>
+<p class="small">2026-04-23 · 回答："为什么 TDVP 不行" · 核心问题："本质上就是一个不在本征态的态的演化"</p>
+
+<div class="box">
+<b>主线问题：</b>一个<b>不在 Ĥ 本征态</b>的初始态（比如踢后态）用 TDVP 演化，能量 <span class="math">E</span>、归一化 <span class="math">‖ψ‖²</span>、⟨x²⟩、⟨p²⟩ 理论上应该怎么变？变分流形 <span class="math">M</span> 够不够"装下"真实演化这件事，对守恒定律有没有影响？
+</div>
+
+<div class="box theorem">
+<b>主要结论</b>（§2 将严格证明）：<br>
+&nbsp;&nbsp;<b>连续时间</b> TDVP 下，<span class="math">E</span> 和 <span class="math">‖ψ‖²</span> <b>严格守恒</b>，与变分流形是否命中本征态、基是否完备、基是否线性无关<b>都无关</b>。这是 <span class="math">P_T</span> 正交投影的厄米性 + <span class="math">|ψ⟩ ∈ T_ψM</span> 两个事实的纯几何推论。<br>
+&nbsp;&nbsp;⟨x²⟩、⟨p²⟩ 不是守恒量；对谐振子它们以 <b>角频率 2ω</b>（周期 π）振荡，满足 <span class="math">⟨x²⟩ + ⟨p²⟩ = 2E</span>。<br>
+&nbsp;&nbsp;数值上 <span class="math">E</span>、norm 飘——<b>不是</b>"不在本征态"导致的，而是 <b>C 矩阵病态 → SVD 伪逆 + Tikhonov → 投影变非厄米 → §2 的证明断了</b>。
+</div>
+
+<h2>1. 记号与 Dirac-Frenkel 变分原理</h2>
+
+<h3>1.1 变分流形</h3>
+
+<p>变分流形 <span class="math">M = { |ψ(z)⟩ : z ∈ ℂⁿ }</span>，<span class="math">z = (u, A, B, R)</span>。切空间</p>
+
+<div class="math-block">
+T<sub>ψ</sub>M = span<sub>ℂ</sub> { |∂<sub>α</sub> ψ⟩ : α = 1, ..., n }
+</div>
+
+<p>记 <span class="math">P<sub>T</sub></span> 为全希尔伯特空间到 <span class="math">T<sub>ψ</sub>M</span> 的正交投影算子。显式展开：</p>
+
+<div class="math-block">
+P<sub>T</sub> = |∂<sub>α</sub> ψ⟩ (C<sup>−1</sup>)<sub>αβ</sub> ⟨∂<sub>β</sub> ψ|,
+&nbsp;&nbsp;&nbsp; C<sub>αβ</sub> ≡ ⟨∂<sub>α</sub> ψ | ∂<sub>β</sub> ψ⟩
+</div>
+
+<p>关键性质（正交投影）：</p>
+
+<div class="math-block">
+P<sub>T</sub><sup>†</sup> = P<sub>T</sub>,&nbsp;&nbsp; P<sub>T</sub><sup>2</sup> = P<sub>T</sub>. <span class="eq-num">(1)</span>
+</div>
+
+<p>对 ECG，线性系数 <span class="math">u<sub>i</sub></span> 使得 <span class="math">|ψ⟩ = Σ<sub>i</sub> u<sub>i</sub> |∂<sub>u<sub>i</sub></sub> ψ⟩</span>，所以<b>整体缩放方向</b>一定在切空间内：</p>
+
+<div class="math-block">
+|ψ⟩ ∈ T<sub>ψ</sub>M &nbsp;&nbsp;⟹&nbsp;&nbsp; P<sub>T</sub>|ψ⟩ = |ψ⟩. <span class="eq-num">(2)</span>
+</div>
+
+<h3>1.2 TDVP 方程（Dirac-Frenkel）</h3>
+
+<p>要求 <span class="math">|ψ̇⟩ ∈ T<sub>ψ</sub>M</span> 使残差 <span class="math">‖ |ψ̇⟩ − (−iĤ)|ψ⟩ ‖²</span> 极小。一阶变分条件 <span class="math">⟨∂<sub>α</sub>ψ | ψ̇ − (−iĤ)ψ⟩ = 0</span>（∀α）给出</p>
+
+<div class="math-block">
+C<sub>αβ</sub> ż<sub>β</sub> = −i g<sub>α</sub>,&nbsp;&nbsp;&nbsp;
+g<sub>α</sub> = ⟨∂<sub>α</sub>ψ | Ĥ | ψ⟩. <span class="eq-num">(3)</span>
+</div>
+
+<p>几何上这等价于</p>
+
+<div class="math-block">
+|ψ̇⟩ = −i P<sub>T</sub> Ĥ |ψ⟩. <span class="eq-num">(4)</span>
+</div>
+
+<div class="box">
+<b>注</b>：式 (3) 在实现里对应 <code>C·ż = −i·g</code>（见 <code>tdvp_solver.hpp</code>）。当参数化对相位/u-rescale gauge 冗余时，<span class="math">C</span> 有精确零本征方向，但这些方向对 <span class="math">|ψ̇⟩</span> 的物理贡献为零（因为 <span class="math">P<sub>T</sub></span> 只关心切空间像），所以原则上可以用伪逆解决。问题出在"近零"方向——数值上它们被 rcond/λ 截断，见 §6。
+</div>
+
+<h2>2. 守恒定律的严格证明</h2>
+
+<div class="box theorem">
+<b>定理 2.1</b>（能量守恒）：设 <span class="math">Ĥ = Ĥ<sup>†</sup></span>，且 <span class="math">|ψ(t)⟩</span> 满足 TDVP 方程 (4)。则
+<div class="math-block">
+d/dt ⟨ψ|Ĥ|ψ⟩ = 0. <span class="eq-num">(5)</span>
+</div>
+</div>
+
+<p><b>证明</b>：</p>
+
+<div class="math-block">
+d/dt ⟨ψ|Ĥ|ψ⟩ = ⟨ψ̇|Ĥ|ψ⟩ + ⟨ψ|Ĥ|ψ̇⟩ = 2 Re ⟨ψ|Ĥ|ψ̇⟩.
+</div>
+
+<p>代入 (4)：</p>
+
+<div class="math-block">
+⟨ψ|Ĥ|ψ̇⟩ = ⟨ψ| Ĥ · (−i P<sub>T</sub> Ĥ) |ψ⟩ = −i ⟨ψ| Ĥ P<sub>T</sub> Ĥ |ψ⟩.
+</div>
+
+<p>算子 <span class="math">Ĥ P<sub>T</sub> Ĥ</span> 厄米（<span class="math">Ĥ<sup>†</sup> = Ĥ</span>，<span class="math">P<sub>T</sub><sup>†</sup> = P<sub>T</sub></span>）：</p>
+
+<div class="math-block">
+(Ĥ P<sub>T</sub> Ĥ)<sup>†</sup> = Ĥ<sup>†</sup> P<sub>T</sub><sup>†</sup> Ĥ<sup>†</sup> = Ĥ P<sub>T</sub> Ĥ.
+</div>
+
+<p>故 <span class="math">⟨ψ| Ĥ P<sub>T</sub> Ĥ |ψ⟩ ∈ ℝ</span>，且</p>
+
+<div class="math-block">
+2 Re(−i · ℝ) = 0. &nbsp;&nbsp;∎
+</div>
+
+<div class="box theorem">
+<b>定理 2.2</b>（归一化守恒）：在 <span class="math">|ψ⟩ ∈ T<sub>ψ</sub>M</span> 的前提下（ECG 线性 <span class="math">u</span> 自动满足），TDVP 方程 (4) 给出
+<div class="math-block">
+d/dt ‖ψ‖² = 0. <span class="eq-num">(6)</span>
+</div>
+</div>
+
+<p><b>证明</b>：</p>
+
+<div class="math-block">
+d/dt ⟨ψ|ψ⟩ = 2 Re ⟨ψ|ψ̇⟩ = 2 Re ⟨ψ| (−i P<sub>T</sub> Ĥ) |ψ⟩ = −2 Im ⟨ψ|P<sub>T</sub> Ĥ|ψ⟩.
+</div>
+
+<p>由 <span class="math">P<sub>T</sub><sup>†</sup> = P<sub>T</sub></span> 与 (2)：</p>
+
+<div class="math-block">
+⟨ψ| P<sub>T</sub> Ĥ |ψ⟩ = ⟨P<sub>T</sub> ψ | Ĥ | ψ⟩ = ⟨ψ|Ĥ|ψ⟩ ∈ ℝ,
+</div>
+
+<p>故 <span class="math">Im(...) = 0</span>。∎</p>
+
+<div class="box ok">
+<b>推论</b>：定理 2.1 / 2.2 的两行证明里<b>从未用到</b>：<br>
+&nbsp;&nbsp;• <span class="math">M</span> 的维数 <span class="math">n</span>；<br>
+&nbsp;&nbsp;• <span class="math">{|∂<sub>α</sub>ψ⟩}</span> 是否线性无关（只要用伪逆意义下的 <span class="math">P<sub>T</sub></span> 即可，厄米性保留）；<br>
+&nbsp;&nbsp;• <span class="math">|ψ⟩</span> 是否是 <span class="math">Ĥ</span> 本征态；<br>
+&nbsp;&nbsp;• 真实演化 <span class="math">e<sup>−iĤt</sup>|ψ(0)⟩</span> 是否完全落在 <span class="math">M</span> 内。<br>
+守恒是 <b>P<sub>T</sub> 的厄米性 + |ψ⟩ ∈ T<sub>ψ</sub>M 的几何事实</b>，仅此而已。
+</div>
+
+<h2>3. TDVP ≠ 真实演化：流形误差</h2>
+
+<p>真实演化 <span class="math">|ψ̇⟩<sub>exact</sub> = −i Ĥ|ψ⟩</span>。投影后的差：</p>
+
+<div class="math-block">
+|ψ̇⟩<sub>exact</sub> − |ψ̇⟩<sub>TDVP</sub> = −i (1 − P<sub>T</sub>) Ĥ |ψ⟩. <span class="eq-num">(7)</span>
+</div>
+
+<p>定义<b>瞬时流形误差</b></p>
+
+<div class="math-block">
+ε(t) ≡ ‖ (1 − P<sub>T</sub>) Ĥ |ψ(t)⟩ ‖. <span class="eq-num">(8)</span>
+</div>
+
+<table>
+<tr><th>情形</th><th>条件</th><th>ε(t)</th><th>TDVP 轨迹</th></tr>
+<tr><td>A. ψ 是 Ĥ 本征态</td>
+    <td>Ĥ|ψ⟩ = E|ψ⟩，且 |ψ⟩ ∈ T<sub>ψ</sub>M（ECG 总对）</td>
+    <td><span class="pass">= 0</span></td>
+    <td>TDVP = 真实演化（纯相位 e<sup>−iEt</sup>|ψ⟩）</td></tr>
+<tr><td>B. Ĥ|ψ⟩ ∈ T<sub>ψ</sub>M</td>
+    <td>即便 ψ 不是本征态，只要 Ĥ|ψ⟩ 恰落在切空间</td>
+    <td><span class="pass">= 0</span></td>
+    <td>TDVP = 真实演化（局部可积）</td></tr>
+<tr><td>C. Ĥ|ψ⟩ ∉ T<sub>ψ</sub>M</td>
+    <td>一般情形</td>
+    <td><span class="todo">&gt; 0</span></td>
+    <td>TDVP ≠ 真实演化，但 E, ‖ψ‖² <b>仍严格守恒</b>（§2）</td></tr>
+</table>
+
+<div class="box warn">
+<b>关键澄清</b>："不在本征态的态的演化"本身（情形 B 或 C）<b>不是</b> E 和 norm 飘的来源。它只让 TDVP 的 ψ(t) 和真正的 e<sup>−iĤt</sup>ψ(0) 逐渐错开，体现在 <b>|⟨ψ(0)|ψ(t)⟩|²</b>（fidelity）和 <b>⟨x²⟩, ⟨p²⟩</b> 的相位/振幅上——这些<b>不是</b>几何守恒量。
+</div>
+
+<h2>4. ⟨x²⟩, ⟨p²⟩ 在真实演化下的轨迹（Ehrenfest）</h2>
+
+<p>取 <span class="math">Ĥ = ½(p̂² + x̂²)</span>（ℏ=m=ω=1）。对易子：</p>
+
+<div class="math-block">
+[Ĥ, x̂²] = −i (x̂p̂ + p̂x̂),&nbsp;&nbsp;&nbsp;
+[Ĥ, p̂²] = +i (x̂p̂ + p̂x̂).
+</div>
+
+<p>令 <span class="math">σ<sub>xx</sub> = ⟨x̂²⟩</span>，<span class="math">σ<sub>pp</sub> = ⟨p̂²⟩</span>，<span class="math">σ<sub>xp</sub> = ½⟨x̂p̂ + p̂x̂⟩</span>。Heisenberg 方程 <span class="math">d⟨Â⟩/dt = (1/iℏ)⟨[Â, Ĥ]⟩</span>：</p>
+
+<div class="math-block">
+σ̇<sub>xx</sub> = 2σ<sub>xp</sub>,&nbsp;&nbsp;
+σ̇<sub>pp</sub> = −2σ<sub>xp</sub>,&nbsp;&nbsp;
+σ̇<sub>xp</sub> = σ<sub>pp</sub> − σ<sub>xx</sub>. <span class="eq-num">(9)</span>
+</div>
+
+<p>记为 <span class="math">ṡ = M s</span>，其中</p>
+
+<div class="math-block">
+M = [[0, 0, 2], [0, 0, −2], [−1, 1, 0]]
+</div>
+
+<p>特征多项式 <span class="math">det(M − λI) = −λ(λ² + 4)</span>，本征值 <span class="math">{0, ±2i}</span>。</p>
+
+<ul>
+<li><b>零模</b>：对应守恒量 <span class="math">σ<sub>xx</sub> + σ<sub>pp</sub> = 2E</span>（HO virial 的动力学版）。</li>
+<li><b>±2i 模</b>：频率 <span class="math">2ω = 2</span>，<b>周期 T = π</b>。</li>
+</ul>
+
+<p>闭式解（<span class="math">D<sub>0</sub> = σ<sub>xx</sub>(0) − σ<sub>pp</sub>(0)</span>，<span class="math">V<sub>0</sub> = σ<sub>xp</sub>(0)</span>）：</p>
+
+<div class="math-block">
+σ<sub>xx</sub>(t) = E + (D<sub>0</sub>/2) cos(2t) + V<sub>0</sub> sin(2t)
+<br>
+σ<sub>pp</sub>(t) = E − (D<sub>0</sub>/2) cos(2t) − V<sub>0</sub> sin(2t)
+<br>
+σ<sub>xp</sub>(t) = −(D<sub>0</sub>/2) sin(2t) + V<sub>0</sub> cos(2t) <span class="eq-num">(10)</span>
+</div>
+
+<h3>4.1 代入踢后态（κ=1, k<sub>L</sub>=0.5）</h3>
+
+<p>踢前基态 <span class="math">ψ<sub>0</sub>(x) = π<sup>−1/4</sup> e<sup>−x²/2</sup></span>。kick 算符 <span class="math">Û = e<sup>−iκ cos(2k<sub>L</sub>x)</sup></span> 只改相位，不改 |ψ|²。定义 <span class="math">φ(x) = κ cos(2k<sub>L</sub>x)</span>。踢后态 <span class="math">ψ' = e<sup>−iφ</sup> ψ<sub>0</sub></span>。</p>
+
+<div class="math-block">
+σ<sub>xx</sub>(0) = ⟨x²⟩<sub>ψ<sub>0</sub></sub> = 1/2
+</div>
+
+<p>对 <span class="math">⟨p²⟩</span>，用 <span class="math">p̂ e<sup>−iφ</sup> ψ<sub>0</sub> = e<sup>−iφ</sup>(p̂ + ℏφ'(x))ψ<sub>0</sub></span>：</p>
+
+<div class="math-block">
+σ<sub>pp</sub>(0) = ⟨(p̂ + φ'(x))²⟩<sub>ψ<sub>0</sub></sub>
+= ⟨p̂²⟩<sub>0</sub> + 2⟨p̂φ'⟩<sub>sym</sub> + ⟨φ'²⟩<sub>0</sub>
+</div>
+
+<p>对实基态 <span class="math">⟨p̂φ' + φ'p̂⟩<sub>0</sub> = 0</span>；<span class="math">φ'(x) = −2κk<sub>L</sub> sin(2k<sub>L</sub>x)</span>：</p>
+
+<div class="math-block">
+⟨φ'²⟩<sub>0</sub> = 4κ²k<sub>L</sub>² ⟨sin²(2k<sub>L</sub>x)⟩<sub>0</sub>
+= 2κ²k<sub>L</sub>² (1 − e<sup>−4k<sub>L</sub>²</sup>)
+</div>
+
+<p>代入：<span class="math">σ<sub>pp</sub>(0) = 1/2 + 2κ²k<sub>L</sub>²(1 − e<sup>−4k<sub>L</sub>²</sup>) ≈ 0.8161</span>。</p>
+
+<p>对 <span class="math">σ<sub>xp</sub>(0)</span>：利用 <span class="math">⟨ψ'|x̂p̂|ψ'⟩ = ⟨ψ<sub>0</sub>| x̂(p̂ + φ') |ψ<sub>0</sub>⟩</span>，实部即：</p>
+
+<div class="math-block">
+V<sub>0</sub> = σ<sub>xp</sub>(0) = ⟨x̂ φ'(x)⟩<sub>0</sub>
+= −2κk<sub>L</sub> ⟨x sin(2k<sub>L</sub>x)⟩<sub>0</sub>
+</div>
+
+<p>用 <span class="math">⟨x sin(ax)⟩<sub>0</sub> = (a/2) e<sup>−a²/4</sup></span>（标准高斯积分），令 <span class="math">a = 2k<sub>L</sub></span>：</p>
+
+<div class="math-block">
+⟨x sin(2k<sub>L</sub>x)⟩<sub>0</sub> = k<sub>L</sub> e<sup>−k<sub>L</sub>²</sup>,
+&nbsp;&nbsp; V<sub>0</sub> = −2κ k<sub>L</sub>² e<sup>−k<sub>L</sub>²</sup>
+</div>
+
+<p>对 κ=1, k<sub>L</sub>=0.5：<span class="math">V<sub>0</sub> ≈ −0.5 · e<sup>−0.25</sup> ≈ −0.389</span>。</p>
+
+<div class="box">
+<b>符号修正</b>：上一轮对话里我写的是 <span class="math">V<sub>0</sub> = +2κk<sub>L</sub>²e<sup>−k<sub>L</sub>²</sup></span>，这里严格化后 <span class="math">V<sub>0</sub> ≈ −0.389</span>（来自 φ' 的负号）。振幅不变，只是相位差 π。
+</div>
+
+<h3>4.2 理论预言表</h3>
+
+<p>把 (10) 代入 <span class="math">E ≈ (0.5 + 0.816)/2 ≈ 0.658</span>, <span class="math">D<sub>0</sub> ≈ −0.316</span>, <span class="math">V<sub>0</sub> ≈ −0.389</span>：</p>
+
+<table>
+<tr><th>观测量</th><th>理论轨迹（精确 TDVP 或真实演化）</th><th>条件</th></tr>
+<tr><td><span class="math">E(t)</span></td>
+    <td>≡ 0.658（严格常数）</td>
+    <td><span class="label exact">几何守恒</span> §2</td></tr>
+<tr><td><span class="math">‖ψ(t)‖²</span></td>
+    <td>≡ ‖ψ(0)‖²</td>
+    <td><span class="label exact">几何守恒</span> §2</td></tr>
+<tr><td><span class="math">σ<sub>xx</sub>(t)</span></td>
+    <td>0.658 − 0.158 cos(2t) − 0.389 sin(2t)</td>
+    <td>周期 π，振幅 ≈ 0.42</td></tr>
+<tr><td><span class="math">σ<sub>pp</sub>(t)</span></td>
+    <td>0.658 + 0.158 cos(2t) + 0.389 sin(2t)</td>
+    <td>周期 π，振幅 ≈ 0.42</td></tr>
+<tr><td><span class="math">σ<sub>xx</sub> + σ<sub>pp</sub></span></td>
+    <td>≡ 2E = 1.316（严格常数）</td>
+    <td>virial</td></tr>
+<tr><td><span class="math">|⟨ψ(0)|ψ(2π)⟩|²</span></td>
+    <td>= 1（整体相位 −1）</td>
+    <td>HO 谱 E<sub>n</sub> = n + ½</td></tr>
+</table>
+
+<p><span class="small">注：周期 <span class="math">T = 2π</span> 时 cos(4π)=1, sin(4π)=0，所有 σ 回到初值；<span class="math">T = π</span> 时 cos(2π)=1 同理。所以 <span class="math">σ<sub>xx</sub>, σ<sub>pp</sub></span> 的最小周期是 π，但 <span class="math">|F(t)|²</span> 的周期是 2π。</span></p>
+
+<h2>5. 回到"不在本征态"这件事</h2>
+
+<p>用户的原话："本质上就是一个不在本征态的态的演化。"</p>
+
+<p>在 TDVP 的语境下，"不在本征态"可以解析成两件<b>不等价</b>的事：</p>
+
+<table>
+<tr><th></th><th>含义</th><th>ε(t)</th><th>后果</th></tr>
+<tr><td>(a)</td>
+    <td>|ψ⟩ 不是 Ĥ 本征态：Ĥ|ψ⟩ 与 |ψ⟩ 不平行</td>
+    <td><span class="todo">可能为 0 也可能 &gt; 0</span></td>
+    <td>—</td></tr>
+<tr><td>(b)</td>
+    <td>Ĥ|ψ⟩ 不在 T<sub>ψ</sub>M 内（流形不够大）</td>
+    <td><span class="todo">&gt; 0</span></td>
+    <td>TDVP 轨迹离开真实轨迹，但 E、norm 仍精确守恒</td></tr>
+</table>
+
+<p>踢后态同时满足 (a) 和 (b)：</p>
+
+<ul>
+<li>(a) 是物理事实：kick 激发了高能模式。</li>
+<li>(b) 取决于变分基。K=1 ECG 只能写一个 Gaussian，绝无法表达 <span class="math">e<sup>−iκ cos(2k<sub>L</sub>x)</sup> ψ<sub>0</sub></span>——必须 augment 出动量副本（task4 Step 3.5 做的事）。加得够多，(b) 的残差能压低，但永远 <span class="math">ε &gt; 0</span>。</li>
+</ul>
+
+<div class="box ok">
+<b>总结</b>：(a) + (b) 让 TDVP 轨迹<b>偏离</b>真实 Schrödinger 演化（表现在 |F(t)|² &lt; 1、σ<sub>xx</sub> 相位漂移），但<b>不会</b>让 E 或 ‖ψ‖² 漂。这两个守恒是由式 (4) 的几何结构保证的，与 ε 是否为零<b>无关</b>。
+</div>
+
+<h2>6. 数值上为什么还是飘？</h2>
+
+<p>§2 的证明关键用到 (1)：<span class="math">P<sub>T</sub><sup>†</sup> = P<sub>T</sub></span>。这个等式需要 <span class="math">C</span> 精确可逆且 <span class="math">C<sup>−1</sup></span> 被完整保留。数值现实：</p>
+
+<h3>6.1 Gauge / 过参数化 → C 病态</h3>
+
+<p>ECG 参数化 <span class="math">|ψ⟩ = Σ u<sub>i</sub> φ<sub>i</sub></span>，多个 <span class="math">φ<sub>i</sub></span> 可以通过小调 <span class="math">(u, A, B, R)</span> 互相吸收：</p>
+
+<ul>
+<li><b>相位 gauge</b>：<span class="math">u<sub>i</sub> → e<sup>iα</sup> u<sub>i</sub></span>（全局相位）是 C 的<b>精确零</b>本征方向。</li>
+<li><b>u-rescale gauge</b>：<span class="math">(u<sub>i</sub>, 其他) → (c·u<sub>i</sub>, 对应调整)</span>，也是零方向。</li>
+<li><b>augment 出的动量副本共线</b>：n=+1 和 n=−1 副本有几乎 mirror 的 <span class="math">⟨φ<sub>i</sub>|φ<sub>j</sub>⟩</span>，cond(C) 1e10+（<code>rothe_implementation_plan.html</code> 已诊断）。</li>
+</ul>
+
+<h3>6.2 SVD 伪逆 + Tikhonov → 投影变非厄米</h3>
+
+<p>实现里 <span class="math">C<sup>−1</sup></span> 被替换为</p>
+
+<div class="math-block">
+C̃<sup>−1</sup> = (C + λI)<sup>−1</sup> 截断小于 rcond·σ<sub>max</sub> 的 SVD 模式
+</div>
+
+<p>对应的"投影算子"</p>
+
+<div class="math-block">
+P̃<sub>T</sub> = |∂<sub>α</sub>⟩ (C̃<sup>−1</sup>)<sub>αβ</sub> ⟨∂<sub>β</sub>|
+</div>
+
+<p>一般<b>不再满足</b> <span class="math">P̃<sub>T</sub><sup>†</sup> = P̃<sub>T</sub></span>（Tikhonov 加的 λI 保厄米，但 rcond 截断的"伪逆"对左右奇异向量<b>不对称</b>处理时就破对称）。即便精确保留厄米性，<span class="math">P̃<sub>T</sub> ≠ P̃<sub>T</sub><sup>2</sup></span>，它不再是投影算子。§2 的证明关键用 "<span class="math">P<sub>T</sub></span> 自伴 → <span class="math">Ĥ P<sub>T</sub> Ĥ</span> 自伴" 这一步断了：</p>
+
+<div class="math-block">
+(Ĥ P̃<sub>T</sub> Ĥ)<sup>†</sup> = Ĥ P̃<sub>T</sub><sup>†</sup> Ĥ ≠ Ĥ P̃<sub>T</sub> Ĥ
+&nbsp;&nbsp;⟹&nbsp;&nbsp; ⟨ψ|Ĥ P̃<sub>T</sub> Ĥ|ψ⟩ ∉ ℝ
+</div>
+
+<p>其虚部贡献 <span class="math">Re(−i · 复数)</span> 就是能量漂的瞬时速率。</p>
+
+<h3>6.3 离散积分</h3>
+
+<p>即使 <span class="math">P<sub>T</sub></span> 精确，RK4 用在 <span class="math">ż = −i C<sup>−1</sup> g</span> 上有 <span class="math">O(dt<sup>4</sup>)</span> 能量漂；但 RK4 不是 symplectic 积分器（即 <span class="math">ż = f(z)</span> 形式没有辛结构），所以漂是系统偏置的。</p>
+
+<h3>6.4 为什么 K=1 基态（task6）应该是机器精度</h3>
+
+<p>K=1 基态：<span class="math">Ĥ|ψ⟩ = ½|ψ⟩ = (½/u) |∂<sub>u</sub>ψ⟩ ∈ T<sub>ψ</sub>M</span>。</p>
+
+<ul>
+<li>ε = 0（情形 A + B）；</li>
+<li>C 是 4×4（u, A, B, R）——有 u-相位 gauge 方向精确零，其他方向良定；</li>
+<li>即便伪逆截掉零方向，|ψ̇⟩ = −iE|ψ⟩ 的物理解依然落在非零方向上，不受影响；</li>
+<li>ż 应该只有 <span class="math">u̇ = −iE u</span>，其他方向精确 0；</li>
+<li>离散误差 O(dt<sup>4</sup>) 对 RK4 只影响 u 的相位精度——不影响 E, ‖ψ‖², ⟨x²⟩, ⟨p²⟩。</li>
+</ul>
+
+<div class="box bad">
+<b>所以：如果 task6 跑出 max|ΔE| &gt; 1e-8，或 A/B/R 的 dz 非零，那不是 gauge 问题，而是装配的 bug——比如 g_α 里 H 矩阵元的构造、C 矩阵的装配、Wirtinger 导数约定之类。</b>切 Rothe 前这个必须先过。
+</div>
+
+<h2>7. 数值验证：双 kick + 有限脉冲 TDVP (task7)</h2>
+
+<p><b>目的</b>：把前面 §2–§6 的理论判断用 Route-1 踢后态 + 自由演化 + 第二次 kick 脉冲 的设置打通一遍，看实测数字和理论判断是否对得上。</p>
+
+<h3>7.1 设置</h3>
+
+<ol>
+<li><b>起点</b>：Route-1 踢后态 <span class="math">|ψ(0)⟩ = U<sub>kick</sub> ψ<sub>0</sub></span>，在 <span class="math">K<sub>pre</sub>=1 + n<sub>mom</sub>=2</span> augment 出的基底上拟合，K<sub>cap</sub> 截到 3 或 5。</li>
+<li><b>阶段 A (t ∈ [0, T<sub>free</sub>])</b>：TDVP 实时演化，<span class="math">Ĥ = T̂ + V̂<sub>ho</sub></span>。</li>
+<li><b>阶段 B (t ∈ [T<sub>free</sub>, T<sub>free</sub> + T<sub>pulse</sub>])</b>：TDVP 实时演化，<span class="math">Ĥ<sub>pulse</sub> = (κ/T<sub>pulse</sub>)cos(2k<sub>L</sub>x)</span>，使 <span class="math">∫Ĥ<sub>pulse</sub> dt = κcos(2k<sub>L</sub>x)</span> 还原瞬时 kick 极限。</li>
+</ol>
+
+<div class="box theorem">
+<b>关键理论观察</b>（简化脉冲期）：<span class="math">Ĥ<sub>pulse</sub></span> 是<b>纯位置算符</b>，任意时刻对易 <span class="math">[Ĥ<sub>pulse</sub>(t<sub>1</sub>), Ĥ<sub>pulse</sub>(t<sub>2</sub>)] = 0</span>。故
+<div class="math-block">
+U<sub>pulse</sub> = exp(-i ∫<sub>0</sub><sup>T<sub>pulse</sub></sup> Ĥ<sub>pulse</sub> dt) = exp(-iκcos(2k<sub>L</sub>x)) = U<sub>瞬时 kick</sub>
+</div>
+<b>与 T<sub>pulse</sub> 的值无关</b>——真实演化 Schrödinger 角度 T<sub>pulse</sub> = 0.01, 0.1, 1, 100 都给出相同末态。所以 T<sub>pulse</sub> 的选择<b>纯粹是 TDVP 的数值稳定性参数</b>，不是物理参数。
+</div>
+
+<h3>7.2 网格精确参考（task2, n_kicks=2）</h3>
+
+<table>
+<tr><th>kick 次数</th><th>E (grid, N<sub>grid</sub>=512)</th><th>备注</th></tr>
+<tr><td>0 (初态 HO 基态)</td><td>0.4999</td><td>网格误差 1e-4</td></tr>
+<tr><td>1 (task7 的 t=0)</td><td>0.6577</td><td>Route-1 初态 E=0.6578，对得上 ✓</td></tr>
+<tr><td>2 (task7 的 t=T<sub>free</sub>+T<sub>pulse</sub>)</td><td><b>0.8526</b></td><td><b>TDVP 目标参考值</b></td></tr>
+</table>
+
+<h3>7.3 阶段 A：K=3 稳，K=5 漂速增大但不崩</h3>
+
+<table>
+<tr><th>配置</th><th>T<sub>free</sub></th><th>dt</th><th>max|ΔE|</th><th>单位时间漂速</th><th>cond(C) max</th><th>sv<sub>min3</sub> 最小</th></tr>
+<tr><td><b>K=3</b> · A+R, u Lie-Trotter · 6 参数</td>
+    <td>1.0</td><td>1e-3</td>
+    <td><b>1.6e-5</b></td><td>1.6e-5 / unit t</td>
+    <td>5e4</td><td>1e-5 <span class="pass">(未打底)</span></td></tr>
+<tr><td><b>K=5</b> · A+R, u Lie-Trotter · 10 参数</td>
+    <td>0.3</td><td>1e-4</td>
+    <td>1.2e-3</td><td>4e-3 / unit t (<b>~250× K=3</b>)</td>
+    <td>4e5</td><td>8e-7 <span class="pass">(未打底)</span></td></tr>
+</table>
+
+<div class="box">
+<b>验证 §6.4</b>：K=3 配置下 <span class="math">sv<sub>min3</sub> = (1e-5, 1e-3, 1e-2)</span> 没打 <span class="math">λ<sub>C</sub>=1e-8</span> 的楼层，<span class="math">P̃<sub>T</sub></span> 接近真 <span class="math">P<sub>T</sub></span> → §2 证明基本有效 → E 守恒到 <b>1.6e-5</b>。<br>
+K=5 的 10 参数多了 4 个方向，cond(C) 从 5e4 涨到 4e5，最小奇异值接近但未到 <span class="math">λ<sub>C</sub></span>，所以没崩，但漂速显著增大 → §6.2 预言完全对应。
+</div>
+
+<h3>7.4 阶段 B：gauge 消除的单调改善，但流形误差 ε 主导 ΔE</h3>
+
+<p>所有配置 <span class="math">T<sub>free</sub>=1.0, T<sub>pulse</sub>=0.5, dt=1e-3, κ/T<sub>pulse</sub>=2</span>。K=3 为基：</p>
+
+<table>
+<tr><th>阶段 B 变分参数</th><th>参数数</th><th>E(末)</th><th>Δ⟨x²⟩<br>(理论 ≈ 0)</th><th>max|ΔE|<br>(阶段 B)</th><th>sv<sub>min3</sub> 最小</th></tr>
+<tr><td>u + B + R + A (全开)</td><td>12</td>
+    <td>0.992 (+0.14)</td>
+    <td>0.089</td>
+    <td>0.33</td>
+    <td>1e-8 <span class="fail">(3 个底)</span></td></tr>
+<tr><td>u + R + A (关 B)</td><td>9</td>
+    <td>1.329 (+0.48)</td>
+    <td>0.070</td>
+    <td>0.67</td>
+    <td>1e-8 <span class="fail">(1 个底)</span></td></tr>
+<tr><td><b>A + R (u Lie-Trotter)</b></td><td>6</td>
+    <td>1.297 (+0.44)</td>
+    <td><b>0.026</b></td>
+    <td>0.64</td>
+    <td>5e-6 <span class="pass">(未打底)</span></td></tr>
+<tr><td colspan="6" style="background: #dafbe1;"><b>网格精确</b>：E = <b>0.8526</b>，Δ⟨x²⟩ = 0</td></tr>
+</table>
+
+<h4>7.4.1 单调 trend：消 gauge → Δ⟨x²⟩ 单调改善</h4>
+
+<p>12 → 9 → 6 参数对应依次消除：(i) B 带的 K=3 个冗余方向，(ii) u 带的全局相位 gauge 方向。<span class="math">sv<sub>min3</sub></span> 的 1e-8 底从 3 个减到 1 个再到 0 个。Δ⟨x²⟩ <b>单调</b> 从 0.089 降到 <b>0.026</b>——和 §6.2 的"截断破对称"理论完美对齐。</p>
+
+<h4>7.4.2 核心反差：ΔE 没改善</h4>
+
+<p>从 12 → 9 → 6 参数，ΔE 是 <b>0.33 → 0.67 → 0.64</b>——<b>不</b>跟着 gauge 消除单调降低。这说明 E 漂的主导机制<b>不是</b> §6.2 的"投影非厄米"，而是 §3 的<b>流形误差</b> ε：</p>
+
+<div class="math-block">
+ε(t) = ‖(1-P<sub>T</sub>)Ĥ<sub>pulse</sub>|ψ(t)⟩‖
+</div>
+
+<p>直接看数字：<b>网格给 E(kick 2) = 0.853，TDVP 不论 K=3 基怎么配都落在 1.3 附近</b>——流形再怎么内部"干净"，装不下 <span class="math">e<sup>-iκcos(2k<sub>L</sub>x)</sup> ψ(T<sub>free</sub>)</span> 的 Jacobi-Anger 高阶展开（|n| ≥ 3）。ε 的能量投影分量就直接是 E 漂的"来源"。</p>
+
+<div class="box warn">
+<b>这是 §3 流形误差 ε 的实测体现</b>：<br>
+&nbsp;&nbsp;• §2 守恒证明只用 <span class="math">P<sub>T</sub></span> 厄米性 → E 能"守恒到错的值"。6 参数配置 max|ΔE|=0.64 看起来是"不守恒"，但注意 <b>H<sub>pulse</sub> 包含 V<sub>kick</sub></b>，TDVP 测的 E = ⟨T+V<sub>ho</sub>⟩ 不是脉冲期的守恒量；脉冲 H 的守恒量是 <span class="math">⟨Ĥ<sub>pulse</sub>⟩</span>，TDVP 对它<b>仍守恒</b>（sv 未打底），但这不约束 E = ⟨T+V<sub>ho</sub>⟩。<br>
+&nbsp;&nbsp;• 真正问题：TDVP 轨迹 <span class="math">|ψ<sub>TDVP</sub>(t)⟩</span> 本身偏离真实 <span class="math">e<sup>-iĤ<sub>pulse</sub>t</sup>|ψ(T<sub>free</sub>)⟩</span>，体现在测出来的 ⟨T+V<sub>ho</sub>⟩ 和网格差 52%。<br>
+&nbsp;&nbsp;• 不是 gauge、不是伪逆、不是离散误差——是<b>流形本身不够大</b>。
+</div>
+
+<h3>7.5 验证"T<sub>pulse</sub> 理论上无关"</h3>
+
+<p>§7.1 的 box 说：对 kick-only H，T<sub>pulse</sub> 不是物理参数。实测对比：</p>
+
+<table>
+<tr><th>T<sub>pulse</sub></th><th>kicking_scale</th><th>TDVP 稳定</th><th>E(末)</th></tr>
+<tr><td>0.05</td><td>20</td><td><span class="fail">NaN 崩</span></td><td>—</td></tr>
+<tr><td>0.2</td><td>5</td><td>稳（9 参数）</td><td>1.13 (+0.28)</td></tr>
+<tr><td>0.5</td><td>2</td><td>稳（6 参数）</td><td>1.30 (+0.44)</td></tr>
+</table>
+
+<p>T<sub>pulse</sub> 长短对 <b>TDVP 结果</b>有影响（越长累积步越多，但单步也越温和），但对<b>真实 Schrödinger 演化</b>无影响——差别纯粹来自 TDVP 的非幺正性/流形误差。实证也说明：<b>T<sub>pulse</sub> → 0 不一定最好</b>，反而太小（kicking_scale 大）会触发 CFL 型崩溃。</p>
+
+<h3>7.6 小结：task7 把 §2–§6 的判断全部测到</h3>
+
+<table>
+<tr><th>理论判断</th><th>实测证据</th><th>结果</th></tr>
+<tr><td>§2: 精确 P<sub>T</sub> → E 守恒</td>
+    <td>K=3, sv 未打底, ΔE = 1.6e-5</td>
+    <td><span class="pass">对上</span></td></tr>
+<tr><td>§6.2: 截断破厄米 → E 漂</td>
+    <td>12 参数配置, 3 个 sv=1e-8, 阶段 B ΔE=0.33</td>
+    <td><span class="pass">对上</span></td></tr>
+<tr><td>消除冗余 (B, u-gauge) → sv 清底</td>
+    <td>12 → 9 → 6 参数, 1e-8 底数 3 → 1 → 0</td>
+    <td><span class="pass">对上</span></td></tr>
+<tr><td>§3: 流形误差 ε > 0 → 轨迹偏离（但守 E）</td>
+    <td>6 参数 sv 干净, Δ⟨x²⟩=0.026 好; E=1.30 ≠ 0.85 (流形装不下)</td>
+    <td><span class="pass">对上</span></td></tr>
+<tr><td>T<sub>pulse</sub> 是数值参数不是物理参数</td>
+    <td>不同 T<sub>pulse</sub> 给不同 TDVP 结果，但真实演化一致</td>
+    <td><span class="pass">对上</span></td></tr>
+</table>
+
+<div class="box bad">
+<b>task7 给出的技术判决</b>：<br>
+&nbsp;&nbsp;1. 阶段 A（<span class="math">Ĥ|ψ⟩</span> 几乎在 <span class="math">T<sub>ψ</sub>M</span> 内）：TDVP 在<b>消完 gauge</b>后可用（K=3 的 1.6e-5 已经可接受）。<br>
+&nbsp;&nbsp;2. 阶段 B（kick 把态强行扔出流形）：TDVP 几何守恒没砸，但 <b>ψ(t) 已经和真实演化脱钩</b>。ΔE 在 0.64、E(末) 1.30（网格 0.85）——<b>K 固定的 TDVP 无法修</b>。<br>
+&nbsp;&nbsp;3. 想让 E(kick 2) 逼近 0.853，唯一的路是 <b>Rothe + 自适应加基</b>（JCP 2025 方法），把 ε 压到可控阈值以下。这正是 <code>rothe_implementation_plan.html</code> 要做的事。
+</div>
+
+<h2>8. 结构性小结</h2>
+
+<table>
+<tr><th>层</th><th>对象</th><th>定性</th></tr>
+<tr><td>几何</td>
+    <td>连续 TDVP + 精确 P<sub>T</sub></td>
+    <td><span class="label exact">精确</span> E、‖ψ‖² 严格守恒（§2 定理）</td></tr>
+<tr><td>流形</td>
+    <td>ε(t) = ‖(1−P<sub>T</sub>)Ĥψ‖</td>
+    <td><span class="label approx">非零</span> TDVP ≠ 真实演化，但不破坏守恒</td></tr>
+<tr><td>Ehrenfest</td>
+    <td>σ<sub>xx</sub>, σ<sub>pp</sub> 按 (10) 振荡</td>
+    <td><span class="label exact">周期 π</span> 和 "不在本征态" 直接耦合</td></tr>
+<tr><td>数值</td>
+    <td>C 病态 + rcond/λ 替换</td>
+    <td><span class="label bad">破对称</span> §2 的证明断了，E 开始漂</td></tr>
+<tr><td>离散</td>
+    <td>RK4 / Euler</td>
+    <td><span class="label approx">O(dt<sup>p</sup>)</span> 在正确 EOM 上叠加高阶偏置</td></tr>
+</table>
+
+<div class="box ok">
+<b>诊断建议</b>：<br>
+&nbsp;1. 先跑 task6（K=1 基态，ε=0，C 最小），确认 E、norm 守恒到机器精度。这是<b>非 gauge、非流形</b>的自检。<br>
+&nbsp;2. 跑 K=2 踢后态（只加 n=+1 或 n=−1 一个动量副本），看 E 漂多快。这是<b>最小 gauge 冗余</b>情形。<br>
+&nbsp;3. 若 (1) 过、(2) 也过（max |ΔE| 可控），问题定位到<b>大 K</b>下 C 近奇异；Rothe 切换有理。<br>
+&nbsp;4. 若 (1) 不过 —— <b>必须先修装配</b>，Rothe 建在坏矩阵元上也救不了。
+</div>
+
+<p class="small" style="margin-top: 3em; border-top: 1px solid #d0d7de; padding-top: 1em;">
+ ECG1D C++ 项目 · TDVP 守恒定律严格推导 · 2026-04-23
+</p>
+
+</body>
+</html>

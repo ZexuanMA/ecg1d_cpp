@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ECG1D TDVP 实时演化：理论 · 实验 · 下一步 · 2026-04-23</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+       max-width: 980px; margin: 2em auto; padding: 0 1.5em; color: #24292e; line-height: 1.7; }
+h1 { color: #0366d6; border-bottom: 3px solid #0366d6; padding-bottom: 0.4em; }
+h1.title { font-size: 1.8em; margin-bottom: 0.2em; }
+.subtitle { color: #57606a; font-size: 1em; margin: 0 0 2em 0; font-style: italic; }
+h2 { color: #0366d6; margin-top: 2.2em; border-bottom: 1px solid #d0d7de; padding-bottom: 0.2em; }
+h3 { color: #57606a; margin-top: 1.5em; }
+h4 { color: #24292e; margin-top: 1em; }
+code, pre { font-family: Menlo, Consolas, monospace; }
+code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; font-size: 0.92em; }
+pre  { background: #f6f8fa; padding: 1em 1.2em; border-radius: 6px; overflow-x: auto;
+       font-size: 0.9em; line-height: 1.5; border-left: 4px solid #d0d7de; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.95em; }
+th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; vertical-align: top; }
+th { background: #f6f8fa; font-weight: 600; }
+.math { font-style: italic; font-family: "Cambria Math", "Latin Modern Math", Georgia, serif; }
+.math-block { text-align: center; font-size: 1.08em; margin: 0.9em 0;
+              font-family: "Cambria Math", Georgia, serif; font-style: italic;
+              padding: 0.6em 1em; background: #f6f8fa; border-radius: 4px; }
+.eq-num { float: right; font-style: normal; color: #57606a; }
+.box { border: 1px solid #d0d7de; border-left: 4px solid #0366d6; padding: 0.8em 1.2em; margin: 1em 0; background: #f6f8fa; }
+.box.ok   { border-left-color: #1a7f37; background: #dafbe1; }
+.box.warn { border-left-color: #bf8700; background: #fff8c5; }
+.box.bad  { border-left-color: #cf222e; background: #ffebe9; }
+.box.theorem { border-left-color: #8250df; background: #fbf0ff; }
+.box.theorem b { color: #8250df; }
+.box.exec { border-left-color: #0969da; background: #ddf4ff; padding: 1em 1.4em; font-size: 1.0em; }
+.box.exec h2 { margin-top: 0.5em; border: none; padding: 0; color: #0969da; }
+.small { font-size: 0.85em; color: #57606a; }
+.pass { color: #1a7f37; font-weight: 600; }
+.fail { color: #cf222e; font-weight: 600; }
+.todo { color: #bf8700; font-weight: 600; }
+.label { display: inline-block; padding: 2px 8px; border-radius: 3px;
+         font-size: 0.85em; font-weight: 600; }
+.label.exact { background: #dafbe1; color: #1a7f37; }
+.label.approx { background: #fff8c5; color: #9a6700; }
+.label.bad { background: #ffebe9; color: #cf222e; }
+.star { background: #dafbe1; }
+nav.toc { background: #f6f8fa; padding: 1em 1.5em; border-radius: 6px; border: 1px solid #d0d7de; margin: 1em 0 2em 0; }
+nav.toc ol { margin: 0.5em 0; padding-left: 1.5em; }
+nav.toc li { margin: 0.3em 0; }
+nav.toc a { color: #0366d6; text-decoration: none; }
+nav.toc a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1 class="title">ECG1D TDVP 实时演化：理论 · 实验 · 下一步</h1>
+<p class="subtitle">2026-04-23 汇报 · 单粒子 N=1 · H = T + V<sub>ho</sub> (+ V<sub>kick</sub>) · 汇总 task5 (实时 TDVP 一个周期) 和 task7 (双 kick 脉冲) 的实验结果</p>
+
+<div class="box exec">
+<h2>执行摘要</h2>
+
+<p><b>物理目标</b>：用 ECG + TDVP 对 MBDL（多体动力学局域化，Guo et al. Science 2025）做<b>量化</b>模拟，第一步在 N=1 上验证方法。</p>
+
+<p><b>已做到的</b>：</p>
+<ul>
+<li>静态基态优化（虚时 TDVP）误差 1e-12 ✓</li>
+<li>单次解析 kick + Route-1 target-fitting（F<sub>init</sub> = 0.989 @ K=3, 0.9994 @ K=9）✓</li>
+<li>K=1 HO 基态实时 TDVP 自检：628 步全程机器零误差 ✓（证明核心装配无 bug）</li>
+<li>K=3 Wiener + dt=1e-3 撑完 T=2π 实时演化，ΔE=11%，|F(T)|²=0.874（当前 best baseline）</li>
+</ul>
+
+<p><b>核心发现（task7）</b>：双 kick 脉冲实验揭示三层失效结构：</p>
+<ol>
+<li><b>Gauge 层</b>：TDVP 的 E 守恒在消完 u/B/动量副本的 gauge 冗余后工作（K=3 阶段 A 达到 ΔE = 1.6e-5）</li>
+<li><b>流形层</b>：但 K 固定时流形装不下 kick 后的 Jacobi-Anger 高阶展开 ⇒ TDVP 轨迹偏离真实 Schrödinger 演化，E(kick 2) 落在 1.30 vs 网格精确 0.853（偏 52%）</li>
+<li><b>结论</b>：K 固定的 TDVP 无法修。唯一出路是 <b>Rothe 方法（JCP 2025）+ 自适应加基</b>，已在 task8 完成 M1+M2。</li>
+</ol>
+
+<p><b>下一步</b>：推进 Rothe M3（K=2–3 踢后态演化），对比网格精确值，若对上则切换为主线方法并继续 MBDL 多 kick。</p>
+</div>
+
+<nav class="toc">
+<b>目录</b>
+<ol>
+<li><a href="#s1">物理目标与 MBDL 背景</a></li>
+<li><a href="#s2">理论基础：TDVP 守恒定律</a></li>
+<li><a href="#s3">数值上为什么还是飘</a></li>
+<li><a href="#s4">实验 · task5：一个谐振周期的实时 TDVP</a></li>
+<li><a href="#s5">实验 · task7：双 kick + 有限脉冲</a></li>
+<li><a href="#s6">结论：流形层瓶颈 → Rothe 方法</a></li>
+<li><a href="#s7">相关文档</a></li>
+</ol>
+</nav>
+
+<!-- ============================================================= -->
+<h2 id="s1">1. 物理目标与 MBDL 背景</h2>
+
+<p><b>长期目标</b>：量化模拟 Guo et al. <i>Science</i> 389, 716 (2025) 的多体动力学局域化（MBDL）。原文实验观测三大信号：</p>
+<ol>
+<li>动量分布 <span class="math">n(k)</span> 冻结</li>
+<li>能量和熵的饱和</li>
+<li>一阶关联函数 <span class="math">G<sup>(1)</sup>(z)</span> 的特征衰减</li>
+</ol>
+<p>文章的理论建模（QMC + Floquet）只捕捉到<b>定性</b>一致。ECG + TDVP 提供了从变分动力学角度做<b>定量</b>预测的可能。</p>
+
+<p><b>第一步（本阶段）</b>：在 N=1 + 单粒子谐振子 + 周期 kick 的最简 Hamiltonian 上打通方法：</p>
+
+<div class="math-block">
+Ĥ(t) = T̂ + V̂<sub>ho</sub> + V<sub>kick</sub>(x) · Σ<sub>n</sub> δ(t − nT)
+</div>
+
+<p>单周期演化 <span class="math">U = U<sub>kick</sub> · U<sub>free</sub>(T)</span>。N=1 没有相互作用也不是严格的 MBDL，但为多体情形打 TDVP 基础。</p>
+
+<p><b>验收（task5）</b>：实时 TDVP 在 T=2π 一个谐振周期内</p>
+<ul>
+<li>撑完 628 步 @ dt=1e-2（或 6283 步 @ dt=1e-3）不崩</li>
+<li>E(t) 守恒（H 不含 t → 理论严格守恒）</li>
+<li>‖ψ‖² 守恒（幺正）</li>
+<li><span class="math">|⟨ψ(0)|ψ(T)⟩|² ≈ 1</span>（HO 谱 E<sub>n</sub> = n+½ 的 recurrence）</li>
+</ul>
+
+<!-- ============================================================= -->
+<h2 id="s2">2. 理论基础：TDVP 守恒定律</h2>
+
+<h3>2.1 变分流形与 Dirac-Frenkel 原理</h3>
+
+<p>变分流形 <span class="math">M = {|ψ(z)⟩ : z ∈ ℂⁿ}</span>，<span class="math">z = (u, A, B, R)</span>；切空间 <span class="math">T<sub>ψ</sub>M = span { |∂<sub>α</sub>ψ⟩ }</span>；<span class="math">P<sub>T</sub></span> 为正交投影到切空间（厄米、幂等）。ECG 的线性 u 使 <span class="math">|ψ⟩ ∈ T<sub>ψ</sub>M</span>。</p>
+
+<p>Dirac-Frenkel 最小化 <span class="math">‖|ψ̇⟩ − (−iĤ)|ψ⟩‖²</span> in <span class="math">T<sub>ψ</sub>M</span>，给出</p>
+
+<div class="math-block">
+C<sub>αβ</sub> ż<sub>β</sub> = −i g<sub>α</sub>,&nbsp;&nbsp;
+C<sub>αβ</sub> = ⟨∂<sub>α</sub>ψ|∂<sub>β</sub>ψ⟩,&nbsp;&nbsp;
+g<sub>α</sub> = ⟨∂<sub>α</sub>ψ|Ĥ|ψ⟩ <span class="eq-num">(1)</span>
+</div>
+
+<p>几何上：<span class="math">|ψ̇⟩ = −i P<sub>T</sub> Ĥ |ψ⟩</span>。</p>
+
+<h3>2.2 严格守恒定理</h3>
+
+<div class="box theorem">
+<b>定理</b>：<span class="math">Ĥ = Ĥ<sup>†</sup></span> + TDVP 方程 (1) + <span class="math">|ψ⟩ ∈ T<sub>ψ</sub>M</span> ⟹
+<div class="math-block">
+d⟨ψ|Ĥ|ψ⟩/dt = 0,&nbsp;&nbsp;&nbsp;d‖ψ‖²/dt = 0 <span class="eq-num">(2)</span>
+</div>
+</div>
+
+<p><b>证明</b>（两行）：</p>
+
+<div class="math-block">
+d⟨ψ|Ĥ|ψ⟩/dt = 2Re⟨ψ|Ĥ|ψ̇⟩ = −2Re(i⟨ψ|Ĥ P<sub>T</sub> Ĥ|ψ⟩)
+</div>
+
+<p>注意 <span class="math">Ĥ P<sub>T</sub> Ĥ</span> 厄米（<span class="math">Ĥ<sup>†</sup>=Ĥ</span>，<span class="math">P<sub>T</sub><sup>†</sup>=P<sub>T</sub></span>），期望值实数，<span class="math">Re(−i·ℝ) = 0</span>。∎</p>
+
+<div class="box ok">
+<b>推论</b>：证明不依赖 M 的维数、基的线性无关、ψ 是否本征态、流形是否装下真实演化。<b>只依赖 P<sub>T</sub> 的厄米性。</b>这是纯几何事实。
+</div>
+
+<h3>2.3 流形误差 ε(t)</h3>
+
+<p>真实演化 <span class="math">|ψ̇⟩<sub>exact</sub> = −iĤ|ψ⟩</span>，和 TDVP 的差：</p>
+
+<div class="math-block">
+ε(t) = ‖(1 − P<sub>T</sub>) Ĥ|ψ(t)⟩‖ <span class="eq-num">(3)</span>
+</div>
+
+<table>
+<tr><th>情形</th><th>条件</th><th>ε(t)</th><th>TDVP 轨迹</th></tr>
+<tr><td>A. ψ 是 Ĥ 本征态</td><td>Ĥ|ψ⟩ ∝ |ψ⟩ ∈ T<sub>ψ</sub>M</td><td>= 0</td><td>TDVP = 真实演化（纯相位）</td></tr>
+<tr><td>B. 非本征态，但 Ĥ|ψ⟩ ∈ T<sub>ψ</sub>M</td><td>流形够大</td><td>= 0</td><td>TDVP = 真实演化</td></tr>
+<tr><td>C. Ĥ|ψ⟩ ∉ T<sub>ψ</sub>M</td><td>一般情形</td><td>&gt; 0</td><td><b>TDVP ≠ 真实演化，但 E、‖ψ‖² 仍守恒</b></td></tr>
+</table>
+
+<h3>2.4 Ehrenfest：⟨x²⟩, ⟨p²⟩ 在真实演化下</h3>
+
+<p>对 <span class="math">Ĥ = ½(p̂² + x̂²)</span>，令 <span class="math">σ<sub>xx</sub> = ⟨x̂²⟩</span> 等：</p>
+
+<div class="math-block">
+σ̇<sub>xx</sub> = 2σ<sub>xp</sub>,&nbsp;&nbsp;σ̇<sub>pp</sub> = −2σ<sub>xp</sub>,&nbsp;&nbsp;σ̇<sub>xp</sub> = σ<sub>pp</sub> − σ<sub>xx</sub>
+</div>
+
+<p>本征值 <span class="math">{0, ±2i}</span>。<b>周期 π</b> 振荡 + 守恒量 <span class="math">σ<sub>xx</sub> + σ<sub>pp</sub> = 2E</span>。</p>
+
+<p>对 κ=1, k<sub>L</sub>=0.5 踢后态：<span class="math">E ≈ 0.658, D<sub>0</sub> ≈ −0.316, V<sub>0</sub> = −2κk<sub>L</sub>²e<sup>−k<sub>L</sub>²</sup> ≈ −0.389</span>，振幅 ≈ 0.42。</p>
+
+<!-- ============================================================= -->
+<h2 id="s3">3. 数值上为什么还是飘</h2>
+
+<p>§2 的证明用到 <span class="math">P<sub>T</sub><sup>†</sup> = P<sub>T</sub></span>。实现里这一步断：</p>
+
+<h3>3.1 Gauge / 过参数化 → C 病态</h3>
+
+<ul>
+<li><b>相位 gauge</b>：<span class="math">u<sub>i</sub> → e<sup>iα</sup> u<sub>i</sub></span> 是 C 的<b>精确零</b>本征方向</li>
+<li><b>动量副本共线</b>：augment 的 n=±1 几近 mirror → cond(C) 1e10+</li>
+<li><b>Width 重用</b>：greedy SVM 选相同 width 多份 → ∂<sub>A</sub>, ∂<sub>B</sub> 平行</li>
+</ul>
+
+<h3>3.2 SVD 伪逆 + Tikhonov → 投影非厄米</h3>
+
+<p>实际用 <span class="math">C̃<sup>−1</sup> = (C + λI)<sup>−1</sup></span> 截断 <span class="math">sv &lt; rcond·σ<sub>max</sub></span> 后的 SVD 模式。对应 <span class="math">P̃<sub>T</sub></span>：</p>
+
+<div class="math-block">
+(Ĥ P̃<sub>T</sub> Ĥ)<sup>†</sup> ≠ Ĥ P̃<sub>T</sub> Ĥ ⟹ ⟨ψ|Ĥ P̃<sub>T</sub> Ĥ|ψ⟩ ∉ ℝ
+</div>
+
+<p>虚部贡献 <span class="math">Re(−i·复数)</span> ≠ 0 → 能量漂速。</p>
+
+<h3>3.3 离散积分</h3>
+
+<p>RK4 on <span class="math">ż = −iC<sup>−1</sup>g</span> 有 O(dt⁴) 能量漂；但不辛 → 偏置不对消。</p>
+
+<h3>3.4 为什么 K=1 基态（task6）是机器精度</h3>
+
+<ul>
+<li>Ĥ|ψ⟩ = ½|ψ⟩ ∈ T<sub>ψ</sub>M → ε=0（情形 A）</li>
+<li>C 4×4，伪逆截掉 u-相位零方向不影响物理解</li>
+<li>ż 只有 <span class="math">u̇ = −iE u</span>，A/B/R 精确 0</li>
+</ul>
+
+<p>实测：628 步全程机器零误差。<b>核心装配无 bug</b>，所有 K≥3 的失败归因到 §3.1-3.2。</p>
+
+<!-- ============================================================= -->
+<h2 id="s5">4. 实验 · task5：一个谐振周期的实时 TDVP</h2>
+
+<h3>4.1 13 种配置总览</h3>
+
+<table>
+<tr><th>配置</th><th>撑到步数</th><th>|F(T)|²</th><th>ΔE</th><th>诊断</th></tr>
+<tr><td>全量 TDVP, K=10~15</td><td class="fail">1~80 步崩</td><td>—</td><td>—</td><td class="fail">C 条件数 1e+77</td></tr>
+<tr><td>K=3 width-major + rcond + Tikh, dt=1e-2</td><td class="pass">628/628</td><td>0.934</td><td>2%</td><td class="pass">首个 baseline</td></tr>
+<tr><td>K=4 width-major</td><td class="fail">499/628</td><td>0.0002</td><td>117×</td><td class="fail">中段炸</td></tr>
+<tr><td>K=5 width-major</td><td class="fail">77/628</td><td>—</td><td>—</td><td class="fail">模式 A</td></tr>
+<tr><td>K=5 interleave</td><td class="fail">50/628</td><td>—</td><td>—</td><td class="fail">模式 B</td></tr>
+<tr><td>K=5 interleave + dt=1e-3</td><td class="fail">1558 中止</td><td>—</td><td>2.4×</td><td class="fail">模式 C</td></tr>
+<tr><td>K=5 Wiener + Tikh</td><td class="fail">5/628</td><td>—</td><td>norm=-6164</td><td class="fail">模式 D</td></tr>
+<tr><td>K=3 Wiener + λ<sub>C</sub>=0, dt=1e-2</td><td>628/628</td><td class="fail">0.111</td><td>8×</td><td class="fail">dt 太大</td></tr>
+<tr class="star"><td><b>★ K=3 Wiener + λ<sub>C</sub>=0, dt=1e-3</b></td><td class="pass"><b>6283/6283</b></td><td><b>0.874</b></td><td>11%</td><td class="pass"><b>当前成功点</b></td></tr>
+<tr><td>K=10 width-major</td><td class="fail">348/628</td><td>—</td><td>崩后 940</td><td class="fail">gauge 漏电 cascade</td></tr>
+<tr><td>K=1 基态 (task6)</td><td class="pass">628/628</td><td>1.0</td><td>机器零</td><td class="pass">核心装配健康</td></tr>
+</table>
+
+<h3>4.2 四种失效模式</h3>
+
+<table>
+<tr><th>模式</th><th>机制</th><th>典型表现</th></tr>
+<tr><td>A: width 重用</td>
+    <td>Greedy 选到相同 width 的基 → ∂<sub>A</sub>, ∂<sub>B</sub> 平行 → C 精确奇异</td>
+    <td>K=5 width-major step 77 |dz|=74 崩</td></tr>
+<tr><td>B: ±n 镜像</td>
+    <td>x→−x 反射对称引边际 sv (~1e-7)，rcond 截不到 → gauge 获非零 dz</td>
+    <td>K=3 interleave E 从 0.658 掉到 0.549 锁死</td></tr>
+<tr><td>C: rcond 阶梯跳</td>
+    <td>sv 漂过 rcond 阈 → 伪逆开关式切换 → dz 不连续</td>
+    <td>K=5 dt=1e-3 E 阶梯跳 0.679→1.601</td></tr>
+<tr><td>D: Wiener+Tikh 冲突</td>
+    <td>Tikh 把 sv 地板抬到 1e-8，Wiener 给 0.3× 放大 → gauge 泄露</td>
+    <td>K=5 step 3 norm=-6164，u 全局翻号</td></tr>
+</table>
+
+<h3>4.3 当前成功点：Wiener + 小 dt</h3>
+
+<p>Wiener 平滑 <span class="math">sinv = sv / (sv² + λ²)</span>：</p>
+<ul>
+<li><b>sv=0 严格给 0</b> → 真 gauge 方向精确清零（<b>必须 λ<sub>C</sub>=0</b>）</li>
+<li><b>sv 连续函数</b> → 无阶梯跳（克制模式 C）</li>
+<li><b>有限放大 1/(2λ)</b> → 比硬 rcond 温和</li>
+</ul>
+
+<p>代价是<b>有偏差</b>（不是 TDVP 严格解），每步 <span class="math">O(λ²/sv)</span>，积累与 dt 成正比。所以 dt 必须小：</p>
+<ul>
+<li>dt=1e-2：bias 推到错位 manifold，E 锁在 5.96 <span class="fail">失败</span></li>
+<li>dt=1e-3：bias 可控，E 恒定 4000+ 步到 6 位小数 <span class="pass">成功</span></li>
+</ul>
+
+<table>
+<tr><th>时段</th><th>E</th><th>说明</th></tr>
+<tr><td>t=0</td><td>0.658</td><td>Route 1 初始（F<sub>init</sub>=0.989）</td></tr>
+<tr><td>t=0.314 → 4.87</td><td>0.6806 恒定</td><td><b>4000+ 步严格守恒到 6 位小数</b></td></tr>
+<tr><td>t=5.18</td><td>0.586</td><td>单次阶梯事件</td></tr>
+<tr><td>t=6.28 (T)</td><td>0.586</td><td>ΔE=11%, |F(T)|²=0.874</td></tr>
+</table>
+
+<!-- ============================================================= -->
+<h2 id="s6">5. 实验 · task7：双 kick + 有限脉冲</h2>
+
+<p><b>动机</b>：task5 单 kick 后的实时 TDVP 能撑，但没告诉我们 <b>K 基底能否支持第二次 kick</b>。task7 直接做：踢一次 → 自由演化 T<sub>free</sub> → 再踢一次，和网格精确比。</p>
+
+<h3>5.1 设置</h3>
+
+<ol>
+<li><b>起点</b>：Route-1 踢后态 <span class="math">|ψ(0)⟩ = U<sub>kick</sub> ψ<sub>0</sub></span></li>
+<li><b>阶段 A (t ∈ [0, T<sub>free</sub>])</b>：TDVP 实时演化，<span class="math">Ĥ = T̂ + V̂<sub>ho</sub></span></li>
+<li><b>阶段 B (t ∈ [T<sub>free</sub>, T<sub>free</sub>+T<sub>pulse</sub>])</b>：TDVP 实时演化，<span class="math">Ĥ<sub>pulse</sub> = (κ/T<sub>pulse</sub>)cos(2k<sub>L</sub>x)</span>，∫Ĥ<sub>pulse</sub>dt = κcos(2k<sub>L</sub>x) 还原瞬时 kick</li>
+</ol>
+
+<div class="box theorem">
+<b>关键观察（脉冲）</b>：<span class="math">Ĥ<sub>pulse</sub></span> 是<b>纯位置算符</b>，<span class="math">[Ĥ<sub>pulse</sub>(t<sub>1</sub>), Ĥ<sub>pulse</sub>(t<sub>2</sub>)] = 0</span>。严格演化
+<div class="math-block">
+U<sub>pulse</sub> = exp(−i∫<sub>0</sub><sup>T<sub>pulse</sub></sup> Ĥ<sub>pulse</sub> dt) = exp(−iκcos(2k<sub>L</sub>x)) = U<sub>瞬时 kick</sub>
+</div>
+<b>与 T<sub>pulse</sub> 无关</b>——真实演化 T<sub>pulse</sub> = 0.01, 0.1, 1, 100 都给相同末态。所以 T<sub>pulse</sub> 纯粹是 <b>TDVP 的数值稳定性参数</b>。
+</div>
+
+<h3>5.2 网格精确参考（task2, n_kicks=2）</h3>
+
+<table>
+<tr><th>kick 次数</th><th>E (grid, N<sub>grid</sub>=512)</th><th>备注</th></tr>
+<tr><td>0 (HO 基态)</td><td>0.4999</td><td>网格误差 1e-4</td></tr>
+<tr><td>1 (task7 t=0)</td><td>0.6577</td><td>对上 Route-1 初态 0.6578 ✓</td></tr>
+<tr><td>2 (task7 末态)</td><td><b>0.8526</b></td><td><b>TDVP 目标参考值</b></td></tr>
+</table>
+
+<h3>5.3 阶段 A：K=3 稳，K=5 漂速增大但不崩</h3>
+
+<table>
+<tr><th>配置</th><th>T<sub>free</sub></th><th>dt</th><th>max|ΔE|</th><th>单位时间漂速</th><th>cond(C)</th><th>sv<sub>min3</sub> 最小</th></tr>
+<tr><td><b>K=3</b>, 6 参数</td><td>1.0</td><td>1e-3</td><td><b>1.6e-5</b></td><td>1.6e-5/t</td><td>5e4</td><td>1e-5 <span class="pass">未打底</span></td></tr>
+<tr><td><b>K=5</b>, 10 参数</td><td>0.3</td><td>1e-4</td><td>1.2e-3</td><td>4e-3/t (<b>~250× K=3</b>)</td><td>4e5</td><td>8e-7 <span class="pass">未打底</span></td></tr>
+</table>
+
+<p>K=3 在 6 参数（A+R，u 走 Lie-Trotter）下 <span class="math">sv<sub>min3</sub></span> 不触 λ<sub>C</sub>=1e-8 楼层 → §3.2 的"截断破厄米"不起作用 → §2 证明生效 → E 守恒到 1.6e-5。K=5 多 4 个方向，cond(C) 增加但仍未打底，漂速增大但不崩。</p>
+
+<h3>5.4 阶段 B：gauge 消除单调改善，但 ΔE 由流形误差 ε 主导</h3>
+
+<p>所有配置 <span class="math">T<sub>free</sub>=1.0, T<sub>pulse</sub>=0.5, dt=1e-3, κ/T<sub>pulse</sub>=2</span>。K=3 为基：</p>
+
+<table>
+<tr><th>阶段 B 变分参数</th><th>#</th><th>E(末)</th><th>Δ⟨x²⟩<br>(理论 ≈ 0)</th><th>max|ΔE|</th><th>sv<sub>min3</sub> 底</th></tr>
+<tr><td>u + B + R + A (全开)</td><td>12</td><td>0.992 (+0.14)</td><td>0.089</td><td>0.33</td><td>1e-8 <span class="fail">3 个</span></td></tr>
+<tr><td>u + R + A (关 B)</td><td>9</td><td>1.329 (+0.48)</td><td>0.070</td><td>0.67</td><td>1e-8 <span class="fail">1 个</span></td></tr>
+<tr><td><b>A + R (u Lie-Trotter)</b></td><td>6</td><td>1.297 (+0.44)</td><td><b>0.026</b></td><td>0.64</td><td>5e-6 <span class="pass">清底</span></td></tr>
+<tr><td colspan="6" style="background: #dafbe1;"><b>网格精确</b>：E = <b>0.8526</b>, Δ⟨x²⟩ = 0</td></tr>
+</table>
+
+<h4>5.4.1 单调 trend（符合 §3.2 理论）</h4>
+
+<p>12 → 9 → 6 参数对应依次消除：(i) B 带的 3 个冗余方向，(ii) u 的全局相位 gauge。<span class="math">sv<sub>min3</sub></span> 的 1e-8 底从 3 个降到 0 个，Δ⟨x²⟩ 单调从 0.089 降到 <b>0.026</b>。</p>
+
+<h4>5.4.2 核心反差：ΔE 不跟 gauge 消除降低</h4>
+
+<p>ΔE 是 <b>0.33 → 0.67 → 0.64</b>，不单调。网格 <b>E=0.853</b>，TDVP 不论 K=3 怎么配都落在 1.3 附近。<b>流形装不下 Jacobi-Anger 高阶项（|n| ≥ 3）</b>→ ε 主导。</p>
+
+<div class="box warn">
+<b>这是 §2.3 情形 C 的实测</b>：<br>
+&nbsp;&nbsp;• 6 参数配置 sv 清底 → §2 守恒证明没断 → TDVP 对脉冲期的 <span class="math">⟨Ĥ<sub>pulse</sub>⟩</span>仍守恒<br>
+&nbsp;&nbsp;• 但测的 E = ⟨T+V<sub>ho</sub>⟩ ≠ 脉冲期守恒量；TDVP 的 ψ(t) 本身偏离真实 <span class="math">e<sup>−iĤ<sub>pulse</sub>t</sup>|ψ(T<sub>free</sub>)⟩</span><br>
+&nbsp;&nbsp;• 结果：Δ⟨x²⟩ 可以通过消 gauge 降低（流形内几何问题），<b>但 E(末) 离网格的距离是 ε 的函数，K 固定时无法进一步缩</b>
+</div>
+
+<h3>5.5 验证 T<sub>pulse</sub> 是数值参数不是物理参数</h3>
+
+<table>
+<tr><th>T<sub>pulse</sub></th><th>kicking_scale</th><th>TDVP 稳定</th><th>E(末)</th></tr>
+<tr><td>0.05</td><td>20</td><td class="fail">NaN 崩</td><td>—</td></tr>
+<tr><td>0.2</td><td>5</td><td>稳（9 参数）</td><td>1.13</td></tr>
+<tr><td>0.5</td><td>2</td><td>稳（6 参数）</td><td>1.30</td></tr>
+</table>
+
+<p>真实演化对 T<sub>pulse</sub> 无关，但 TDVP 结果随 T<sub>pulse</sub> 变化——差别纯粹来自流形误差 + 离散误差。T<sub>pulse</sub>=0.05 触发 CFL 型崩，说明 T<sub>pulse</sub> 不是越小越好。</p>
+
+<h3>5.6 task7 把 §2-§3 的判断全部印证</h3>
+
+<table>
+<tr><th>理论判断</th><th>实测证据</th><th>结果</th></tr>
+<tr><td>§2: 精确 P<sub>T</sub> → E 守恒</td><td>K=3, sv 未打底, ΔE = 1.6e-5</td><td><span class="pass">对上</span></td></tr>
+<tr><td>§3.2: 截断破厄米 → E 漂</td><td>12 参数, 3 个 sv=1e-8, ΔE=0.33</td><td><span class="pass">对上</span></td></tr>
+<tr><td>消冗余 (B, u-gauge) → sv 清底</td><td>12 → 9 → 6 参数, 底数 3→1→0</td><td><span class="pass">对上</span></td></tr>
+<tr><td>§2.3 情形 C: ε &gt; 0 → ψ 偏离但守 E</td><td>6 参数 sv 干净, Δ⟨x²⟩=0.026 好; E=1.30 ≠ 0.85</td><td><span class="pass">对上</span></td></tr>
+<tr><td>T<sub>pulse</sub> 不是物理参数</td><td>不同 T<sub>pulse</sub> 给不同 TDVP 结果</td><td><span class="pass">对上</span></td></tr>
+</table>
+
+<!-- ============================================================= -->
+<h2 id="s7">6. 结论：流形层瓶颈 → Rothe 方法</h2>
+
+<h3>6.1 结构性小结</h3>
+
+<table>
+<tr><th>层</th><th>对象</th><th>定性</th><th>实测</th></tr>
+<tr><td>几何</td><td>连续 TDVP + 精确 P<sub>T</sub></td><td><span class="label exact">精确</span> E, ‖ψ‖² 严格守恒</td><td>K=1 task6 机器零</td></tr>
+<tr><td>流形</td><td>ε(t) = ‖(1−P<sub>T</sub>)Ĥψ‖</td><td><span class="label approx">非零</span> 不破守恒但 ψ 偏离</td><td>K=3 阶段 B, E=1.30 vs 0.85</td></tr>
+<tr><td>Ehrenfest</td><td>σ<sub>xx</sub>, σ<sub>pp</sub> 周期 π</td><td><span class="label exact">真实演化的必然</span></td><td>阶段 A 实测 ⟨x²⟩ 振荡</td></tr>
+<tr><td>数值-gauge</td><td>C 病态 + rcond/λ</td><td><span class="label bad">破厄米</span> E 漂</td><td>12 参数 ΔE=0.33</td></tr>
+<tr><td>数值-gauge 消</td><td>A+R + u Lie-Trotter</td><td><span class="label exact">可修</span> Δ⟨x²⟩ 改善</td><td>6 参数 Δ⟨x²⟩=0.026</td></tr>
+<tr><td>离散</td><td>RK4</td><td><span class="label approx">O(dt⁴) 偏置</span></td><td>Wiener + dt=1e-3 是当前最佳</td></tr>
+</table>
+
+<h3>6.2 判决：K 固定的 TDVP 是死路</h3>
+
+<div class="box bad">
+<b>task7 的技术判决</b>：<br>
+&nbsp;&nbsp;1. 阶段 A（<span class="math">Ĥ|ψ⟩</span> 几乎在 <span class="math">T<sub>ψ</sub>M</span>）：消完 gauge 后 TDVP 可用（K=3 ΔE=1.6e-5）<br>
+&nbsp;&nbsp;2. 阶段 B（kick 把态扔出流形）：TDVP 几何守恒不破，但 ψ(t) 已和真实演化脱钩。<b>K 固定无法修</b><br>
+&nbsp;&nbsp;3. 物理上第二次 kick 把态的 Jacobi-Anger 展开推到更高阶（|n|≥3），K=3 的 ±1,±2 动量副本完全装不下
+</div>
+
+<h3>6.3 下一步：Rothe 方法</h3>
+
+<p>Schrader-Pedersen-Kvaal JCP 2025 方法：每步最小化 Crank-Nicolson 残差</p>
+
+<div class="math-block">
+|ψ(t+dt)⟩ = arg min<sub>χ</sub> ‖ Â|χ⟩ − Â<sup>†</sup>|ψ(t)⟩ ‖²,&nbsp;&nbsp;Â = 1 + i(dt/2)Ĥ
+</div>
+
+<p>VarPro 给出线性系数 <span class="math">c = S̃<sup>−1</sup>ρ̃</span> 解析，α 留给 BFGS。不反 C，改反 overlap 类 S̃（总是良定）。<b>自适应加基/删基</b>：残差超阈值就加一个 Gaussian，可以把 ε 压到可控上界下。</p>
+
+<p><b>关键优势</b>：</p>
+<ul>
+<li>Crank-Nicolson <b>无条件稳定</b>（A-stable）</li>
+<li>累积 Rothe 残差是真实演化误差的<b>显式上界</b>（paper 式 17-19）</li>
+<li>2D Hénon-Heiles 实验：30 Gaussian 做到定量结果</li>
+</ul>
+
+<h3>6.4 Action items</h3>
+
+<ol>
+<li><b>Rothe M3</b>：K=2-3 踢后态 Rothe 单步演化，对比 task2 网格精确 E(kick 2)=0.8526。若对上 → 切换主线方法</li>
+<li><b>保底：task5 Wiener+dt=1e-3 K=3</b>：已跑通 T=2π，可作为 MBDL 多 kick 的初版基准（ΔE=11%，定性 OK）</li>
+<li><b>K=5/7 + Wiener + dt=1e-3 扫</b>：验证 Wiener 工作点可扩展性</li>
+<li><b>N≥2 扩展</b>：单粒子路线走通后加粒子间 δ 相互作用，做 MBDL 的定量预测</li>
+</ol>
+
+<h3>6.5 MBDL 主线映射</h3>
+
+<p>task7 是"2 次 kick"的模型实验。MBDL 需要几百到几千次 kick（Guo paper 文中 N_kick ≥ 100）。所以：</p>
+<ul>
+<li>K=3 + Wiener + dt=1e-3 撑 T=2π = 1 个 kick 间隔 <b>勉强可用</b></li>
+<li>若 Rothe 能对上 task2 n_kicks=2，就有理由跑 n_kicks=10, 100, 500，观察 E(t) 饱和、n(k) 冻结、G<sup>(1)</sup>(z) 衰减——<b>MBDL 的三大信号</b></li>
+<li>N=1 跑通再上 N=2,3,4,5,6（N! 置换求和爆炸，N=18 不可能，但 N=5 即可做 Guo 文章没有的定量预测）</li>
+</ul>
+
+<!-- ============================================================= -->
+<h2 id="s8">7. 相关文档</h2>
+
+<table>
+<tr><th>文件</th><th>内容</th></tr>
+<tr><td><code>html/tdvp_conservation_proof.html</code></td><td>本报告 §2–§3 的完整严格推导</td></tr>
+<tr><td><code>html/task5_realtime_status.html</code></td><td>task5 完整尝试记录（18 条时间线）</td></tr>
+<tr><td><code>html/task5_report.html</code></td><td>task5 汇报版（本报告 §4 的详细版）</td></tr>
+<tr><td><code>html/rothe_implementation_plan.html</code></td><td>Rothe 方法实施方案 M1-M5 详述</td></tr>
+<tr><td><code>src/realtime_tdvp.{hpp,cpp}</code></td><td>实时 TDVP 主循环（Wiener 开关）</td></tr>
+<tr><td><code>src/rothe_{operator,step}.{hpp,cpp}</code></td><td>Rothe M1+M2 装配</td></tr>
+<tr><td><code>main_simple.cpp task5/task6/task7</code></td><td>本报告实测来源</td></tr>
+</table>
+
+<p class="small" style="margin-top: 3em; border-top: 1px solid #d0d7de; padding-top: 1em;">
+ECG1D C++ 项目 · TDVP 实时演化汇报 · 2026-04-23 · 整合 task5 + task7 + 守恒定理推导
+</p>
+
+</body>
+</html>

@@ -30,6 +30,15 @@ struct HamiltonianTerms {
 struct SolverConfig {
     double lambda_C   = 1e-8;    // Tikhonov regularization for C matrix
     double rcond      = 1e-4;    // SVD truncation threshold
+    // Wiener-style smooth pseudoinverse: replace hard SVD truncation
+    //   sinv = (sv > rcond*sv_max) ? 1/sv : 0
+    // with the smooth damped-inverse
+    //   sinv = sv / (sv^2 + lam^2),   lam = rcond * sv_max
+    // which is continuous as sv crosses the "rcond threshold" (eliminating
+    // stair-step jumps in real-time TDVP when a sv drifts past rcond*sv_max).
+    // Max amplification becomes 1/(2*lam) instead of 1/(rcond*sv_max).
+    // When true, `rcond` becomes the soft-shoulder parameter (not a hard cut).
+    bool   wiener_smooth = false;
     bool   resolve_u  = false;   // Re-solve u via eigenvalue after each step
     double dtao_grow  = 1.5;     // Step size growth factor after successful step
     double dtao_max   = 0.0;     // Max step size (0 = 100*initial dtao)

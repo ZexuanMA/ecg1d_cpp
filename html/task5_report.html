@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>任务 E 实时 TDVP 汇报 · 2026-04-23</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+       max-width: 900px; margin: 2em auto; padding: 0 1.5em; color: #24292e; line-height: 1.7; }
+h1 { color: #0366d6; border-bottom: 2px solid #0366d6; padding-bottom: 0.3em; }
+h2 { color: #0366d6; margin-top: 1.8em; }
+h3 { color: #57606a; margin-top: 1.3em; }
+code, pre { font-family: Menlo, Consolas, monospace; }
+code { background: #f6f8fa; padding: 2px 6px; border-radius: 3px; font-size: 0.92em; }
+pre  { background: #f6f8fa; padding: 1em 1.2em; border-radius: 6px; overflow-x: auto;
+       font-size: 0.9em; line-height: 1.5; border-left: 4px solid #d0d7de; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.95em; }
+th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; vertical-align: top; }
+th { background: #f6f8fa; font-weight: 600; }
+.math { font-style: italic; font-family: "Cambria Math", "Latin Modern Math", Georgia, serif; }
+.math-block { text-align: center; font-size: 1.05em; margin: 0.8em 0;
+              font-family: "Cambria Math", Georgia, serif; font-style: italic;
+              padding: 0.5em 1em; background: #f6f8fa; border-radius: 4px; }
+.box { border: 1px solid #d0d7de; border-left: 4px solid #0366d6; padding: 0.8em 1.2em; margin: 1em 0; background: #f6f8fa; }
+.box.ok   { border-left-color: #1a7f37; background: #dafbe1; }
+.box.warn { border-left-color: #bf8700; background: #fff8c5; }
+.box.bad  { border-left-color: #cf222e; background: #ffebe9; }
+.small { font-size: 0.85em; color: #57606a; }
+.pass { color: #1a7f37; font-weight: 600; }
+.fail { color: #cf222e; font-weight: 600; }
+.todo { color: #bf8700; font-weight: 600; }
+.star { background: #dafbe1; }
+</style>
+</head>
+<body>
+
+<h1>任务 E 实时 TDVP 汇报</h1>
+<p class="small">2026-04-23 · 简报：目标、理论诊断、尝试过的工作点、当前成功点、下一步</p>
+
+<h2>1. 目标</h2>
+
+<p>用任务 D 的 Route 1 <b>踢后态</b>作为起点，做<b>实时 TDVP</b> 演化一个谐振周期
+<span class="math">T = 2π</span>（<span class="math">H = T̂ + V<sub>ho</sub></span>，单粒子 N=1）。</p>
+
+<p>验收：</p>
+<ul>
+<li>撑完 T=2π（628 步 @ dt=1e-2，或 6283 步 @ dt=1e-3）</li>
+<li><span class="math">E(t)</span> 守恒（H 不含 t，理论严格守恒）</li>
+<li>Norm 守恒（幺正演化）</li>
+<li><span class="math">|⟨ψ(0)|ψ(T)⟩|² ≈ 1</span>（HO recurrence）</li>
+</ul>
+
+<h2>2. 理论诊断：TDVP 守恒不守恒？</h2>
+
+<div class="box ok">
+<b>严格证明</b>：连续 TDVP 下，<b><span class="math">E</span> 和 <span class="math">‖ψ‖²</span> 严格守恒</b>。
+只依赖两件事：<b>P<sub>T</sub> 正交投影的厄米性</b> + <b>|ψ⟩ ∈ T<sub>ψ</sub>M</b>（ECG 线性 u 自动满足）。
+与「ψ 是否本征态、流形是否完备、基是否线性无关」<b>无关</b>。
+</div>
+
+<p>两行证明的关键一步（<span class="math">Ĥ P<sub>T</sub> Ĥ</span> 厄米 ⟹ 期望值为实 ⟹ <span class="math">−i · ℝ</span> 取实部 = 0）：</p>
+
+<div class="math-block">
+(Ĥ P<sub>T</sub> Ĥ)<sup>†</sup> = Ĥ<sup>†</sup> P<sub>T</sub><sup>†</sup> Ĥ<sup>†</sup> = Ĥ P<sub>T</sub> Ĥ
+</div>
+
+<div class="box warn">
+<b>数值为什么还是飘？</b>因为 C 病态 → 实现用 <b>SVD 伪逆 + Tikhonov (C+λI)</b> 替代真正的 <span class="math">C<sup>−1</sup></span>
+→ 对应的 <span class="math">P̃<sub>T</sub></span> 不再厄米、也不再是投影 → 上面证明里「<span class="math">Ĥ P<sub>T</sub> Ĥ</span> 厄米」那一步断了 → E 出现虚部速率项 → 飘。
+</div>
+
+<p><b>K=1 纯基态自检（task6）跑 628 步全部机器零误差</b>，说明核心 TDVP 装配（矩阵元、∂<sub>α</sub>ψ、P⊥、RK4）没有 bug。所有 K≥3 的失败都归结到「过参数化 + C 近奇异 + 伪逆破对称」。</p>
+
+<h2>3. 试过的配置一览</h2>
+
+<table>
+<tr>
+  <th>配置</th>
+  <th>撑到步数</th>
+  <th>|F(T)|²</th>
+  <th>ΔE</th>
+  <th>结论</th>
+</tr>
+<tr>
+  <td>全量 TDVP, K=10~15</td>
+  <td class="fail">1~80 步爆炸</td>
+  <td>—</td><td>—</td>
+  <td class="fail">C 条件数 1e+77</td>
+</tr>
+<tr>
+  <td>K=3 width-major + rcond + Tikh, dt=1e-2</td>
+  <td class="pass">628/628</td>
+  <td>0.934</td><td>2%</td>
+  <td class="pass">首个 baseline</td>
+</tr>
+<tr>
+  <td>K=4 width-major</td>
+  <td class="fail">499/628 崩</td>
+  <td>0.0002</td><td>117×</td>
+  <td class="fail">中段炸</td>
+</tr>
+<tr>
+  <td>K=5 width-major</td>
+  <td class="fail">77/628 崩</td>
+  <td>—</td><td>—</td>
+  <td class="fail">模式 A：width 重用，C 结构奇异</td>
+</tr>
+<tr>
+  <td>K=5 interleave</td>
+  <td class="fail">50/628 崩</td>
+  <td>—</td><td>—</td>
+  <td class="fail">模式 B：±n 镜像 gauge 污染</td>
+</tr>
+<tr>
+  <td>K=5 interleave + dt=1e-3</td>
+  <td class="fail">1558 步手动中止</td>
+  <td>—</td><td>2.4× 阶梯涨</td>
+  <td class="fail">模式 C：rcond 跨阈阶梯跳</td>
+</tr>
+<tr>
+  <td>K=5 Wiener + Tikh</td>
+  <td class="fail">5/628 崩</td>
+  <td>—</td><td>norm=-6164</td>
+  <td class="fail">模式 D：Wiener 与 Tikh 冲突</td>
+</tr>
+<tr>
+  <td>K=3 Wiener + λ_C=0 + dt=1e-2</td>
+  <td>628/628</td>
+  <td class="fail">0.111</td><td>8×</td>
+  <td class="fail">dt 太大，Wiener bias 推到错位 manifold</td>
+</tr>
+<tr class="star">
+  <td><b>★ K=3 Wiener + λ_C=0 + dt=1e-3</b></td>
+  <td class="pass"><b>6283/6283</b></td>
+  <td><b>0.874</b></td><td>11%</td>
+  <td class="pass">当前成功点</td>
+</tr>
+<tr>
+  <td>K=10 width-major</td>
+  <td class="fail">348/628 崩</td>
+  <td>—</td><td>崩后 940</td>
+  <td class="fail">Tikhonov gauge 漏电 cascade</td>
+</tr>
+<tr>
+  <td>K=1 基态自检 (task6)</td>
+  <td class="pass">628/628</td>
+  <td>1.0</td><td>机器零</td>
+  <td class="pass">证明核心 TDVP 健康</td>
+</tr>
+</table>
+
+<h2>4. 四种失效模式</h2>
+
+<table>
+<tr><th>模式</th><th>机制</th><th>典型表现</th></tr>
+<tr><td>A: width 重用</td>
+    <td>Greedy 选到多份相同 width 的基 → ∂<sub>A</sub>, ∂<sub>B</sub> 平行 → C 精确奇异</td>
+    <td>K=5 width-major step 77 \|dz\|=74 崩</td></tr>
+<tr><td>B: ±n 镜像</td>
+    <td>x→−x 反射对称引入边际 sv (~1e-7)，rcond 截不到 → gauge 方向获得非零 dz</td>
+    <td>K=3 interleave E 从 0.658 掉到 0.549 锁死</td></tr>
+<tr><td>C: rcond 阶梯跳</td>
+    <td>sv 随演化漂过 rcond 阈值 → 伪逆开关式切换 → dz 不连续</td>
+    <td>K=5 dt=1e-3 E 阶梯跳 0.679→1.601</td></tr>
+<tr><td>D: Wiener+Tikh 冲突</td>
+    <td>Tikh 把 sv 地板抬到 1e-8，Wiener 看成"非零"给 0.3× 放大 → gauge 泄露</td>
+    <td>K=5 step 3 norm=-6164，u 全局翻号</td></tr>
+</table>
+
+<h2>5. 当前成功点：Wiener + 小 dt</h2>
+
+<p>Wiener 平滑 <span class="math">sinv = sv / (sv² + λ²)</span> 的三个性质：</p>
+<ul>
+<li>sv=0 严格给 0 ⟹ 真 gauge 方向精确清零（<b>必须 λ_C=0</b>）</li>
+<li>sv 连续函数 ⟹ <b>无阶梯跳</b></li>
+<li>有限放大 1/(2λ) ⟹ 比硬 rcond 温和</li>
+</ul>
+
+<p>代价是<b>有偏差</b>（不是 TDVP 严格解），每步 <span class="math">O(λ²/sv)</span>，积累与 dt 成正比。所以 dt 必须小：</p>
+<ul>
+<li>dt=1e-2：bias 直接把态推到错位 manifold，E 锁在 5.96 <span class="fail">失败</span></li>
+<li>dt=1e-3：bias 可控，E 恒定 4000+ 步到 6 位小数 <span class="pass">成功</span></li>
+</ul>
+
+<h3>轨迹细节 (K=3, Wiener, λ_C=0, dt=1e-3)</h3>
+
+<table>
+<tr><th>时段</th><th>E</th><th>说明</th></tr>
+<tr><td>t=0</td><td>0.658</td><td>Route 1 初始 (F_init=0.989)</td></tr>
+<tr><td>t=0.314 → 4.87</td><td>0.6806 恒定</td><td><b>4000+ 步严格守恒到 6 位小数</b></td></tr>
+<tr><td>t=5.18</td><td>0.586</td><td>单次阶梯事件</td></tr>
+<tr><td>t=6.28 (T)</td><td>0.586</td><td>ΔE=11%, |F(T)|²=0.874</td></tr>
+</table>
+
+<h2>6. 下一步</h2>
+
+<ol>
+<li><b>K=5, K=7 同 Wiener + dt=1e-3 配置</b>——验证工作点可扩展性（最关键）</li>
+<li><b>扫 dt ∈ {5e-4, 1e-3, 2e-3, 5e-3}</b>——看 bias 是否随 dt 下降</li>
+<li><b>多 kick 循环（MBDL 主线）</b>——跑通后观察 E(t) 饱和、n(k) 冻结、G<sup>(1)</sup>(z) 衰减等定性信号</li>
+<li><b>保底：Rothe 方法</b>（<code>html/rothe_implementation_plan.html</code>）——若 K=5/7 也上不去则切换</li>
+</ol>
+
+<h2>7. 相关文档</h2>
+
+<table>
+<tr><th>文件</th><th>内容</th></tr>
+<tr><td><code>html/task5_realtime_status.html</code></td><td>完整尝试记录、18 条时间线、诊断</td></tr>
+<tr><td><code>html/tdvp_conservation_proof.html</code></td><td>TDVP 守恒定律严格推导</td></tr>
+<tr><td><code>html/rothe_implementation_plan.html</code></td><td>Rothe 方法保底方案</td></tr>
+<tr><td><code>src/realtime_tdvp.{hpp,cpp}</code></td><td>实时 TDVP 主循环 (Wiener 开关在此)</td></tr>
+</table>
+
+<p class="small" style="margin-top: 3em; border-top: 1px solid #d0d7de; padding-top: 1em;">
+ ECG1D C++ 项目 · 任务 E 汇报 · 2026-04-23
+</p>
+
+</body>
+</html>

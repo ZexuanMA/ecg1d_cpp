@@ -4,6 +4,7 @@
 #include "permutation.hpp"
 #include "tdvp_solver.hpp"
 #include <vector>
+#include <limits>
 
 namespace ecg1d {
 
@@ -22,6 +23,14 @@ struct RealtimeStepResult {
     double used_dt;
     double cond_C;                    // diagnostic
     int    effective_rank;
+    // Diagnostic: smallest 3 singular values of C_bar at step entry (k1 stage).
+    // sv_small[0]  = smallest, sv_small[1]  = second smallest, sv_small[2] = third.
+    // NaN if fewer than that many singular values exist.
+    double sv_small[3] = {std::numeric_limits<double>::quiet_NaN(),
+                          std::numeric_limits<double>::quiet_NaN(),
+                          std::numeric_limits<double>::quiet_NaN()};
+    // Diagnostic: norm squared of dz returned by the full step (combined RK4 dz).
+    double dz_norm = 0.0;
 };
 
 // Apply one real-time TDVP step. Does NOT adaptively rescale dt.
@@ -47,6 +56,23 @@ struct RealtimeEvolutionConfig {
     int    sample_every = 10;        // record trace every N steps
     bool   verbose      = true;
     int    print_every  = 100;
+
+    // If true, per step do Lie-Trotter splitting:
+    //   (1) TDVP moves only the parameters listed in alpha_z_list (caller's job
+    //       to have excluded u/B from the list)
+    //   (2) u is then propagated by exp(-i H dt) on the updated {A,B,R} basis
+    //       via free_evolve_fixed_basis (exact, eigendecomposition-based).
+    // This decouples the non-linear {A,R} flow from the linear u flow; avoids
+    // the pathology where TDVP tries to absorb u dynamics into {A,R} drift.
+    bool u_split_trotter = false;
+
+    // If true, after each step rescale u so that <psi|psi> == initial_norm
+    // (where initial_norm is computed at t=0 from basis_init). This is a
+    // pragmatic post-correction that enforces physical unitarity when the raw
+    // TDVP+SVD step drifts norm due to rcond truncation or Tikhonov λ not
+    // being exactly consistent with ψ̇ ⊥ ψ. E conservation is NOT enforced,
+    // only norm.
+    bool enforce_norm = false;
 };
 
 struct RealtimeEvolutionResult {

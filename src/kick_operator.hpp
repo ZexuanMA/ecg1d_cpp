@@ -44,6 +44,7 @@ void free_evolve_fixed_basis(std::vector<BasisParams>& basis,
 std::vector<BasisParams> augment_basis_with_momentum(
     const std::vector<BasisParams>& basis,
     double k_L, int n_mom = 2, double b_val = 0.5,
-    double max_cond = 1e6);
+    double max_cond = 1e6,
+    int max_K = -1);   // -1 = unlimited; otherwise cap total basis size at max_K
 
 } // namespace ecg1d

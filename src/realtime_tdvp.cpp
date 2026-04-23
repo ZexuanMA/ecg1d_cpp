@@ -2,6 +2,8 @@
 #include "hamiltonian.hpp"
 #include "hamiltonian_gradient.hpp"
 #include "physical_constants.hpp"
+#include "kick_operator.hpp"  // free_evolve_fixed_basis, build_HS-like S
+#include "svm.hpp"            // build_HS: (H, S) on arbitrary basis
 #include <Eigen/Dense>
 #include <cmath>
 #include <iostream>
@@ -17,7 +19,8 @@ static VectorXcd compute_rhs_dz(const std::vector<AlphaIndex>& alpha_z_list,
                                 const HamiltonianTerms& terms,
                                 const SolverConfig& config,
                                 double* out_cond_C = nullptr,
-                                int* out_rank = nullptr) {
+                                int* out_rank = nullptr,
+                                double out_sv_small[3] = nullptr) {
     const int d = static_cast<int>(alpha_z_list.size());
     MatrixXcd C_mat = assemble_C(alpha_z_list, basis);
     MatrixXcd C_bar = C_mat.conjugate().transpose();
@@ -36,11 +39,35 @@ static VectorXcd compute_rhs_dz(const std::vector<AlphaIndex>& alpha_z_list,
         for (int i = 0; i < sv.size(); ++i) if (sv(i) > thr) r++;
         *out_rank = r;
     }
+    // sv is returned from JacobiSVD in DESCENDING order, so last entries are
+    // the smallest. Pull the bottom 3 (or fewer if d < 3).
+    if (out_sv_small) {
+        int n = sv.size();
+        for (int k = 0; k < 3; ++k) {
+            int idx = n - 1 - k;
+            out_sv_small[k] = (idx >= 0) ? sv(idx)
+                                         : std::numeric_limits<double>::quiet_NaN();
+        }
+    }
 
     VectorXcd Utrhs = svd.matrixU().adjoint() * rhs;
     VectorXcd sinv(sv.size());
-    for (int i = 0; i < sv.size(); ++i) {
-        sinv(i) = (sv(i) > thr) ? Utrhs(i) / sv(i) : Cd(0.0, 0.0);
+    if (config.wiener_smooth) {
+        // Wiener-style smooth pseudoinverse: sinv = sv / (sv^2 + lam^2).
+        // lam = rcond * sv_max (reuse rcond as the soft-shoulder scale).
+        // Continuous in sv — no discontinuous truncation when sv drifts across
+        // the "rcond threshold". Amplification peaks at 1/(2*lam) when sv=lam.
+        double lam = thr;   // thr is already rcond * sv(0)
+        double lam2 = lam * lam;
+        for (int i = 0; i < sv.size(); ++i) {
+            double s = sv(i);
+            sinv(i) = Utrhs(i) * s / (s * s + lam2);
+        }
+    } else {
+        // Hard rcond truncation (original behavior).
+        for (int i = 0; i < sv.size(); ++i) {
+            sinv(i) = (sv(i) > thr) ? Utrhs(i) / sv(i) : Cd(0.0, 0.0);
+        }
     }
     return svd.matrixV() * sinv;
 }
@@ -53,15 +80,18 @@ RealtimeStepResult realtime_tdvp_step(const std::vector<AlphaIndex>& alpha_z_lis
                                       RtIntegrator integrator) {
     double cond_C = 0.0;
     int rank = 0;
+    double sv_small[3] = {std::numeric_limits<double>::quiet_NaN(),
+                          std::numeric_limits<double>::quiet_NaN(),
+                          std::numeric_limits<double>::quiet_NaN()};
 
     VectorXcd dz_combined;
     if (integrator == RtIntegrator::Euler) {
         dz_combined = compute_rhs_dz(alpha_z_list, basis, terms, config,
-                                     &cond_C, &rank);
+                                     &cond_C, &rank, sv_small);
     } else {
         // Classical RK4 on z: z' = f(z) = -i C^{-1} g
         VectorXcd k1 = compute_rhs_dz(alpha_z_list, basis, terms, config,
-                                      &cond_C, &rank);
+                                      &cond_C, &rank, sv_small);
 
         std::vector<BasisParams> b1 = basis;
         update_basis_function(b1, k1, 0.5 * dt, alpha_z_list, 0);
@@ -86,6 +116,10 @@ RealtimeStepResult realtime_tdvp_step(const std::vector<AlphaIndex>& alpha_z_lis
     result.used_dt = dt;
     result.cond_C = cond_C;
     result.effective_rank = rank;
+    result.sv_small[0] = sv_small[0];
+    result.sv_small[1] = sv_small[1];
+    result.sv_small[2] = sv_small[2];
+    result.dz_norm = dz_combined.norm();
     return result;
 }
 
@@ -153,29 +187,106 @@ RealtimeEvolutionResult realtime_tdvp_evolution(
     sample_observables(basis, 0.0, terms, basis0, norm0, result.trace);
 
     const int n_steps = static_cast<int>(std::round(T_total / rt_cfg.dt));
+    // Blowup guard on cond(C_bar).
+    // - Hard pinv mode:   cond is bounded by Tikhonov floor (lambda_C),
+    //                     so a genuine blowup (>1e14) means basis has drifted
+    //                     into pathological region.
+    // - Wiener mode:      Wiener filter handles sv=0 natively (sinv=0), so
+    //                     cond(C) = sv_max / numerical_zero ~ 1e16 is the
+    //                     EXPECTED value for healthy state (true gauge nullspace
+    //                     uncovered). Effectively disable the guard there.
+    const double cond_abort = solver_cfg.wiener_smooth ? 1e30 : 1e14;
     double t = 0.0;
+    // For u-split mode we need permutations to build (H, S) each step
+    const int N = basis0[0].N();
+    PermutationSet perms_step = PermutationSet::generate(N);
+
+    // Fixed initial norm — used as post-correction target if enforce_norm is on
+    const double norm_init = overlap(basis0).real();
+
     for (int step = 0; step < n_steps; ++step) {
         RealtimeStepResult r = realtime_tdvp_step(alpha_z_list, basis, rt_cfg.dt,
                                                   terms, solver_cfg, rt_cfg.integrator);
         basis = std::move(r.basis);
+
+        // Lie-Trotter splitting for u: after TDVP moved {A,R} (and whatever
+        // else was in alpha_z_list), evolve u exactly on the updated basis.
+        if (rt_cfg.u_split_trotter) {
+            auto [H_mat, S_mat] = build_HS(basis, perms_step, terms);
+            free_evolve_fixed_basis(basis, H_mat, S_mat, rt_cfg.dt);
+        }
+
+        // Post-correct norm: rescale u so <psi|psi> == norm_init. Pragmatic
+        // unitarity enforcement; does nothing for E conservation.
+        if (rt_cfg.enforce_norm) {
+            double norm_now = overlap(basis).real();
+            if (norm_now > 1e-15 && std::isfinite(norm_now)) {
+                double scale = std::sqrt(norm_init / norm_now);
+                for (auto& bp : basis) bp.u *= scale;
+            }
+        }
+
         t += rt_cfg.dt;
 
         if ((step + 1) % rt_cfg.sample_every == 0) {
             sample_observables(basis, t, terms, basis0, norm0, result.trace);
         }
 
+        // Per-step diagnostic print (coarsened by print_every to avoid flooding)
         if (rt_cfg.verbose && ((step + 1) % rt_cfg.print_every == 0)) {
             Cd S = overlap(basis);
             Cd T_kin = kinetic_energy_functional(basis);
             Cd V_ho  = Harmonic_functional(basis);
             double E = ((T_kin + V_ho) / S).real();
+
+            // Per-basis min Re(A+B) — if this approaches 0, the Gaussian is
+            // losing normalizability (pathology suspected for step-348 blowup).
+            double min_rab = 1e99;
+            int    argmin_i = -1;
+            double min_reA = 1e99;
+            int    argmin_A = -1;
+            for (size_t i = 0; i < basis.size(); ++i) {
+                double rab = (basis[i].A(0, 0) + basis[i].B(0, 0)).real();
+                if (rab < min_rab) { min_rab = rab; argmin_i = (int)i; }
+                double reA = basis[i].A(0, 0).real();
+                if (reA < min_reA) { min_reA = reA; argmin_A = (int)i; }
+            }
+
             std::cout << "[rt_tdvp] step " << (step + 1) << "/" << n_steps
                       << " t=" << std::fixed << std::setprecision(4) << t
                       << " E=" << std::setprecision(8) << E
                       << " norm=" << S.real()
-                      << " cond(C)=" << std::scientific << std::setprecision(2)
+                      << " cond=" << std::scientific << std::setprecision(2)
                       << r.cond_C
+                      << " sv_min3=(" << r.sv_small[2] << "," << r.sv_small[1]
+                      << "," << r.sv_small[0] << ")"
+                      << " |dz|=" << std::setprecision(2) << r.dz_norm
+                      << " min(Re A+B)=" << std::fixed << std::setprecision(4) << min_rab
+                      << "@" << argmin_i
+                      << " min(Re A)=" << min_reA << "@" << argmin_A
                       << std::defaultfloat << "\n";
+        }
+
+        // Blowup guard: cond(C) >> 1 means the variational metric has a near-zero
+        // singular value, i.e. two parameters have become degenerate. Dump basis
+        // so we can see which one drifted, then stop.
+        if (r.cond_C > cond_abort || !std::isfinite(r.cond_C)) {
+            std::cout << "\n[rt_tdvp] BLOWUP at step " << (step + 1)
+                      << " t=" << std::fixed << std::setprecision(4) << t
+                      << " cond(C)=" << std::scientific << r.cond_C
+                      << std::defaultfloat << " (threshold " << cond_abort << ")\n";
+            std::cout << "  basis dump:\n";
+            for (size_t i = 0; i < basis.size(); ++i) {
+                std::cout << "    [" << i << "] u=" << basis[i].u
+                          << "  A=" << basis[i].A(0, 0)
+                          << "  B=" << basis[i].B(0, 0)
+                          << "  R=" << basis[i].R(0)
+                          << "  A+B=" << (basis[i].A(0, 0) + basis[i].B(0, 0))
+                          << "\n";
+            }
+            result.basis_final = std::move(basis);
+            result.n_steps = step + 1;
+            return result;
         }
     }
 
