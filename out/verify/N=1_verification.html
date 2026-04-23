@@ -242,12 +242,10 @@
 <figure>
   <img src="fig_step3_momentum.png" alt="Momentum distribution n(k)">
   <figcaption>
-    <strong>Figure 3.</strong> Reciprocal-space curves from the three methods.
-    FD grid and sinc-DVR overlap to ~$10^{-5}$ — both compute
-    $|\tilde\psi(k)|^{2}$, the momentum probability density.
-    <span class="warn">The ECG curve is a different observable</span>:
-    it is $\mathrm{FT}[|\psi(x)|^{2}]$, the Fourier transform of the position
-    density. See §5.
+    <strong>Figure 3.</strong> Momentum probability density
+    $n(k) = |\tilde\psi(k)|^{2}$. All three methods now use the same
+    convention; they lie on top of one another at the plot scale. See §5
+    for the background on the previous convention mismatch.
   </figcaption>
 </figure>
 
@@ -309,15 +307,16 @@
   reference solvers. The verification passes.
 </blockquote>
 
-<h2>5. The reciprocal-space curves — same ground state, two different observables</h2>
+<h2>5. The reciprocal-space curves — what happened and how it was fixed</h2>
 
 <p>
-  The ECG and reference curves in Figure 3 disagree dramatically
-  (L² difference ≈ 0.77, ECG peak at 1.0 vs reference peak at 0.722, ECG
-  ~2× wider). This is <em>not</em> a normalization bug — inspection of
-  the CSVs (<code>step1_ecg_nk_N1_K5.csv</code> integrates to 2.55;
-  <code>step2_{grid,dvr}_nk_N1.csv</code> integrate to 1.000) shows the
-  two methods are computing <strong>different physical observables</strong>.
+  The first version of this report had the ECG and reference curves in
+  Figure 3 disagreeing dramatically (L² difference ≈ 0.77, ECG peak at
+  1.0 vs reference peak at 0.722, ECG ~2× wider). Inspection of the
+  CSVs showed <code>step1_ecg_nk_N1_K5.csv</code> integrated to 2.55
+  while <code>step2_{grid,dvr}_nk_N1.csv</code> integrated to 1.000 —
+  so the two methods were computing <strong>different physical observables</strong>,
+  not two values of the same observable.
 </p>
 
 <h3>What each method computes</h3>
@@ -417,32 +416,48 @@
 <h3>Takeaway</h3>
 
 <blockquote>
-  Figure 3 does <strong>not</strong> invalidate the N = 1 verification.
-  It shows that the single C++ function currently named
-  <code>momentum_distribution</code> in fact computes a different
-  observable from the one the reference solvers plot. The ECG result is
-  self-consistent (it integrates to the correct value, its shape matches
-  the autocorrelation of $\tilde\psi$), and the ground state itself is
-  unambiguously correct — as confirmed by the energy, density, and
-  complex-wavefunction cross-checks above.
+  The bug was a misnamed function, not a faulty ground state. The ECG
+  result at the time was self-consistent as an implementation of the
+  form factor, and the ground state itself was (and is) unambiguously
+  correct — as confirmed by the energy, density, and complex-wavefunction
+  cross-checks above.
 </blockquote>
 
-<p>
-  Follow-ups we will decide on next:
-</p>
+<h3>Fix applied</h3>
 
 <ol>
   <li>
-    Rename <code>momentum_distribution</code> →
-    <code>density_fourier_transform</code> in
-    <code>src/observables.{hpp,cpp}</code>, or
+    Added <code>ecg_momentum_density_1p(basis, k_points)</code> in
+    <code>src/verify/ecg_wavefunction.{hpp,cpp}</code>. It evaluates
+    $\tilde\psi(k)$ analytically as a sum of Gaussian Fourier transforms
+    of each ECG basis function:
+    $$
+    \tilde\psi(k) = \frac{1}{\sqrt{2\pi}} \sum_i u_i
+      \sqrt{\frac{\pi}{A_i{+}B_i}}\,
+      \exp\!\left[-R_i B_i R_i + \frac{(2 R_i B_i - ik)^{2}}{4(A_i{+}B_i)}\right],
+    $$
+    and returns $|\tilde\psi(k)|^{2}/S$, which integrates to 1.
   </li>
   <li>
-    Add a second function that actually computes $|\tilde\psi(k)|^{2}$
-    (analytic Gaussian FT of each ECG basis function for N = 1; requires
-    the one-body reduced density matrix for N ≥ 2).
+    Wired Step 1 and the Step 3 cross-check to call this helper on the
+    N = 1 path (in <code>step1_imag_time_ecg.cpp</code> and
+    <code>main_verification.cpp</code>). The old
+    <code>momentum_distribution</code> is still used on the N ≥ 2 path
+    for now and will be replaced once the one-body reduced-density-matrix
+    version lands.
+  </li>
+  <li>
+    Added a docstring warning to
+    <code>src/observables.hpp::momentum_distribution</code> explaining
+    what it really computes so nobody else falls for the name.
   </li>
 </ol>
+
+<p>
+  After the fix, all three N = 1 reciprocal-space curves use
+  $n(k) = |\tilde\psi(k)|^{2}$ (probability density, integrates to 1),
+  and Figure 3 now shows the three-way agreement expected from Steps 1–3.
+</p>
 
 <h2>6. How to reproduce</h2>
 

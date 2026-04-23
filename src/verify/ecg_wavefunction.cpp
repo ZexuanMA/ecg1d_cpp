@@ -81,5 +81,44 @@ Eigen::VectorXcd ecg_wavefunction_1p(
     return psi;
 }
 
+Eigen::VectorXd ecg_momentum_density_1p(
+    const std::vector<BasisParams>& basis,
+    const Eigen::VectorXd& k_points) {
+    if (basis.empty() || basis[0].N() != 1) {
+        throw std::runtime_error("ecg_momentum_density_1p requires N=1");
+    }
+    int K  = static_cast<int>(basis.size());
+    int nk = static_cast<int>(k_points.size());
+
+    double Sr = overlap(basis).real();
+    Eigen::VectorXd nk_out(nk);
+
+    Cd inv_sqrt_2pi = Cd(1.0 / std::sqrt(2.0 * M_PI), 0.0);
+
+    for (int ki = 0; ki < nk; ki++) {
+        double k = k_points(ki);
+        Cd psi_tilde(0.0, 0.0);
+        for (int i = 0; i < K; i++) {
+            Cd u_i = basis[i].u;
+            Cd A_i = basis[i].A(0, 0);
+            Cd B_i = basis[i].B(0, 0);
+            Cd R_i = basis[i].R(0);
+            Cd alpha = A_i + B_i;                // decay coefficient
+            // integrand: exp(-alpha x^2 + (2 R B - i k) x - R B R)
+            //   -> sqrt(pi/alpha) * exp(-R B R + (2 R B - i k)^2 / (4 alpha))
+            Cd beta  = 2.0 * R_i * B_i - Cd(0.0, 1.0) * k;
+            Cd gamma = -R_i * B_i * R_i;
+            Cd exponent = gamma + (beta * beta) / (4.0 * alpha);
+            Cd sqrt_pi_over_alpha = std::sqrt(Cd(M_PI, 0.0) / alpha);
+            psi_tilde += u_i * sqrt_pi_over_alpha * std::exp(exponent);
+        }
+        psi_tilde *= inv_sqrt_2pi;
+        nk_out(ki) = std::norm(psi_tilde);
+    }
+
+    if (Sr > 0) nk_out /= Sr;
+    return nk_out;
+}
+
 } // namespace verify
 } // namespace ecg1d
