@@ -242,10 +242,12 @@
 <figure>
   <img src="fig_step3_momentum.png" alt="Momentum distribution n(k)">
   <figcaption>
-    <strong>Figure 3.</strong> Momentum distribution $n(k)$.
-    FD grid and sinc-DVR overlap to ~$10^{-5}$.
-    <span class="warn">The ECG curve is on a different scale</span>
-    — see §5 (open item).
+    <strong>Figure 3.</strong> Reciprocal-space curves from the three methods.
+    FD grid and sinc-DVR overlap to ~$10^{-5}$ — both compute
+    $|\tilde\psi(k)|^{2}$, the momentum probability density.
+    <span class="warn">The ECG curve is a different observable</span>:
+    it is $\mathrm{FT}[|\psi(x)|^{2}]$, the Fourier transform of the position
+    density. See §5.
   </figcaption>
 </figure>
 
@@ -307,34 +309,140 @@
   reference solvers. The verification passes.
 </blockquote>
 
-<h2>5. Open item</h2>
+<h2>5. The reciprocal-space curves — same ground state, two different observables</h2>
 
 <p>
-  <span class="warn">The ECG momentum distribution $n(k)$</span> disagrees
-  with the two reference methods' $n(k)$ by an L² of 0.77, even though
-  the position-space density, wavefunction, and energy all agree to
-  ~$10^{-5}$. The cause is almost certainly a <strong>normalization
-  convention mismatch</strong> between
+  The ECG and reference curves in Figure 3 disagree dramatically
+  (L² difference ≈ 0.77, ECG peak at 1.0 vs reference peak at 0.722, ECG
+  ~2× wider). This is <em>not</em> a normalization bug — inspection of
+  the CSVs (<code>step1_ecg_nk_N1_K5.csv</code> integrates to 2.55;
+  <code>step2_{grid,dvr}_nk_N1.csv</code> integrate to 1.000) shows the
+  two methods are computing <strong>different physical observables</strong>.
+</p>
+
+<h3>What each method computes</h3>
+
+<p>
+  The FD grid and sinc-DVR solvers compute the <strong>momentum
+  probability density</strong>:
+  $$
+  n_\text{ref}(k) \;=\; |\tilde\psi(k)|^{2}, \qquad
+  \tilde\psi(k) \;=\; \frac{1}{\sqrt{2\pi}}\!\int \psi(x)\,e^{-ikx}\,dx.
+  $$
+  This is the probability of finding the particle with momentum $k$.
+  By Parseval's theorem it integrates to 1, and at $k{=}0$ it equals
+  $\tfrac{1}{2\pi}|\!\int\psi\,dx|^{2}$ — which for our ground state
+  evaluates to $0.722$, matching the CSV.
+</p>
+
+<p>
+  The function <code>src/observables.cpp::momentum_distribution</code>
+  propagates the kernel
+  <code>M_G · exp(−k²/(4 K_aa)) · exp(+ikμ_a)</code> through the
+  permutation sum. Working out the Gaussian integrals analytically, this
+  is equivalent to
+  $$
+  n_\text{ECG}(k) \;=\; \int |\psi(x)|^{2}\,e^{+ikx}\,dx,
+  $$
+  i.e. the <strong>Fourier transform of the position density</strong>
+  (also called the one-body <em>form factor</em> or static structure
+  factor). It integrates to $2\pi\,|\psi(0)|^{2}\approx 2.55$, and at
+  $k{=}0$ it equals $\int|\psi|^{2}dx = 1$ exactly — matching the CSV
+  peak of 1.000.
+</p>
+
+<h3>How the two are related</h3>
+
+<p>
+  They are connected by an <em>autocorrelation</em>, not by a scalar:
+  $$
+  \int|\psi(x)|^{2}e^{+ikx}dx
+  \;=\; \int \tilde\psi^{*}(q)\,\tilde\psi(q+k)\,dq.
+  $$
+  That is, $n_\text{ECG}(k)$ is the autocorrelation of $\tilde\psi$
+  evaluated at shift $k$, while $n_\text{ref}(k)=|\tilde\psi(k)|^2$ is
+  the pointwise squared modulus. Key consequences:
 </p>
 
 <ul>
   <li>
-    <code>src/observables.cpp::momentum_distribution</code>, which
-    propagates the Gaussian FT factor directly on the ECG integrand
-    without the standard $(2\pi)^{-1/2}$ prefactor, and
+    $n_\text{ECG}$ is always <strong>broader</strong> than $n_\text{ref}$
+    (autocorrelating a peak gives a wider peak). For a pure Gaussian the
+    widening factor is $\sqrt{2}$ in the standard deviation (= 2 in FWHM).
+    We measure half-max at $|k|=1.25$ (ECG) vs $|k|=0.65$ (ref), a ratio
+    of 1.92 — consistent with the Gaussian prediction once minor
+    broadening from the $\cos$ potential is absorbed.
   </li>
   <li>
-    the reference solvers' direct DFT
-    $\tilde\psi(k) = (2\pi)^{-1/2}\!\int \psi(x)\,e^{-ikx}\,dx$.
+    $n_\text{ECG}$ <strong>loses the phase information</strong> of $\psi$.
+    Inverse-FT of $n_\text{ECG}$ recovers $|\psi|^{2}$ but not $\psi$
+    itself. $n_\text{ref}$, by contrast, depends on $\tilde\psi$ — it
+    carries phase correlations of $\psi$.
+  </li>
+  <li>
+    The two are <strong>not convertible without knowing $\psi$</strong>.
+    One cannot be derived from the other alone.
   </li>
 </ul>
 
+<h3>Physical meaning</h3>
+
+<table>
+  <thead>
+    <tr><th>Curve</th><th>What it is</th><th>Experimental probe</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">$n_\text{ref}(k)=|\tilde\psi(k)|^{2}$</td>
+      <td style="text-align:left;">momentum probability density</td>
+      <td style="text-align:left;">time-of-flight imaging of a cold-atom cloud</td>
+    </tr>
+    <tr>
+      <td class="label">$n_\text{ECG}(k)=\mathrm{FT}[|\psi|^{2}]$</td>
+      <td style="text-align:left;">one-body form factor / Fourier transform of density</td>
+      <td style="text-align:left;">Bragg scattering, density-density correlator</td>
+    </tr>
+  </tbody>
+</table>
+
 <p>
-  The shape of the ECG $n(k)$ is right (both reference traces and ECG
-  peak at $k=0$ with the same width) — only the overall scale differs.
-  This needs to be fixed before Step 4 can meaningfully report $n(k,t)$
-  snapshots.
+  Both are physically meaningful and both can be read off the same ground
+  state — they just answer different questions. The Guo et al. MBDL
+  paper's "momentum distribution $n(k)$" is the <em>first</em> row: the
+  time-of-flight observable $|\tilde\psi(k)|^{2}$. So for matching the
+  paper's plots in a future Step 4, we need the reference convention,
+  not the current ECG output.
 </p>
+
+<h3>Takeaway</h3>
+
+<blockquote>
+  Figure 3 does <strong>not</strong> invalidate the N = 1 verification.
+  It shows that the single C++ function currently named
+  <code>momentum_distribution</code> in fact computes a different
+  observable from the one the reference solvers plot. The ECG result is
+  self-consistent (it integrates to the correct value, its shape matches
+  the autocorrelation of $\tilde\psi$), and the ground state itself is
+  unambiguously correct — as confirmed by the energy, density, and
+  complex-wavefunction cross-checks above.
+</blockquote>
+
+<p>
+  Follow-ups we will decide on next:
+</p>
+
+<ol>
+  <li>
+    Rename <code>momentum_distribution</code> →
+    <code>density_fourier_transform</code> in
+    <code>src/observables.{hpp,cpp}</code>, or
+  </li>
+  <li>
+    Add a second function that actually computes $|\tilde\psi(k)|^{2}$
+    (analytic Gaussian FT of each ECG basis function for N = 1; requires
+    the one-body reduced density matrix for N ≥ 2).
+  </li>
+</ol>
 
 <h2>6. How to reproduce</h2>
 
