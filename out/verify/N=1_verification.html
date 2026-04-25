@@ -1115,7 +1115,58 @@ $$
   </figcaption>
 </figure>
 
-<h3>9.6 Summary of N = 2 checks</h3>
+<h3>9.6 Full N = 2 two-body wavefunction check</h3>
+
+<p>
+  Because the N = 2 verification Hamiltonian has no inter-particle
+  interaction, the reference ground state factorizes exactly as
+  $\Psi_\text{grid}(x_1,x_2)=\phi_\text{grid}(x_1)\phi_\text{grid}(x_2)$,
+  where $\phi_\text{grid}$ is the one-body finite-difference ground
+  orbital. The saved ECG basis was therefore reconstructed as the full
+  symmetrized two-body wavefunction
+  $\Psi_\text{ECG}(x_1,x_2)\propto\sum_i u_i[g_i(x_1,x_2)+g_i(x_2,x_1)]$
+  and compared directly with the grid product state.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>quantity</th>
+      <th>value</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">full two-body fidelity $|\langle\Psi_\text{grid}|\Psi_\text{ECG}\rangle|^2$</td>
+      <td>0.999 996 151 8</td>
+    </tr>
+    <tr>
+      <td class="label">infidelity</td>
+      <td>$3.85\times 10^{-6}$</td>
+    </tr>
+    <tr>
+      <td class="label">$L^2$ wavefunction difference</td>
+      <td>$1.96\times 10^{-3}$</td>
+    </tr>
+    <tr>
+      <td class="label">max pointwise $|\Delta\Psi|$ on $[-15,15]^2$</td>
+      <td>$6.96\times 10^{-4}$</td>
+    </tr>
+    <tr>
+      <td class="label">bosonic swap asymmetry $\max|\Psi(x_1,x_2)-\Psi(x_2,x_1)|$</td>
+      <td>$3.3\times 10^{-16}$</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  This is a full two-particle wavefunction comparison, unlike Figure 10,
+  which is only a one-body orbital proxy reconstructed from $\sqrt{n(x)}$.
+  The direct two-body fidelity confirms that the N = 2 ECG state agrees
+  with the grid product ground state to a few parts in $10^{-6}$.
+</p>
+
+<h3>9.7 Summary of N = 2 checks</h3>
 
 <ul>
   <li>
@@ -1133,13 +1184,20 @@ $$
     <strong>Momentum:</strong> per-particle $n(k)$ matches the
     reference solvers to L² $\sim 10^{-4}$.
   </li>
+  <li>
+    <strong>Full wavefunction:</strong> direct reconstruction of
+    $\Psi_\text{ECG}(x_1,x_2)$ gives fidelity 0.999 996 151 8 against
+    the grid product reference $\phi_\text{grid}(x_1)\phi_\text{grid}(x_2)$.
+  </li>
 </ul>
 
 <blockquote>
   For N = 2 (non-interacting bosons) the ECG + TDVP ground state
   reproduces the reference product state in energy and in the
   single-particle density / momentum marginals to $\sim 10^{-4}$,
-  after the density-helper bug (Appendix B) was fixed. <strong>The N = 2
+  and the directly reconstructed full two-body wavefunction has
+  fidelity 0.999 996 151 8 against the grid product reference. After
+  the density-helper bug (Appendix B) was fixed, <strong>the N = 2
   verification passes for the non-interacting problem.</strong>
 </blockquote>
 
@@ -1194,8 +1252,8 @@ $$
     <tr>
       <td class="label">wavefunction fidelity (ECG vs grid)</td>
       <td>0.999 997</td>
-      <td>n/a</td>
-      <td style="text-align:left">needs 1-body RDM for N ≥ 2</td>
+      <td>0.999 996</td>
+      <td style="text-align:left">N=2 value from direct two-body reconstruction against product grid reference</td>
     </tr>
   </tbody>
 </table>
@@ -1220,11 +1278,19 @@ $$
     value). It originally flagged the N = 2 density-helper bug.
   </li>
   <li>
-    <strong>Wavefunction fidelity (N = 1 only):</strong> every pair
+    <strong>N = 1 complex wavefunction fidelity:</strong> every pair
     agrees to $1 - \sim 5\times 10^{-6}$. ECG↔grid infidelity
     ($2.8\times 10^{-6}$) is <em>tighter</em> than grid↔DVR
     ($4.2\times 10^{-6}$), so ECG is not "farther" from the references
     than they are from each other.
+  </li>
+  <li>
+    <strong>Full N = 2 wavefunction:</strong> since this benchmark is
+    non-interacting, the grid reference is the product
+    $\phi_\text{grid}(x_1)\phi_\text{grid}(x_2)$. A direct reconstruction
+    of the symmetrized ECG two-body state gives fidelity 0.999 996 151 8
+    and infidelity $3.85\times 10^{-6}$, consistent with the other
+    observables.
   </li>
 </ul>
 

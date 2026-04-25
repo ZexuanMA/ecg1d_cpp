@@ -11,8 +11,41 @@
 namespace ecg1d {
 namespace verify {
 
-// Build diagonal potential V(x_j) = 1/2 m omega^2 x_j^2 + kappa * cos(2 k_L x_j)
-static Eigen::VectorXd build_V(const Eigen::VectorXd& x) {
+namespace detail {
+
+Eigen::MatrixXd build_T_grid_fd(const Eigen::VectorXd& x) {
+    const int n = static_cast<int>(x.size());
+    const double dx = x(1) - x(0);
+    const double coeff = 1.0 / (2.0 * mass * dx * dx);
+    Eigen::MatrixXd T = Eigen::MatrixXd::Zero(n, n);
+    for (int j = 0; j < n; j++) {
+        T(j, j) = 2.0 * coeff;
+        if (j > 0)         T(j, j - 1) = -coeff;
+        if (j < n - 1)     T(j, j + 1) = -coeff;
+    }
+    return T;
+}
+
+Eigen::MatrixXd build_T_dvr_sinc(const Eigen::VectorXd& x) {
+    const int n = static_cast<int>(x.size());
+    const double dx = x(1) - x(0);
+    const double inv_mdx2 = 1.0 / (mass * dx * dx);
+    Eigen::MatrixXd T = Eigen::MatrixXd::Zero(n, n);
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            if (i == j) {
+                T(i, j) = (M_PI * M_PI / 6.0) * inv_mdx2;
+            } else {
+                double sign = ((i - j) % 2 == 0) ? 1.0 : -1.0;
+                double denom = static_cast<double>(i - j);
+                T(i, j) = sign * inv_mdx2 / (denom * denom);
+            }
+        }
+    }
+    return T;
+}
+
+Eigen::VectorXd build_V_full(const Eigen::VectorXd& x) {
     Eigen::VectorXd V(x.size());
     for (int j = 0; j < x.size(); j++) {
         V(j) = 0.5 * mass * omega * omega * x(j) * x(j)
@@ -21,19 +54,24 @@ static Eigen::VectorXd build_V(const Eigen::VectorXd& x) {
     return V;
 }
 
-// Normalize phi so that sum_j |phi_j|^2 * dx = 1
-static void normalize_grid_state(Eigen::VectorXcd& psi, double dx) {
+Eigen::VectorXd build_V_ho_only(const Eigen::VectorXd& x) {
+    Eigen::VectorXd V(x.size());
+    for (int j = 0; j < x.size(); j++) {
+        V(j) = 0.5 * mass * omega * omega * x(j) * x(j);
+    }
+    return V;
+}
+
+void normalize_grid_state(Eigen::VectorXcd& psi, double dx) {
     double s = 0.0;
     for (int j = 0; j < psi.size(); j++) s += std::norm(psi(j));
     s *= dx;
     if (s > 0) psi /= std::sqrt(s);
 }
 
-// Compute n(k) on user-supplied k_grid via direct DFT.
-// psi_k(k) = (1/sqrt(2 pi)) * int dx psi(x) exp(-i k x), n(k) = |psi_k(k)|^2.
-static Eigen::VectorXd compute_nk(const Eigen::VectorXcd& psi,
-                                  const Eigen::VectorXd& x,
-                                  const Eigen::VectorXd& k_grid) {
+Eigen::VectorXd compute_nk(const Eigen::VectorXcd& psi,
+                           const Eigen::VectorXd& x,
+                           const Eigen::VectorXd& k_grid) {
     double dx = x(1) - x(0);
     Eigen::VectorXd nk(k_grid.size());
     double inv_sqrt_2pi = 1.0 / std::sqrt(2.0 * M_PI);
@@ -50,6 +88,8 @@ static Eigen::VectorXd compute_nk(const Eigen::VectorXcd& psi,
     return nk;
 }
 
+} // namespace detail
+
 RefSolverResult reference_gs_grid(int N, int n_grid, double x_max,
                                   const Eigen::VectorXd& k_grid) {
     std::cout << "[step2] grid diag: N=" << N << ", n_grid=" << n_grid
@@ -59,20 +99,14 @@ RefSolverResult reference_gs_grid(int N, int n_grid, double x_max,
     Eigen::VectorXd x(n_grid);
     for (int j = 0; j < n_grid; j++) x(j) = -x_max + j * dx;
 
-    // 3-point FD kinetic: T_jj = 2*coeff, T_{j,j+-1} = -coeff, coeff = 1/(2 m dx^2)
-    double coeff = 1.0 / (2.0 * mass * dx * dx);
-    Eigen::VectorXd V = build_V(x);
-    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(n_grid, n_grid);
-    for (int j = 0; j < n_grid; j++) {
-        H(j, j) = 2.0 * coeff + V(j);
-        if (j > 0)             H(j, j - 1) = -coeff;
-        if (j < n_grid - 1)    H(j, j + 1) = -coeff;
-    }
+    Eigen::MatrixXd H = detail::build_T_grid_fd(x);
+    Eigen::VectorXd V = detail::build_V_full(x);
+    for (int j = 0; j < n_grid; j++) H(j, j) += V(j);
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(H);
     double E_sp = es.eigenvalues()(0);
     Eigen::VectorXcd psi = es.eigenvectors().col(0).cast<Cd>();
-    normalize_grid_state(psi, dx);
+    detail::normalize_grid_state(psi, dx);
 
     RefSolverResult r;
     r.E_sp = E_sp;
@@ -82,7 +116,7 @@ RefSolverResult reference_gs_grid(int N, int n_grid, double x_max,
     r.n_x = Eigen::VectorXd(n_grid);
     for (int j = 0; j < n_grid; j++) r.n_x(j) = std::norm(psi(j));
     r.k   = k_grid;
-    r.n_k = compute_nk(psi, x, k_grid);
+    r.n_k = detail::compute_nk(psi, x, k_grid);
 
     std::cout << "        E_sp=" << std::setprecision(12) << E_sp
               << "  E_total=" << r.E << "\n";
@@ -98,31 +132,14 @@ RefSolverResult reference_gs_dvr(int N, int n_dvr, double x_max,
     Eigen::VectorXd x(n_dvr);
     for (int j = 0; j < n_dvr; j++) x(j) = -x_max + j * dx;
 
-    // Sinc-DVR kinetic matrix (hbar^2/(2m) prefactor, hbar=1):
-    //   T_ii = pi^2 / (6 m dx^2)
-    //   T_ij = (-1)^(i-j) / (m dx^2 (i-j)^2)   (i != j)
-    Eigen::MatrixXd T = Eigen::MatrixXd::Zero(n_dvr, n_dvr);
-    double inv_mdx2 = 1.0 / (mass * dx * dx);
-    for (int i = 0; i < n_dvr; i++) {
-        for (int j = 0; j < n_dvr; j++) {
-            if (i == j) {
-                T(i, j) = (M_PI * M_PI / 6.0) * inv_mdx2;
-            } else {
-                double sign = ((i - j) % 2 == 0) ? 1.0 : -1.0;
-                double denom = static_cast<double>(i - j);
-                T(i, j) = sign * inv_mdx2 / (denom * denom);
-            }
-        }
-    }
-
-    Eigen::VectorXd V = build_V(x);
-    Eigen::MatrixXd H = T;
+    Eigen::MatrixXd H = detail::build_T_dvr_sinc(x);
+    Eigen::VectorXd V = detail::build_V_full(x);
     for (int j = 0; j < n_dvr; j++) H(j, j) += V(j);
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(H);
     double E_sp = es.eigenvalues()(0);
     Eigen::VectorXcd psi = es.eigenvectors().col(0).cast<Cd>();
-    normalize_grid_state(psi, dx);
+    detail::normalize_grid_state(psi, dx);
 
     RefSolverResult r;
     r.E_sp = E_sp;
@@ -132,7 +149,7 @@ RefSolverResult reference_gs_dvr(int N, int n_dvr, double x_max,
     r.n_x = Eigen::VectorXd(n_dvr);
     for (int j = 0; j < n_dvr; j++) r.n_x(j) = std::norm(psi(j));
     r.k   = k_grid;
-    r.n_k = compute_nk(psi, x, k_grid);
+    r.n_k = detail::compute_nk(psi, x, k_grid);
 
     std::cout << "        E_sp=" << std::setprecision(12) << E_sp
               << "  E_total=" << r.E << "\n";

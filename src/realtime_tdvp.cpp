@@ -8,6 +8,7 @@
 #include <cmath>
 #include <iostream>
 #include <iomanip>
+#include <limits>
 
 namespace ecg1d {
 
@@ -318,9 +319,46 @@ static void sample_observables(const std::vector<BasisParams>& basis,
         }
     }
 
+    // <x>, <p> from analytic ECG matrix elements. Single-particle (N=1) only;
+    // for N>=2 we record NaN (the marginal <x_a> would require a kernel that
+    // sums over particle index a with permutation symmetrization — added later
+    // if Step-4 is extended to N>=2).
+    //   Per pair (i,j), single perm:
+    //     <phi_i| x |phi_j>      = M_G * mu                    (mu = c.mu(0))
+    //     <phi_i| -i d/dx |phi_j> = -i * M_G * ((-2 alpha_j) mu + beta_j)
+    //   where alpha_j = c.K_Mj(0,0) = A_j+B_j and beta_j = c.g_Mj(0) = 2 R_j B_j.
+    double x_mean = std::numeric_limits<double>::quiet_NaN();
+    double p_mean = std::numeric_limits<double>::quiet_NaN();
+    if (N == 1) {
+        Cd amp_x(0.0, 0.0);
+        Cd amp_p(0.0, 0.0);
+        for (int i = 0; i < Kt; ++i) {
+            Cd conj_ui = std::conj(basis[i].u);
+            for (int j = 0; j < Kt; ++j) {
+                Cd term_x(0.0, 0.0);
+                Cd term_p(0.0, 0.0);
+                for (int p = 0; p < perms.SN; ++p) {
+                    PairCache c = PairCache::build(basis[i], basis[j], perms.matrices[p]);
+                    double sign = static_cast<double>(perms.signs[p]);
+                    Cd mu     = c.mu(0);
+                    Cd alpha  = c.K_Mj(0, 0);
+                    Cd beta   = c.g_Mj(0);
+                    term_x += sign * c.M_G * mu;
+                    term_p += sign * Cd(0.0, -1.0) * c.M_G * ((-2.0 * alpha) * mu + beta);
+                }
+                amp_x += conj_ui * basis[j].u * term_x;
+                amp_p += conj_ui * basis[j].u * term_p;
+            }
+        }
+        x_mean = (amp_x / S).real();
+        p_mean = (amp_p / S).real();
+    }
+
     trace.t.push_back(t);
     trace.E.push_back(E.real());
     trace.norm.push_back(S.real());
+    trace.x_mean.push_back(x_mean);
+    trace.p_mean.push_back(p_mean);
     trace.x2.push_back(x2);
     trace.p2.push_back(p2);
     trace.overlap0.push_back(amp);

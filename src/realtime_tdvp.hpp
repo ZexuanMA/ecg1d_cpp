@@ -45,6 +45,8 @@ struct RealtimeTrace {
     std::vector<double> t;
     std::vector<double> E;        // <H> / <psi|psi>  (real, conserved)
     std::vector<double> norm;     // <psi|psi> (real, conserved)
+    std::vector<double> x_mean;   // <x>      (N=1; NaN for N>=2)
+    std::vector<double> p_mean;   // <p>      (N=1; NaN for N>=2)
     std::vector<double> x2;       // <x^2>
     std::vector<double> p2;       // <p^2>
     std::vector<Cd>     overlap0; // <psi(0)|psi(t)> — fidelity |<psi(0)|psi(t)>|^2/(n0*n(t))
