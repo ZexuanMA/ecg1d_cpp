@@ -18,6 +18,8 @@
 #include "verify/step2_reference_gs.hpp"
 #include "verify/step3_cross_check.hpp"
 #include "verify/step4_realtime_tdvp.hpp"
+#include "verify/step4_reference_dynamics.hpp"
+#include "verify/step4_cross_check.hpp"
 #include "observables.hpp"
 #include "permutation.hpp"
 
@@ -36,12 +38,14 @@ struct Args {
     bool   run_step2 = false;
     bool   run_step3 = false;
     bool   run_step4 = false;
-    double dt      = 1e-3;
-    double T_total = 10.0;
+    double dt      = 1e-4;
+    double T_total = 2.0 * M_PI;   // one HO period (omega = 1)
+    double dt_trace = 5e-2;
     int    n_grid  = 512;
     double x_max   = 15.0;
-    int    n_dvr   = 128;
-    int    n_snap  = 5;
+    int    n_dvr   = 256;
+    int    n_snap  = 11;
+    bool   rt_verbose = false;
     bool   help    = false;
 };
 
@@ -58,12 +62,14 @@ Options:
   --run-step4       run Step 4 (real-time TDVP; requires step1 basis)
   (if no --run-stepN flag is given, ALL four steps run)
 
-  --dt <float>      real-time step size                         [default 1e-3]
-  --T  <float>      total real-time evolution time              [default 10.0]
+  --dt <float>      real-time step size                         [default 1e-4]
+  --T  <float>      total real-time evolution time              [default 2*pi]
+  --dt-trace <float> trace sampling interval                    [default 5e-2]
   --n-grid <int>    FD grid size                                [default 512]
   --x-max <float>   FD/DVR grid half-width                      [default 15.0]
-  --n-dvr <int>     sinc-DVR grid size                          [default 128]
-  --n-snap <int>    number of real-time density snapshots       [default 5]
+  --n-dvr <int>     sinc-DVR grid size                          [default 256]
+  --n-snap <int>    number of real-time density snapshots       [default 11]
+  --rt-verbose      print Step-4 ECG E(t) at every RK4 step      [default off]
   --help            show this message
 )";
 }
@@ -82,10 +88,12 @@ static Args parse(int argc, char** argv) {
         else if (f == "--run-step4")  a.run_step4 = true;
         else if (f == "--dt")         a.dt = next_float();
         else if (f == "--T")          a.T_total = next_float();
+        else if (f == "--dt-trace")   a.dt_trace = next_float();
         else if (f == "--n-grid")     a.n_grid = next_int();
         else if (f == "--x-max")      a.x_max = next_float();
         else if (f == "--n-dvr")      a.n_dvr = next_int();
         else if (f == "--n-snap")     a.n_snap = next_int();
+        else if (f == "--rt-verbose") a.rt_verbose = true;
         else if (f == "--help" || f == "-h") a.help = true;
         else {
             std::cerr << "unknown flag: " << f << "\n";
@@ -183,8 +191,44 @@ int main_inner(int argc, char** argv) {
                           << " != requested K=" << args.K << "\n";
             }
         }
-        step4_realtime_tdvp(args.N, args.K, basis_for_rt, args.T_total, args.dt,
-                            x_grid, k_grid, args.n_snap);
+
+        // Snapshot times: evenly spaced in [0, T_total], n_snap points.
+        std::vector<double> t_snap(args.n_snap);
+        for (int s = 0; s < args.n_snap; s++) {
+            t_snap[s] = args.T_total * static_cast<double>(s)
+                        / static_cast<double>(args.n_snap - 1);
+        }
+        // Trace times: dense, every dt_trace.
+        std::vector<double> t_trace_ref;
+        for (double t = 0.0; t <= args.T_total + 1e-12; t += args.dt_trace) {
+            t_trace_ref.push_back(std::min(t, args.T_total));
+        }
+
+        // ECG side
+        Step4EcgResult ecg = step4_realtime_tdvp(
+            args.N, args.K, basis_for_rt, args.T_total, args.dt,
+            x_grid, k_grid, t_snap, args.dt_trace, args.rt_verbose);
+
+        // N=1 only: the reference dynamics solvers below propagate a single-
+        // particle wavefunction. For N>=2 we'd need a different reference.
+        if (args.N == 1) {
+            std::cout << "\n=== Step 4 — reference dynamics (FD grid) ===\n";
+            Step4RefResult grid = step4_realtime_grid(
+                basis_for_rt, args.n_grid, args.x_max, k_grid,
+                args.T_total, t_snap, t_trace_ref);
+            write_step4_ref_csvs("grid", args.N, grid);
+
+            std::cout << "\n=== Step 4 — reference dynamics (sinc-DVR) ===\n";
+            Step4RefResult dvr = step4_realtime_dvr(
+                basis_for_rt, args.n_dvr, args.x_max, k_grid,
+                args.T_total, t_snap, t_trace_ref);
+            write_step4_ref_csvs("dvr", args.N, dvr);
+
+            step4_cross_check(args.N, ecg, grid, dvr, x_grid, k_grid);
+        } else {
+            std::cout << "[step4] reference dynamics solvers are N=1 only; "
+                      << "skipping for N=" << args.N << ".\n";
+        }
     }
 
     std::cout << "\n=== done ===\n";

@@ -125,6 +125,8 @@ add_executable(ecg1d_verify
     src/verify/step2_reference_gs.cpp
     src/verify/step3_cross_check.cpp
     src/verify/step4_realtime_tdvp.cpp
+    src/verify/step4_reference_dynamics.cpp
+    src/verify/step4_cross_check.cpp
 )
 target_include_directories(ecg1d_verify PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(ecg1d_verify PRIVATE Eigen3::Eigen)

@@ -205,65 +205,228 @@ def plot_wavefunction_single(N, K):
     plt.close(fig2)
 
 
-def plot_step4_energy_single(N, K):
-    path = os.path.join(OUT, f"step4_trace_N{N}_K{K}.csv")
-    if not os.path.exists(path):
+# --- Step 4 (real-time TDVP) plotting ---------------------------------------
+# CSV layout produced by ecg1d_verify --run-step4:
+#   step4_ecg_trace_N{N}_K{K}.csv     : t,E,norm,x_mean,p_mean
+#   step4_ecg_density_N{N}_K{K}.csv   : t,x,n_x  (long format)
+#   step4_ecg_nk_N{N}_K{K}.csv        : t,k,n_k  (long format)
+#   step4_ecg_snap_N{N}_K{K}.csv      : t,E,fidelity   (one row per snapshot)
+#   step4_grid_trace_N{N}.csv         : t,E,norm,x_mean,p_mean,fidelity
+#   step4_grid_density_N{N}.csv       : t,x,n_x  (long)
+#   step4_grid_nk_N{N}.csv            : t,k,n_k  (long)
+#   step4_dvr_*                       : same as grid_, on DVR discretization
+#   step4_crosscheck_N{N}.csv         : pair,t,quantity,value (long)
+
+
+def _step4_paths(N, K):
+    return {
+        "ecg_trace":  os.path.join(OUT, f"step4_ecg_trace_N{N}_K{K}.csv"),
+        "ecg_snap":   os.path.join(OUT, f"step4_ecg_snap_N{N}_K{K}.csv"),
+        "ecg_dens":   os.path.join(OUT, f"step4_ecg_density_N{N}_K{K}.csv"),
+        "ecg_nk":     os.path.join(OUT, f"step4_ecg_nk_N{N}_K{K}.csv"),
+        "grid_trace": os.path.join(OUT, f"step4_grid_trace_N{N}.csv"),
+        "grid_dens":  os.path.join(OUT, f"step4_grid_density_N{N}.csv"),
+        "grid_nk":    os.path.join(OUT, f"step4_grid_nk_N{N}.csv"),
+        "dvr_trace":  os.path.join(OUT, f"step4_dvr_trace_N{N}.csv"),
+        "dvr_dens":   os.path.join(OUT, f"step4_dvr_density_N{N}.csv"),
+        "dvr_nk":     os.path.join(OUT, f"step4_dvr_nk_N{N}.csv"),
+        "xc":         os.path.join(OUT, f"step4_crosscheck_N{N}.csv"),
+    }
+
+
+def _have(p):
+    return os.path.exists(p)
+
+
+def _load_long_grid(path, value_col):
+    """Read a 't,grid,value' long-format CSV. Returns (times, grid, M[t,grid])."""
+    arr = np.loadtxt(path, delimiter=",", skiprows=1)
+    ts_all = arr[:, 0]
+    g_all  = arr[:, 1]
+    v_all  = arr[:, 2]
+    times = np.unique(ts_all)
+    grid  = np.unique(g_all)
+    M = np.zeros((len(times), len(grid)))
+    t_idx = {t: i for i, t in enumerate(times)}
+    g_idx = {g: i for i, g in enumerate(grid)}
+    for ti, gi, vi in zip(ts_all, g_all, v_all):
+        M[t_idx[ti], g_idx[gi]] = vi
+    return times, grid, M
+
+
+def plot_step4_energy_drift_single(N, K):
+    p = _step4_paths(N, K)
+    if not _have(p["ecg_trace"]) or not _have(p["grid_trace"]) or not _have(p["dvr_trace"]):
         return
-    data = np.loadtxt(path, delimiter=",", skiprows=1)
-    t, E, nrm, x2, p2, fid = data.T
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    axes[0].plot(t, E)
-    axes[0].set_title(f"<H>(t)  (N={N}, K={K})")
-    axes[0].set_xlabel("t"); axes[0].set_ylabel("<H>")
-    dE = np.abs(E - E[0])
-    axes[1].semilogy(t, np.maximum(dE, 1e-16))
-    axes[1].set_title(f"|E(t) - E(0)|  (N={N}, K={K})")
-    axes[1].set_xlabel("t"); axes[1].set_ylabel("|dE|")
+    e = np.loadtxt(p["ecg_trace"],  delimiter=",", skiprows=1)
+    g = np.loadtxt(p["grid_trace"], delimiter=",", skiprows=1)
+    d = np.loadtxt(p["dvr_trace"],  delimiter=",", skiprows=1)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    for arr, name, ls, c in [
+        (e, "ECG",      "-",  "C0"),
+        (g, "FD grid",  "--", "C1"),
+        (d, "sinc-DVR", ":",  "C2"),
+    ]:
+        t = arr[:, 0]; E = arr[:, 1]
+        E0 = E[0]
+        denom = max(abs(E0), 1e-30)
+        rel = np.abs(E - E0) / denom
+        ax.semilogy(t, np.maximum(rel, 1e-18), ls, color=c, label=name, lw=1.5)
+    ax.set_xlabel("t"); ax.set_ylabel("|E(t) - E(0)| / |E(0)|")
+    ax.set_title(f"Step 4 — energy-drift  (N={N}, K={K})")
+    ax.legend()
     fig.tight_layout()
-    fig.savefig(os.path.join(OUT, f"fig_step4_energy_trace_N{N}.png"), dpi=120)
+    fig.savefig(os.path.join(OUT, f"fig_step4_energy_drift_N{N}.png"), dpi=120)
     plt.close(fig)
 
 
 def plot_step4_observables_single(N, K):
-    path = os.path.join(OUT, f"step4_trace_N{N}_K{K}.csv")
-    if not os.path.exists(path):
+    p = _step4_paths(N, K)
+    if not _have(p["ecg_trace"]) or not _have(p["grid_trace"]) or not _have(p["dvr_trace"]):
         return
-    data = np.loadtxt(path, delimiter=",", skiprows=1)
-    t, E, nrm, x2, p2, fid = data.T
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(t, x2, label="<x²>")
-    ax.plot(t, p2, label="<p²>")
-    ax.plot(t, fid, label="|<ψ₀|ψ(t)>|²")
-    ax.set_xlabel("t")
-    ax.set_title(f"Real-time observables (N={N}, K={K})")
-    ax.legend()
+    e = np.loadtxt(p["ecg_trace"],  delimiter=",", skiprows=1)  # t,E,norm,x,p
+    g = np.loadtxt(p["grid_trace"], delimiter=",", skiprows=1)  # +fidelity
+    d = np.loadtxt(p["dvr_trace"],  delimiter=",", skiprows=1)
+    snap_e = np.loadtxt(p["ecg_snap"], delimiter=",", skiprows=1) if _have(p["ecg_snap"]) else None
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    for arr, name, ls, c in [
+        (e, "ECG",      "-",  "C0"),
+        (g, "FD grid",  "--", "C1"),
+        (d, "sinc-DVR", ":",  "C2"),
+    ]:
+        t = arr[:, 0]
+        x_mean = arr[:, 3]
+        p_mean = arr[:, 4]
+        axes[0].plot(t, x_mean, ls, color=c, label=name, lw=1.5)
+        axes[1].plot(t, p_mean, ls, color=c, label=name, lw=1.5)
+        if arr.shape[1] >= 6:  # has fidelity column (grid/DVR)
+            axes[2].plot(t, arr[:, 5], ls, color=c, label=name, lw=1.5)
+    if snap_e is not None and snap_e.size:
+        if snap_e.ndim == 1:
+            snap_e = snap_e.reshape(1, -1)
+        axes[2].plot(snap_e[:, 0], snap_e[:, 2], "o", color="C0",
+                     label="ECG (snap)")
+    axes[0].set_xlabel("t"); axes[0].set_ylabel("<x>")
+    axes[0].set_title(f"<x>(t)  (N={N}, K={K})")
+    axes[1].set_xlabel("t"); axes[1].set_ylabel("<p>")
+    axes[1].set_title(f"<p>(t)  (N={N}, K={K})")
+    axes[2].set_xlabel("t"); axes[2].set_ylabel("|<ψ(0)|ψ(t)>|²")
+    axes[2].set_title(f"Fidelity  (N={N}, K={K})")
+    for ax in axes:
+        ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(os.path.join(OUT, f"fig_step4_observables_N{N}.png"), dpi=120)
     plt.close(fig)
 
 
-def plot_step4_snapshots_single(N, K):
-    path = os.path.join(OUT, f"step4_snapshots_N{N}_K{K}.csv")
-    if not os.path.exists(path):
+def _heatmap(ax, times, grid, M, title, cmap="viridis", vmin=None, vmax=None):
+    """times along y-axis, grid along x-axis."""
+    extent = [grid.min(), grid.max(), times.min(), times.max()]
+    im = ax.imshow(M, aspect="auto", origin="lower", extent=extent,
+                   cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.set_title(title)
+    return im
+
+
+def plot_step4_density_heatmap_single(N, K):
+    p = _step4_paths(N, K)
+    if not _have(p["ecg_dens"]) or not _have(p["grid_dens"]):
         return
-    with open(path) as f:
-        rdr = csv.reader(f); next(rdr)
-        rows = [row for row in rdr]
-    times = sorted({float(r[0]) for r in rows})
-    fig, axes = plt.subplots(2, 1, figsize=(7, 8))
-    for kind, ax in [("x", axes[0]), ("k", axes[1])]:
-        for t in times:
-            sel = [r for r in rows if r[1] == kind and float(r[0]) == t]
-            g = np.array([float(r[2]) for r in sel])
-            v = np.array([float(r[3]) for r in sel])
-            order = np.argsort(g)
-            ax.plot(g[order], v[order], label=f"t={t:.2f}")
-        ax.set_xlabel(kind); ax.set_ylabel(f"n({kind},t)")
-        ax.set_title(f"n({kind},t)  (N={N}, K={K})")
-        ax.legend(fontsize=8)
+    te, xe, Me = _load_long_grid(p["ecg_dens"],  "n_x")
+    tg, xg, Mg = _load_long_grid(p["grid_dens"], "n_x")
+
+    # Resample grid M onto ECG x-grid for difference panel
+    Mg_re = np.zeros_like(Me)
+    for i in range(len(tg)):
+        Mg_re[i, :] = np.interp(xe, xg, Mg[i, :])
+    diff = Me - Mg_re
+
+    vmax_d = max(Me.max(), Mg.max())
+    vmax_diff = np.max(np.abs(diff))
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    _heatmap(axes[0], te, xe, Me, f"ECG  n(x,t)  (N={N})", vmin=0, vmax=vmax_d)
+    _heatmap(axes[1], tg, xg, Mg, "FD grid  n(x,t)",       vmin=0, vmax=vmax_d)
+    im = _heatmap(axes[2], te, xe, diff, "ECG - grid", cmap="RdBu_r",
+                  vmin=-vmax_diff, vmax=vmax_diff)
+    for ax in axes:
+        ax.set_xlabel("x"); ax.set_ylabel("t")
         ax.set_xlim(-6, 6)
+    fig.colorbar(im, ax=axes[2], fraction=0.04)
     fig.tight_layout()
-    fig.savefig(os.path.join(OUT, f"fig_step4_snapshots_N{N}.png"), dpi=120)
+    fig.savefig(os.path.join(OUT, f"fig_step4_density_heatmap_N{N}.png"), dpi=120)
+    plt.close(fig)
+
+
+def plot_step4_momentum_heatmap_single(N, K):
+    p = _step4_paths(N, K)
+    if not _have(p["ecg_nk"]) or not _have(p["grid_nk"]):
+        return
+    te, ke, Me = _load_long_grid(p["ecg_nk"],  "n_k")
+    tg, kg, Mg = _load_long_grid(p["grid_nk"], "n_k")
+    Mg_re = np.zeros_like(Me)
+    for i in range(len(tg)):
+        Mg_re[i, :] = np.interp(ke, kg, Mg[i, :])
+    diff = Me - Mg_re
+
+    vmax_d = max(Me.max(), Mg.max())
+    vmax_diff = np.max(np.abs(diff))
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    _heatmap(axes[0], te, ke, Me, f"ECG  n(k,t)  (N={N})", vmin=0, vmax=vmax_d)
+    _heatmap(axes[1], tg, kg, Mg, "FD grid  n(k,t)",       vmin=0, vmax=vmax_d)
+    im = _heatmap(axes[2], te, ke, diff, "ECG - grid", cmap="RdBu_r",
+                  vmin=-vmax_diff, vmax=vmax_diff)
+    for ax in axes:
+        ax.set_xlabel("k"); ax.set_ylabel("t")
+        ax.set_xlim(-6, 6)
+    fig.colorbar(im, ax=axes[2], fraction=0.04)
+    fig.tight_layout()
+    fig.savefig(os.path.join(OUT, f"fig_step4_momentum_heatmap_N{N}.png"), dpi=120)
+    plt.close(fig)
+
+
+def plot_step4_snapshots_overlay_single(N, K):
+    p = _step4_paths(N, K)
+    if not (_have(p["ecg_dens"]) and _have(p["grid_dens"]) and _have(p["dvr_dens"])):
+        return
+    te, xe, Me_dens = _load_long_grid(p["ecg_dens"],  "n_x")
+    tg, xg, Mg_dens = _load_long_grid(p["grid_dens"], "n_x")
+    td, xd, Md_dens = _load_long_grid(p["dvr_dens"],  "n_x")
+    te2, ke, Me_nk  = _load_long_grid(p["ecg_nk"],    "n_k")
+    tg2, kg, Mg_nk  = _load_long_grid(p["grid_nk"],   "n_k")
+    td2, kd, Md_nk  = _load_long_grid(p["dvr_nk"],    "n_k")
+
+    # Pick 5 snapshot times evenly spaced
+    n_t = len(te)
+    if n_t < 5:
+        chosen = list(range(n_t))
+    else:
+        chosen = [int(round(i * (n_t - 1) / 4)) for i in range(5)]
+    fig, axes = plt.subplots(2, len(chosen), figsize=(3 * len(chosen), 6),
+                             squeeze=False)
+    for col, idx in enumerate(chosen):
+        t = te[idx]
+        # n(x)
+        ax = axes[0, col]
+        ax.plot(xe, Me_dens[idx],            "-",  color="C0", label="ECG", lw=1.5)
+        ax.plot(xg, Mg_dens[idx],            "--", color="C1", label="grid", lw=1.0)
+        ax.plot(xd, Md_dens[idx],            ":",  color="C2", label="DVR",  lw=1.0)
+        ax.set_xlim(-6, 6)
+        ax.set_title(f"t = {t:.3f}")
+        ax.set_xlabel("x"); ax.set_ylabel("n(x)")
+        if col == 0:
+            ax.legend(fontsize=8)
+        # n(k)
+        ax = axes[1, col]
+        ax.plot(ke, Me_nk[idx],            "-",  color="C0", label="ECG", lw=1.5)
+        ax.plot(kg, Mg_nk[idx],            "--", color="C1", label="grid", lw=1.0)
+        ax.plot(kd, Md_nk[idx],            ":",  color="C2", label="DVR",  lw=1.0)
+        ax.set_xlim(-6, 6)
+        ax.set_xlabel("k"); ax.set_ylabel("n(k)")
+        if col == 0:
+            ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(os.path.join(OUT, f"fig_step4_snapshots_overlay_N{N}.png"), dpi=120)
     plt.close(fig)
 
 
@@ -283,9 +446,11 @@ def main():
         plot_density_overlay_single(N, K)
         plot_momentum_overlay_single(N, K)
         plot_wavefunction_single(N, K)
-        plot_step4_energy_single(N, K)
+        plot_step4_energy_drift_single(N, K)
         plot_step4_observables_single(N, K)
-        plot_step4_snapshots_single(N, K)
+        plot_step4_density_heatmap_single(N, K)
+        plot_step4_momentum_heatmap_single(N, K)
+        plot_step4_snapshots_overlay_single(N, K)
     print(f"wrote figures to {OUT}/fig_*_N*.png")
 
 

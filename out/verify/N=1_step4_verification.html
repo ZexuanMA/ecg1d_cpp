@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>N=1 Step 4 — real-time TDVP verification</title>
+<script>
+  MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] } };
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  body {
+    max-width: 1000px;
+    margin: 2em auto;
+    padding: 0 1em;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    line-height: 1.6;
+    color: #222;
+  }
+  h1 { border-bottom: 2px solid #333; padding-bottom: 0.3em; }
+  h2 { border-bottom: 1px solid #bbb; padding-bottom: 0.2em; margin-top: 2em; }
+  h3 { margin-top: 1.6em; color: #333; }
+  h4 { margin-top: 1.2em; color: #444; }
+  code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+  pre  { background: #f4f4f4; padding: 0.7em 1em; border-radius: 4px; overflow-x: auto; font-size: 0.9em; }
+  code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.92em; }
+  table { border-collapse: collapse; margin: 1em 0; font-size: 0.95em; }
+  th, td { border: 1px solid #aaa; padding: 0.35em 0.8em; text-align: right; }
+  th { background: #eee; text-align: center; }
+  td.label { text-align: left; font-family: "SFMono-Regular", Consolas, monospace; }
+  figure { margin: 1.5em 0; text-align: center; }
+  figure img { max-width: 100%; border: 1px solid #ccc; border-radius: 4px; }
+  figcaption { font-style: italic; color: #555; margin-top: 0.4em; font-size: 0.9em; }
+  .pass { color: #0a7d2c; font-weight: 600; }
+  .warn { color: #c06b00; font-weight: 600; }
+  .fail { color: #b00020; font-weight: 600; }
+  .nb   { background: #fffbdc; padding: 0.7em 1em; border-left: 4px solid #e0c000; margin: 1em 0; }
+  .alert{ background: #fdecea; padding: 0.7em 1em; border-left: 4px solid #b00020; margin: 1em 0; }
+  blockquote { border-left: 4px solid #bbb; margin: 1em 0; padding: 0.1em 1em; background: #fafafa; color: #444; }
+  .toc { background: #fafafa; border: 1px solid #ddd; padding: 0.5em 1.2em; border-radius: 4px; }
+  .toc ol { margin: 0.3em 0; }
+</style>
+</head>
+<body>
+
+<h1>N = 1 Step 4 verification — real-time TDVP under <code>H_evolve = T + V_ho</code></h1>
+
+<p>
+  This report records the result of running Step 4 of the verification harness
+  for N = 1 in <code>ecg1d_cpp</code> on 2026-04-26. Step 4 prepares the ECG
+  ground state of $H_\text{full} = T + V_\text{ho} + \kappa\cos(2 k_L x)$
+  (Steps 1&ndash;3 already validated), then quenches off the cosine and evolves
+  in real time under $H_\text{evolve} = T + V_\text{ho}$ alone, comparing the
+  ECG variational TDVP trajectory against two independent spectral-propagator
+  references on the FD grid and the sinc-DVR.
+</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li>Setup &amp; numerical parameters</li>
+    <li>Headline results &mdash; energy conservation</li>
+    <li>Headline finding &mdash; ECG dynamics diverge from the references</li>
+    <li>Energy dynamics (figure)</li>
+    <li>Norm dynamics (figure) &mdash; the smoking gun</li>
+    <li>$\langle x\rangle(t)$ and $\langle p\rangle(t)$ dynamics (figures)</li>
+    <li>Fidelity recurrence (figure)</li>
+    <li>Wavefunction-density evolution (figures)</li>
+    <li>Diagnosis &mdash; what went wrong</li>
+    <li>Recommended next steps</li>
+    <li>How to reproduce</li>
+  </ol>
+</div>
+
+<h2>1. Setup &amp; numerical parameters</h2>
+
+<table>
+  <thead><tr><th>parameter</th><th>value</th><th>notes</th></tr></thead>
+  <tbody>
+    <tr><td class="label">N</td><td>1</td><td>single particle</td></tr>
+    <tr><td class="label">K (ECG basis size)</td><td>5</td><td>same as Step 1&ndash;3 (validated for ground state)</td></tr>
+    <tr><td class="label">Initial state</td><td colspan="2" style="text-align:left">ECG ground state of $H_\text{full}$ from Step 1, used as $\psi_0$ for all three solvers (resampled onto grid for FD/DVR)</td></tr>
+    <tr><td class="label">Evolution Hamiltonian</td><td colspan="2" style="text-align:left">$H_\text{evolve} = -\tfrac12\partial_x^2 + \tfrac12 x^2$ (cosine quench off)</td></tr>
+    <tr><td class="label">$T_\text{total}$</td><td>$2\pi \approx 6.283$</td><td>one HO period (so a clean recurrence is expected)</td></tr>
+    <tr><td class="label">$dt$</td><td>$1\times 10^{-4}$</td><td>RK4; total $\sim$63 000 steps</td></tr>
+    <tr><td class="label">$dt_\text{trace}$</td><td>$5\times 10^{-2}$</td><td>$\sim$130 trace samples (smooth E(t), $\langle x\rangle$(t) plots)</td></tr>
+    <tr><td class="label">snapshots</td><td>11</td><td>at $t = k\cdot 2\pi/10$ for $k = 0,\ldots,10$</td></tr>
+    <tr><td class="label">FD grid $N_g$</td><td>512</td><td>$x \in [-15, 15]$, spectral propagator</td></tr>
+    <tr><td class="label">sinc-DVR $N_\text{DVR}$</td><td>256</td><td>$x \in [-15, 15]$, spectral propagator</td></tr>
+    <tr><td class="label">wall time</td><td>$\sim$2.5 h</td><td>single-threaded, ECG side dominates</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Both reference solvers diagonalize $H_\text{evolve}$ once and propagate
+  exactly via $\psi(t) = U e^{-i\Lambda t} U^\top \psi_0$, so they have
+  <em>zero</em> time-step error &mdash; only spatial discretization. Pairwise
+  agreement between the two references therefore measures spatial
+  convergence; agreement between either reference and ECG measures the
+  variational error.
+</p>
+
+<h2>2. Headline results &mdash; energy conservation</h2>
+
+<table>
+  <thead>
+    <tr><th>solver</th><th>$E_0$</th><th>max $|E(t)-E(0)|/|E(0)|$</th><th>threshold</th><th>verdict</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">ECG (TDVP)</td>
+      <td>0.583 193 829 9</td>
+      <td>$4.63\times 10^{-13}$</td>
+      <td>$<10^{-4}$</td>
+      <td><span class="pass">PASS</span></td>
+    </tr>
+    <tr>
+      <td class="label">FD grid (spectral)</td>
+      <td>0.583 159 363 3</td>
+      <td>$8.40\times 10^{-14}$</td>
+      <td>$<10^{-10}$</td>
+      <td><span class="pass">PASS</span></td>
+    </tr>
+    <tr>
+      <td class="label">sinc-DVR (spectral)</td>
+      <td>0.583 193 829 9</td>
+      <td>$1.89\times 10^{-14}$</td>
+      <td>$<10^{-10}$</td>
+      <td><span class="pass">PASS</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  $E_0 \approx 0.583 = T + V_\text{ho}$ from Step 1's component decomposition
+  (kinetic 0.145, harmonic 0.438), confirming the cosine has been correctly
+  removed. ECG and DVR agree to 10 digits; FD grid differs by $\sim 3\times 10^{-5}$
+  due to its $O(\Delta x^2)$ discretization &mdash; same pattern as Steps 2&ndash;3.
+</p>
+
+<blockquote>
+  <strong>Energy is rigorously conserved by all three solvers.</strong>
+  ECG TDVP holds $\langle H\rangle$ at $4.6\times 10^{-13}$, near the
+  floating-point round-off floor.
+</blockquote>
+
+<h2>3. Headline finding &mdash; ECG dynamics diverge from the references</h2>
+
+<div class="alert">
+  <strong>Energy conservation is necessary but not sufficient.</strong>
+  Although $\langle H\rangle$ stays put on the ECG side, the rest of the
+  trajectory does not: the ECG state walks along a constant-energy surface
+  in parameter space that is <em>not</em> the unitary Schr&ouml;dinger
+  trajectory. The grid and DVR &mdash; which agree with each other &mdash;
+  are the truth.
+</div>
+
+<table>
+  <thead>
+    <tr><th>quantity</th><th>ECG</th><th>FD grid</th><th>sinc-DVR</th><th>expected</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">max $|\langle x\rangle(t)|$</td>
+      <td><span class="fail">0.175</span></td>
+      <td>$4.0\times 10^{-4}$</td>
+      <td>$4.0\times 10^{-4}$</td>
+      <td>$\approx 0$ (parity-even initial state)</td>
+    </tr>
+    <tr>
+      <td class="label">max $|\langle p\rangle(t)|$</td>
+      <td><span class="fail">0.284</span></td>
+      <td>$4.0\times 10^{-4}$</td>
+      <td>$4.0\times 10^{-4}$</td>
+      <td>$\approx 0$ (parity-even initial state)</td>
+    </tr>
+    <tr>
+      <td class="label">norm drift $|\,\langle\psi|\psi\rangle(T)/\langle\psi|\psi\rangle(0) - 1\,|$</td>
+      <td><span class="fail">53 %</span></td>
+      <td>$\sim 10^{-14}$</td>
+      <td>$\sim 10^{-14}$</td>
+      <td>0 (unitarity)</td>
+    </tr>
+    <tr>
+      <td class="label">fidelity at $t=2\pi$ (one HO period)</td>
+      <td><span class="warn">0.86</span></td>
+      <td>0.9998</td>
+      <td>0.9998</td>
+      <td>$\to 1$ (HO recurrence)</td>
+    </tr>
+    <tr>
+      <td class="label">$L^{2}[n(x,t)]$ vs grid (max over $t$)</td>
+      <td><span class="fail">0.250</span></td>
+      <td>&mdash;</td>
+      <td>vs grid: $2.7\times 10^{-3}$</td>
+      <td>$<10^{-3}$</td>
+    </tr>
+    <tr>
+      <td class="label">Bhattacharyya $n(x,t)$ vs grid (min)</td>
+      <td><span class="fail">0.949</span></td>
+      <td>&mdash;</td>
+      <td>vs grid: 0.999 991</td>
+      <td>$>0.9999$</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Grid and DVR agree to $\sim 10^{-3}$ on the position density and to four
+  decimals on momentum-mean &mdash; those are the spatial-discretization-only
+  numbers, and they pass. ECG departs from both references by two orders of
+  magnitude.
+</p>
+
+<h2>4. Energy dynamics</h2>
+
+<figure>
+  <img src="fig_step4_energy_dynamics_N1.png" alt="Energy dynamics: E(t) absolute and log-scale drift">
+  <figcaption>
+    <strong>Figure&nbsp;1.</strong> Left: $\langle H_\text{evolve}\rangle(t)$
+    on the absolute scale. The three lines are visually indistinguishable
+    &mdash; energy is the headline pass. Right: $|E(t) - E(0)|/|E(0)|$ on a
+    log scale. ECG sits at $\sim 10^{-13}$ (machine round-off floor of the
+    pair-cache assembly). The two reference solvers sit even lower, at
+    $\sim 10^{-14}$, because spectral propagation does not accumulate
+    timestep error.
+  </figcaption>
+</figure>
+
+<h2>5. Norm dynamics &mdash; the smoking gun</h2>
+
+<figure>
+  <img src="fig_step4_norm_dynamics_N1.png" alt="Norm vs time, ECG decays to ~0.47, refs stay at 1.0">
+  <figcaption>
+    <strong>Figure&nbsp;2.</strong> Time evolution of $\langle\psi|\psi\rangle$,
+    each curve normalized by its $t=0$ value so the three solvers can be
+    compared on the same axis. Grid and DVR are flat at 1.0 (unitary).
+    The <strong>ECG curve drops monotonically to 0.47</strong> over one HO
+    period &mdash; a 53 % loss of normalization.
+  </figcaption>
+</figure>
+
+<p>
+  This figure is the diagnostic key. The exact TDVP equation
+  $i\,\dot z_\alpha = C^{-1}_{\alpha\beta}\,g_\beta$ preserves
+  $\langle\psi|\psi\rangle$ identically when $C$ is invertible (because then
+  $\dot\psi$ is exactly orthogonal to $\psi$ in the Hilbert-space sense).
+  The fact that ECG norm drifts means the regularised solve
+  $\dot z = (C + \lambda I)^{-1} g$ (with the SVD $rcond$ cutoff at $10^{-4}$
+  of $\sigma_\text{max}$) is dropping motion components that are NOT
+  norm-preserving.
+</p>
+
+<p>
+  Inspection of $\text{cond}(C)$ during the run gives
+  $\text{cond}(C) \approx 3.5\times 10^{11}$, so SVD truncates singular values
+  below $\sigma_\text{max}\cdot 10^{-4} \sim 3.5\times 10^7$, which on a matrix
+  of operator norm $\sim 1$ means many directions of motion are projected
+  out. Each such truncation produces an (intentional, regularising) leak,
+  and these leaks don't average to zero &mdash; they bias the trajectory.
+</p>
+
+<h2>6. $\langle x\rangle$ and $\langle p\rangle$ dynamics</h2>
+
+<figure>
+  <img src="fig_step4_x_dynamics_N1.png" alt="x-mean vs t">
+  <figcaption>
+    <strong>Figure&nbsp;3.</strong> $\langle x\rangle(t)$. The initial state
+    $\psi_0$ is parity-even (it is the ground state of an even Hamiltonian),
+    and $H_\text{evolve}$ is also parity-even, so $\langle x\rangle(t) \equiv 0$
+    is the exact answer. Grid and DVR honour this to $4\times 10^{-4}$
+    (the residual is the tiny parity-odd component already present in the ECG
+    initial state &mdash; a chirp artefact from imaginary-time TDVP).
+    ECG drifts to $|\langle x\rangle| \approx 0.18$ &mdash; nearly three orders
+    of magnitude beyond the references.
+  </figcaption>
+</figure>
+
+<figure>
+  <img src="fig_step4_p_dynamics_N1.png" alt="p-mean vs t">
+  <figcaption>
+    <strong>Figure&nbsp;4.</strong> $\langle p\rangle(t)$. Same parity argument
+    as for $\langle x\rangle$. ECG breaks parity by an even larger margin,
+    reaching $|\langle p\rangle| \approx 0.28$ at $t = 2\pi$.
+  </figcaption>
+</figure>
+
+<h2>7. Fidelity recurrence</h2>
+
+<figure>
+  <img src="fig_step4_fidelity_dynamics_N1.png" alt="Fidelity vs time, grid recurs at 2pi, ECG decays">
+  <figcaption>
+    <strong>Figure&nbsp;5.</strong> $|\langle\psi(0)|\psi(t)\rangle|^2$. Under
+    HO evolution every initial state has an <em>exact</em> revival at every
+    multiple of the HO period (modulo a global phase). The grid and DVR
+    references both reach 0.9998 at $t = 2\pi$ &mdash; that is the recurrence
+    on the discrete grid, off from 1 only by the $|\psi(0)\rangle$
+    representation error, which is tiny.
+    The ECG snapshots (blue dots) do <em>not</em> recur: the curve decays
+    monotonically to 0.86 and shows no sign of returning. This is consistent
+    with the ECG state having drifted so far from $|\psi(0)\rangle$ in the
+    parameter manifold that the unitary loop closure is no longer reachable.
+  </figcaption>
+</figure>
+
+<h2>8. Wavefunction-density evolution</h2>
+
+<figure>
+  <img src="fig_step4_wavefunction_waterfall_N1.png" alt="n(x,t) waterfall ECG vs grid">
+  <figcaption>
+    <strong>Figure&nbsp;6.</strong> Waterfall plot: $n(x,t)$ at all 11 snapshot
+    times, vertically offset by snapshot index, colour from dark (early) to
+    bright (late). Left: ECG. Right: FD grid (truth). The grid waterfall
+    shows the expected breathing motion of the cos-on ground state under HO
+    confinement &mdash; the density compresses and expands smoothly with
+    period $\pi$ (half the HO period). The ECG waterfall shows a similar
+    shape early on but progressively distorts: the centroid shifts to the
+    right (consistent with $\langle x\rangle > 0$), the density loses its
+    even symmetry, and the late-time profiles bear little resemblance to
+    the truth.
+  </figcaption>
+</figure>
+
+<figure>
+  <img src="fig_step4_wavefunction_snapshots_N1.png" alt="Density snapshots at five times">
+  <figcaption>
+    <strong>Figure&nbsp;7.</strong> Density snapshots at $t = 0,\ \pi/2,\ \pi,\ 3\pi/2,\ 2\pi$.
+    At $t = 0$ all three curves coincide (initial state is shared). By
+    $t = \pi/2$ the ECG profile is already visibly off the grid/DVR overlay.
+    By $t = 2\pi$ the ECG curve has lost most of its similarity to the truth,
+    while grid and DVR have nearly returned to their $t = 0$ shapes
+    (the recurrence).
+  </figcaption>
+</figure>
+
+<h2>9. Diagnosis &mdash; what went wrong</h2>
+
+<p>The verification has uncovered a real and surprising limitation:</p>
+
+<blockquote>
+  <strong>K = 5 ECG basis is rich enough for the ground state of $H_\text{full}$
+  but too narrow for real-time evolution under $H_\text{evolve}$.</strong>
+</blockquote>
+
+<p>
+  The ground-state search (imaginary time, gradient descent in the variational
+  manifold) only requires the manifold to <em>contain</em> a state close to
+  the true minimum. Real-time TDVP requires the manifold's tangent space at
+  every point of the trajectory to match the Schr&ouml;dinger flow direction
+  $-iH|\psi\rangle$ projected onto that tangent space. When the C matrix has
+  near-degenerate singular values &mdash; here $\text{cond}(C) \sim 3.5\times 10^{11}$
+  &mdash; SVD with $rcond = 10^{-4}$ projects out genuine motion directions
+  along with the numerical noise, and the projection is not norm-preserving.
+  The result is a TDVP step that conserves energy (because both the projected
+  flow and the Hamiltonian gradient are real-valued) but slowly leaks norm
+  and breaks the symmetries of the Hamiltonian.
+</p>
+
+<h3>Why the ground state was unaffected</h3>
+
+<ol>
+  <li>
+    Imaginary-time TDVP uses $\dot z = -C^{-1} g$ (no factor of $i$), so the
+    flow does not need to preserve the unitary inner product &mdash; only
+    decrease energy. SVD truncation that breaks unitarity is harmless here.
+  </li>
+  <li>
+    Step 1 also re-solves $u$ exactly via the generalised eigenvalue problem
+    after each step (the &ldquo;u resolve&rdquo; in <code>tdvp_step</code>),
+    which absorbs basis errors into the linear coefficients. No such resolve
+    happens in real time.
+  </li>
+</ol>
+
+<h3>Why energy stayed conserved</h3>
+
+<p>
+  Even with the truncated $C^{-1}$, the projected flow is still
+  $\dot z \propto C^{-1} \nabla E$. Following any descent direction of a
+  smooth functional preserves the &ldquo;flat&rdquo; component (in this case,
+  the constant-$E$ surface) up to roundoff. The bug is that the flow stays
+  on the wrong constant-$E$ surface.
+</p>
+
+<h2>10. Recommended next steps</h2>
+
+<p>In increasing order of expected impact and effort:</p>
+
+<table>
+  <thead>
+    <tr><th>option</th><th>change</th><th>cost</th><th>expected effect</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">A</td>
+      <td style="text-align:left">Set <code>rt_cfg.enforce_norm = true</code></td>
+      <td>1 line</td>
+      <td style="text-align:left">Clamps norm to 1 after every step. Won't fix shape error or parity drift, but isolates them from the norm leak.</td>
+    </tr>
+    <tr>
+      <td class="label">B</td>
+      <td style="text-align:left">Increase $K$ (e.g. $K = 8$ or $K = 10$)</td>
+      <td>1 CLI flag</td>
+      <td style="text-align:left">More basis lifts the C-matrix degeneracy; rcond truncation drops fewer real motion directions. Probably the real fix.</td>
+    </tr>
+    <tr>
+      <td class="label">C</td>
+      <td style="text-align:left">Use Trotter splitting: <code>rt_cfg.u_split_trotter = true</code></td>
+      <td>1 CLI flag</td>
+      <td style="text-align:left">Propagates $u$ analytically via $\exp(-iH dt)$ on fixed $\{A,B,R\}$, TDVP only handles $\{A,B,R\}$. Decouples the linear $u$ flow from the non-linear basis flow; might handle near-singular $C$ much better.</td>
+    </tr>
+    <tr>
+      <td class="label">D</td>
+      <td style="text-align:left">Loosen $rcond$ (e.g. $10^{-6}$)</td>
+      <td>1 CLI flag</td>
+      <td style="text-align:left">Risky &mdash; could amplify numerical noise. Last resort.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  My recommendation: do <strong>A + B</strong> together. Re-run with
+  $K = 10$, $\text{enforce\_norm}=$ true, same $T = 2\pi$ but allow $dt = 10^{-3}$
+  to keep the wall-time manageable (RK4 truncation error stays well below
+  machine precision at that $dt$).
+</p>
+
+<h2>11. How to reproduce</h2>
+
+<pre><code>cd /home/gyqyan/zexuan/ecg1d_cpp/build &amp;&amp; cmake --build . -j --target ecg1d_verify
+cd /home/gyqyan/zexuan/ecg1d_cpp
+./build/ecg1d_verify --N 1 --K 5 --run-step1 --run-step4
+python3 scripts/plot_verification.py
+</code></pre>
+
+<p>Outputs under <code>out/verify/</code>:</p>
+
+<ul>
+  <li><code>step4_ecg_trace_N1_K5.csv</code> &mdash; t, E, norm, &lt;x&gt;, &lt;p&gt;</li>
+  <li><code>step4_ecg_density_N1_K5.csv</code> &mdash; t, x, n_x (long format)</li>
+  <li><code>step4_ecg_nk_N1_K5.csv</code> &mdash; t, k, n_k</li>
+  <li><code>step4_ecg_snap_N1_K5.csv</code> &mdash; per-snapshot t, E, fidelity</li>
+  <li><code>step4_grid_*</code>, <code>step4_dvr_*</code> &mdash; reference traces / densities / momentum</li>
+  <li><code>fig_step4_energy_dynamics_N1.png</code>, <code>fig_step4_norm_dynamics_N1.png</code>,
+      <code>fig_step4_x_dynamics_N1.png</code>, <code>fig_step4_p_dynamics_N1.png</code>,
+      <code>fig_step4_fidelity_dynamics_N1.png</code>,
+      <code>fig_step4_wavefunction_waterfall_N1.png</code>,
+      <code>fig_step4_wavefunction_snapshots_N1.png</code></li>
+</ul>
+
+<p>
+  For verbose per-step energy printout (useful for debugging short runs):
+</p>
+
+<pre><code>./build/ecg1d_verify --N 1 --K 5 --run-step4 --T 1e-3 --dt 1e-4 --rt-verbose
+</code></pre>
+
+<blockquote>
+  <strong>Outcome.</strong> Step 4 has accomplished its purpose: cross-checking
+  ECG real-time TDVP against two independent reference solvers has revealed
+  that the K = 5 basis sufficient for the ground state is <em>not</em>
+  sufficient for time evolution. Energy is conserved to machine precision,
+  but norm leaks 53 % and the wavefunction loses its symmetries and
+  recurrence within one HO period. The fix is to enrich the basis (and
+  optionally enforce unitarity by post-correction); a follow-up run with
+  $K = 10$ + <code>enforce_norm</code> is the next step before any
+  larger-N or kicking dynamics can be trusted.
+</blockquote>
+
+</body>
+</html>

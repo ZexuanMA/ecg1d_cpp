@@ -1,0 +1,185 @@
+Step 4 (real-time TDVP) — how to get the results after the run finishes
+=========================================================================
+
+The run was launched in the background with PID 977305:
+  ./build/ecg1d_verify --N 1 --K 5 --run-step1 --run-step4
+  log file: /tmp/step4_smoke.log
+  expected wall time: ~50 min (dt=1e-4, T=2π, ~63k RK4 steps × 10 legs)
+  outputs: out/verify/step4_*.csv
+
+The process is reparented to init (PPID=1) and has no controlling terminal,
+so it survives SSH disconnects.
+
+
+-------------------------------------------------------------------------
+1. Check whether the run is done
+-------------------------------------------------------------------------
+    pgrep -af ecg1d_verify | grep -v zsh
+
+  - If output is empty: the run is finished.
+  - If output shows PID 977305 still running: it's still going. Tail the log:
+        tail -20 /tmp/step4_smoke.log
+
+
+-------------------------------------------------------------------------
+2. Confirm the run finished cleanly
+-------------------------------------------------------------------------
+    tail -30 /tmp/step4_smoke.log
+
+  Expect to see at the end:
+    [step4] wrote NNN trace rows, 11 snapshots
+    === Step 4 — reference dynamics (FD grid) ===
+    [step4-ref/grid] E_init=...  max_rel_E_drift=...
+    === Step 4 — reference dynamics (sinc-DVR) ===
+    [step4-ref/dvr] E_init=...  max_rel_E_drift=...
+    === Step 4 — cross-check (N=1) ===
+    [step4-xc] wrote step4_crosscheck_N1.csv
+    === done ===
+
+
+-------------------------------------------------------------------------
+3. Verify all expected CSVs are present
+-------------------------------------------------------------------------
+    cd /home/gyqyan/zexuan/ecg1d_cpp
+    ls -la out/verify/step4_*.csv
+
+  Expect 10 files:
+    step4_ecg_trace_N1_K5.csv
+    step4_ecg_density_N1_K5.csv
+    step4_ecg_nk_N1_K5.csv
+    step4_ecg_snap_N1_K5.csv
+    step4_grid_trace_N1.csv
+    step4_grid_density_N1.csv
+    step4_grid_nk_N1.csv
+    step4_dvr_trace_N1.csv
+    step4_dvr_density_N1.csv
+    step4_dvr_nk_N1.csv
+    step4_crosscheck_N1.csv          (11th file — only if all three solvers ran)
+
+
+-------------------------------------------------------------------------
+4. Generate the figures
+-------------------------------------------------------------------------
+    cd /home/gyqyan/zexuan/ecg1d_cpp
+    python3 scripts/plot_verification.py
+
+  This regenerates ALL Step-1/2/3/4 figures. The new Step-4 ones are:
+    out/verify/fig_step4_energy_drift_N1.png      ← headline conservation plot
+    out/verify/fig_step4_observables_N1.png       ← <x>(t), <p>(t), fidelity
+    out/verify/fig_step4_density_heatmap_N1.png   ← n(x,t) heatmaps
+    out/verify/fig_step4_momentum_heatmap_N1.png  ← n(k,t) heatmaps
+    out/verify/fig_step4_snapshots_overlay_N1.png ← 5 selected snapshots
+
+
+-------------------------------------------------------------------------
+5. Quick PASS/FAIL check via CSV inspection (no plotting needed)
+-------------------------------------------------------------------------
+The PASS thresholds for Step 4 are:
+
+  ECG energy drift          : |E(t)-E(0)| / |E(0)| < 1e-4
+  Grid energy drift         : < 1e-10  (spectral propagation = exact in time)
+  DVR energy drift          : < 1e-10
+  ECG <x>(t), <p>(t)        : |.| < 1e-3        (parity says these should be ~0)
+  L²[n_x] ECG vs grid       : < 1e-3
+  Bhattacharyya ECG vs grid : > 0.9999
+
+Run all six checks at once:
+
+    cd /home/gyqyan/zexuan/ecg1d_cpp
+    python3 - <<'EOF'
+import numpy as np, pandas as pd, os
+OUT = "out/verify"
+
+def drift(path, label, threshold):
+    a = np.loadtxt(os.path.join(OUT, path), delimiter=",", skiprows=1)
+    t, E = a[:, 0], a[:, 1]
+    rel = np.max(np.abs(E - E[0])) / max(abs(E[0]), 1e-30)
+    ok = "PASS" if rel < threshold else "WARN"
+    print(f"  {label:18s} max rel drift = {rel:.3e}  thr={threshold:.0e}  [{ok}]")
+
+def absmax(path, label, col_name, threshold):
+    a = np.loadtxt(os.path.join(OUT, path), delimiter=",", skiprows=1)
+    # Map: t,E,norm,x_mean,p_mean[,fidelity]
+    cols = {"t": 0, "E": 1, "norm": 2, "x_mean": 3, "p_mean": 4}
+    v = a[:, cols[col_name]]
+    m = np.max(np.abs(v))
+    ok = "PASS" if m < threshold else "WARN"
+    print(f"  {label:18s} max |{col_name}|  = {m:.3e}  thr={threshold:.0e}  [{ok}]")
+
+def xc_metric(quantity, pair, agg, threshold, cmp_op):
+    df = pd.read_csv(os.path.join(OUT, "step4_crosscheck_N1.csv"))
+    sub = df[(df.pair == pair) & (df.quantity == quantity)]
+    val = agg(sub.value.values)
+    ok = "PASS" if cmp_op(val, threshold) else "WARN"
+    print(f"  {quantity:18s} {pair:14s} {agg.__name__:6s} = "
+          f"{val:.4e}  thr={threshold:.0e}  [{ok}]")
+
+print("--- Energy conservation ---")
+drift("step4_ecg_trace_N1_K5.csv", "ECG",      1e-4)
+drift("step4_grid_trace_N1.csv",   "FD grid",  1e-10)
+drift("step4_dvr_trace_N1.csv",    "sinc-DVR", 1e-10)
+
+print("\n--- ECG parity invariants (should be ~0) ---")
+absmax("step4_ecg_trace_N1_K5.csv", "ECG", "x_mean", 1e-3)
+absmax("step4_ecg_trace_N1_K5.csv", "ECG", "p_mean", 1e-3)
+
+print("\n--- Cross-check (snapshot averages) ---")
+import operator
+xc_metric("L2_nx",         "ECG_vs_grid", np.max,  1e-3,  operator.lt)
+xc_metric("L2_nk",         "ECG_vs_grid", np.max,  5e-3,  operator.lt)
+xc_metric("bhattacharyya", "ECG_vs_grid", np.min,  0.9999, operator.gt)
+xc_metric("L2_nx",         "grid_vs_DVR", np.max,  1e-4,  operator.lt)
+
+print("\n--- Snapshot fidelity at t=2π (should be high; see snap CSV) ---")
+df = pd.read_csv(os.path.join(OUT, "step4_ecg_snap_N1_K5.csv"))
+last = df.iloc[-1]
+print(f"  t={last.t:.4f}  E={last.E:.10f}  fidelity={last.fidelity:.6f}")
+EOF
+
+
+-------------------------------------------------------------------------
+6. View the figures
+-------------------------------------------------------------------------
+On the VPS:
+    ls -la out/verify/fig_step4_*_N1.png
+
+Copy them to your Mac for viewing:
+    # from your Mac
+    scp <user>@<vps>:/home/gyqyan/zexuan/ecg1d_cpp/out/verify/fig_step4_*_N1.png ./
+
+
+-------------------------------------------------------------------------
+7. If anything is WARN
+-------------------------------------------------------------------------
+- ECG energy drift > 1e-4: check that dt is small enough; the run used dt=1e-4
+  which is already very tight, so this would suggest a bug.
+- Grid/DVR drift > 1e-10: should never happen (spectral propagation is exact
+  in time). If it does, look at /tmp/step4_smoke.log for warning messages.
+- |<x>|, |<p>| > 1e-3: indicates parity-breaking; could be from B/R basis
+  parameters drifting off the symmetric manifold during TDVP.
+- L²[n_x] ECG vs grid > 1e-3: ECG basis K=5 may be insufficient for the
+  dynamics; try K=7 or K=9 by re-running:
+      ./build/ecg1d_verify --N 1 --K 7 --run-step1 --run-step4
+
+In any WARN case, paste the output of step 5 above and the relevant figure
+back to Claude and we can debug.
+
+
+-------------------------------------------------------------------------
+8. Re-running with different parameters
+-------------------------------------------------------------------------
+The defaults can be overridden:
+    ./build/ecg1d_verify --N 1 --K 5 --run-step4 \
+        --T 12.566 --dt 0.001 --n-snap 21 --dt-trace 0.05
+
+Useful overrides:
+    --T          total real-time evolution                 (default 2π)
+    --dt         RK4 step size                             (default 1e-4)
+    --dt-trace   trace sample interval                     (default 5e-2)
+    --n-snap     snapshot count                            (default 11)
+    --n-grid     FD grid size                              (default 512)
+    --n-dvr      sinc-DVR grid size                        (default 256)
+
+NOTE: Step 4 requires Step 1 to have produced the basis. Either run them
+together (--run-step1 --run-step4) or pass --run-step4 alone after a Step-1
+basis CSV exists at out/verify/step1_ecg_basis_N1_K5.csv.
