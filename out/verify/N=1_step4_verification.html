@@ -342,43 +342,289 @@
 </blockquote>
 
 <p>
-  The ground-state search (imaginary time, gradient descent in the variational
-  manifold) only requires the manifold to <em>contain</em> a state close to
-  the true minimum. Real-time TDVP requires the manifold's tangent space at
-  every point of the trajectory to match the Schr&ouml;dinger flow direction
-  $-iH|\psi\rangle$ projected onto that tangent space. When the C matrix has
-  near-degenerate singular values &mdash; here $\text{cond}(C) \sim 3.5\times 10^{11}$
-  &mdash; SVD with $rcond = 10^{-4}$ projects out genuine motion directions
-  along with the numerical noise, and the projection is not norm-preserving.
-  The result is a TDVP step that conserves energy (because both the projected
-  flow and the Hamiltonian gradient are real-valued) but slowly leaks norm
-  and breaks the symmetries of the Hamiltonian.
+  This section analyses, in mathematical detail, exactly which TDVP invariants
+  are broken by the regularised Gram inverse and which are not. The pattern
+  observed in Sections 2&ndash;8 &mdash; energy conserved, norm leaking, parity
+  broken, no recurrence &mdash; is fully explained by the geometry of the
+  tangent-space projector that defines the TDVP flow.
 </p>
 
-<h3>Why the ground state was unaffected</h3>
+<h3>9.1 TDVP as an orthogonal projection of the Schr&ouml;dinger flow</h3>
+
+<p>
+  Let $\mathcal{M} = \{\,|\psi(z)\rangle : z \in \mathbb{C}^d\,\}$ be the
+  variational manifold parameterised by $z = (u, A, B, R)$, and let
+  $T_\psi\mathcal{M} = \mathrm{span}\{|\partial_\alpha\psi\rangle\}_{\alpha=1}^{d}$
+  be its tangent space at $|\psi\rangle$. The Dirac&ndash;Frenkel principle
+  minimises the residual $\bigl\| (i\partial_t - H)|\psi\rangle \bigr\|^2$ over
+  $|\dot\psi\rangle \in T_\psi\mathcal{M}$. The Euler equations are
+</p>
+
+\[
+  i\,C_{\alpha\beta}\,\dot z_\beta \;=\; g_\alpha,
+  \qquad
+  C_{\alpha\beta} = \langle\partial_\alpha\psi|\partial_\beta\psi\rangle,
+  \qquad
+  g_\alpha = \langle\partial_\alpha\psi|H|\psi\rangle.
+\]
+
+<p>
+  Equivalently, with the orthogonal projector
+  $P_T:\mathcal{H}\to T_\psi\mathcal{M}$ defined by
+  $P_T = |\partial_\alpha\psi\rangle (C^{-1})_{\alpha\beta} \langle\partial_\beta\psi|$,
+  the TDVP velocity is the projected Schr&ouml;dinger flow
+</p>
+
+\[
+  |\dot\psi\rangle \;=\; -i\,P_T\,H|\psi\rangle.
+\]
+
+<p>
+  Direct differentiation gives the two conservation laws of TDVP under any
+  Hermitian projector $P$:
+</p>
+
+\[
+  \frac{d}{dt}\langle\psi|\psi\rangle
+  \;=\; 2\,\mathrm{Im}\,\langle\psi|PH|\psi\rangle,
+  \qquad
+  \frac{d}{dt}\langle\psi|H|\psi\rangle
+  \;=\; 2\,\mathrm{Im}\,\langle\psi|HPH|\psi\rangle.
+\]
+
+<p>
+  Energy conservation follows <em>structurally</em>: $HPH$ is Hermitian for any
+  Hermitian $P$, hence $\langle\psi|HPH|\psi\rangle\in\mathbb{R}$ and the right
+  side vanishes <em>identically</em>. Norm conservation, by contrast, requires
+  the additional condition
+</p>
+
+\[
+  P\,|\psi\rangle = |\psi\rangle, \qquad\text{i.e.}\qquad |\psi\rangle \in \mathrm{range}(P),
+\]
+
+<p>
+  because then $\langle\psi|PH|\psi\rangle = \langle\psi|H|\psi\rangle\in\mathbb{R}$.
+  For the full TDVP projector $P_T$ this condition holds <em>exactly</em>: the
+  linear coefficients $u_k$ are themselves variational parameters, so
+  $|\psi\rangle = \sum_k u_k|\phi_k\rangle = \sum_k u_k\,\partial_{u_k}|\psi\rangle
+  \in T_\psi\mathcal{M}$. Norm and energy are therefore both preserved by exact
+  TDVP.
+</p>
+
+<h3>9.2 SVD regularisation replaces $P_T$ with a strictly smaller projector</h3>
+
+<p>
+  The Gram matrix $C\in\mathbb{C}^{d\times d}$ is Hermitian positive
+  semidefinite and admits the spectral decomposition
+  $C = \sum_{i=1}^{d}\sigma_i\,|v_i\rangle\langle v_i|$ with
+  $\sigma_1 \geq \sigma_2 \geq \cdots \geq \sigma_d \geq 0$. Run-time inspection
+  during Step 4 gives $\sigma_1\sim 1$ and $\sigma_d\sim 3\times 10^{-12}$,
+  hence $\mathrm{cond}(C) = \sigma_1/\sigma_d \approx 3.5\times 10^{11}$ &mdash;
+  the spectrum spans roughly 11.5 decades. The regularised pseudoinverse used
+  in the code is
+</p>
+
+\[
+  C^{+}_{r} \;=\; \sum_{\sigma_i \,\geq\, r\,\sigma_1}\,
+  \frac{1}{\sigma_i}\,|v_i\rangle\langle v_i|,
+  \qquad r \equiv \mathrm{rcond} = 10^{-4}.
+\]
+
+<p>
+  The cutoff retains only those $\sigma_i$ in the top 4 decades, dropping
+  every direction below $r\sigma_1 \approx 10^{-4}$. The resulting velocity
+  $\dot z = -i\,C^{+}_{r}\,g$ produces $|\dot\psi\rangle = -i\,P_{T_r}\,H|\psi\rangle$
+  with the <em>restricted</em> projector
+</p>
+
+\[
+  P_{T_r} \;=\; |\partial_\alpha\psi\rangle\,(C^{+}_{r})_{\alpha\beta}\,\langle\partial_\beta\psi|,
+  \qquad \mathrm{range}(P_{T_r}) = T_r \;\subsetneq\; T_\psi\mathcal{M}.
+\]
+
+<p>
+  $P_{T_r}$ remains an orthogonal projector (it is Hermitian and idempotent),
+  so the energy-conservation argument of Section&nbsp;9.1 goes through
+  unchanged. What changes is whether $|\psi\rangle$ still lies in its range.
+</p>
+
+<h3>9.3 Why norm leaks &mdash; the residual formula</h3>
+
+<p>
+  Decompose the state along and across the truncated subspace,
+  $|\psi\rangle = |\psi_T\rangle + |\psi_\perp\rangle$ with
+  $|\psi_T\rangle = P_{T_r}|\psi\rangle$ and
+  $|\psi_\perp\rangle = (\mathbb{1}-P_{T_r})|\psi\rangle$. Substituting into
+  the norm equation,
+</p>
+
+\[
+  \frac{d}{dt}\langle\psi|\psi\rangle
+  \;=\; 2\,\mathrm{Im}\,\langle\psi_T|H|\psi\rangle
+  \;=\; 2\,\mathrm{Im}\,\langle\psi_T|H|\psi_\perp\rangle,
+\]
+
+<p>
+  using $\langle\psi_T|H|\psi_T\rangle\in\mathbb{R}$. The norm-leak rate is
+  therefore the imaginary part of a single off-diagonal matrix element:
+</p>
+
+\[
+  \boxed{\;
+    \frac{d}{dt}\,\log\langle\psi|\psi\rangle
+    \;=\;
+    \frac{2\,\mathrm{Im}\,\langle\psi_T|H|\psi_\perp\rangle}{\langle\psi|\psi\rangle}.
+  \;}
+\]
+
+<p>
+  This residual is generically nonzero and not sign-definite, but a coherent
+  sign over the trajectory produces monotonic norm drift. Figure&nbsp;2 shows
+  exactly such monotonic decay from $1$ to $0.47$ over $T = 2\pi$. Inverting
+  gives the average leak rate
+</p>
+
+\[
+  \overline{\Bigl|\frac{d}{dt}\log\langle\psi|\psi\rangle\Bigr|}
+  \;\approx\;
+  \frac{|\log 0.47|}{2\pi}
+  \;\approx\; 0.12,
+\]
+
+<p>
+  i.e.&nbsp;$\mathrm{Im}\,\langle\psi_T|H|\psi_\perp\rangle / \langle\psi|\psi\rangle
+  \approx -0.06$ averaged over the run &mdash; small in absolute terms but
+  sustained for $\sim 6\times 10^{4}$ RK4 steps.
+</p>
+
+<h3>9.4 Why energy survives the truncation</h3>
+
+<p>
+  Repeating the derivation for $\langle H\rangle$ with $P_{T_r}$,
+</p>
+
+\[
+  \frac{d}{dt}\langle\psi|H|\psi\rangle
+  \;=\; 2\,\mathrm{Im}\,\langle\psi|H\,P_{T_r}\,H|\psi\rangle.
+\]
+
+<p>
+  Writing $|\chi\rangle = H|\psi\rangle$, the bilinear form
+  $\langle\chi|P_{T_r}|\chi\rangle = \|P_{T_r}\chi\|^2 \geq 0 \in\mathbb{R}$
+  because $P_{T_r}$ is an orthogonal projector. Hence $\frac{d}{dt}\langle H\rangle = 0$
+  exactly, regardless of the rcond cutoff. Energy conservation is a
+  consequence only of $P_{T_r}^\dagger = P_{T_r}^2 = P_{T_r}$ &mdash; not of
+  which subspace $P_{T_r}$ projects onto. This is why Figure&nbsp;1 shows
+  $|E(t)-E(0)|/|E(0)| \sim 10^{-13}$ at the round-off floor while every other
+  observable is wrong.
+</p>
+
+<h3>9.5 Why parity is also broken</h3>
+
+<p>
+  Let $\Pi : x \mapsto -x$ be the parity operator. Both $H_\text{evolve}$ and
+  the seed $|\psi_0\rangle$ commute with $\Pi$ (the latter up to the small
+  chirp residue noted in Section&nbsp;6), so an exact unitary flow fixes
+  $\langle x\rangle = \langle p\rangle = 0$. For TDVP with projector $P$,
+</p>
+
+\[
+  \frac{d}{dt}\langle x\rangle
+  \;=\; 2\,\mathrm{Im}\,\langle\psi|x P H|\psi\rangle
+  \;=\; \underbrace{\langle p\rangle}_{\text{Ehrenfest}}
+       \;+\; \underbrace{2\,\mathrm{Im}\,\langle\psi|x\,(P-\mathbb{1})\,H|\psi\rangle}_{\text{TDVP residual}},
+\]
+
+<p>
+  where the Ehrenfest term comes from the canonical commutator
+  $\frac{1}{2i}\langle\psi|[x,H]|\psi\rangle = \frac{1}{2}\langle p\rangle$. For
+  $P = \mathbb{1}$ (full Hilbert space) the residual vanishes and the standard
+  Ehrenfest theorem is recovered. Under exact TDVP ($P = P_T$) the residual
+  also vanishes whenever $\Pi$ is a manifold isometry &mdash; which it is for
+  ECG with parity-symmetric basis. Under truncated TDVP ($P = P_{T_r}$) the
+  residual no longer cancels: $T_r$ is constructed by a magnitude cut on
+  $\sigma_i$, which respects no symmetry of $H$, so $\Pi$ is generically broken.
+  The tiny parity-odd seed in $|\psi_0\rangle$ is then driven coherently along
+  the symmetry-violating direction, producing the
+  $|\langle x\rangle|\to 0.18$, $|\langle p\rangle|\to 0.28$ growth seen in
+  Figures&nbsp;3&ndash;4.
+</p>
+
+<h3>9.6 Why the imaginary-time ground-state run was unaffected</h3>
 
 <ol>
   <li>
-    Imaginary-time TDVP uses $\dot z = -C^{-1} g$ (no factor of $i$), so the
-    flow does not need to preserve the unitary inner product &mdash; only
-    decrease energy. SVD truncation that breaks unitarity is harmless here.
+    <strong>Imaginary-time flow does not require unitarity.</strong> Step 1
+    uses $\dot z = -\,C^{+}_{r}\,\nabla E$ (no factor of $i$), a steepest
+    descent on $E(z)$. The only invariant required is monotone decrease of
+    $E$, which is automatic:
+    $\dot E = -(\nabla E)^\dagger\,C^{+}_{r}\,(\nabla E) \leq 0$
+    because $C^{+}_{r}$ is positive semidefinite. Singular values dropped by
+    rcond simply restrict the descent direction; they never reverse the sign
+    of $\dot E$.
   </li>
   <li>
-    Step 1 also re-solves $u$ exactly via the generalised eigenvalue problem
-    after each step (the &ldquo;u resolve&rdquo; in <code>tdvp_step</code>),
-    which absorbs basis errors into the linear coefficients. No such resolve
-    happens in real time.
+    <strong>Linear-coefficient resolve absorbs basis errors.</strong> After
+    every imaginary-time step Step 1 re-solves the linear coefficients $u$
+    exactly via the generalised eigenproblem $H_{kl}u_l = E\,S_{kl}u_l$. This
+    orthogonalises the descent against any residual basis incompleteness, in
+    effect projecting back onto the optimal point of the manifold. Real-time
+    TDVP has no analogue: $u$ evolves continuously together with $(A,B,R)$
+    under the same regularised step.
+  </li>
+  <li>
+    <strong>The minimum is internal to the manifold.</strong> Near the
+    ground-state minimum $\nabla E$ is small and points along directions the
+    manifold can resolve well; truncated descent suffices. A real-time
+    trajectory, in contrast, is forced to follow $-iH|\psi\rangle$ at every
+    instant, so any mismatch between $T_r$ and the radial direction
+    $|\psi\rangle$ accumulates as norm drift and symmetry violation.
   </li>
 </ol>
 
-<h3>Why energy stayed conserved</h3>
+<h3>9.7 Failure-mode summary</h3>
+
+<table>
+  <thead>
+    <tr><th>invariant</th><th>conservation requires</th><th>under $P_{T_r}$ with $\mathrm{cond}(C)\sim 3.5\times 10^{11}$, $r=10^{-4}$</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">$\langle H\rangle$</td>
+      <td>$P^\dagger = P^2 = P$ only</td>
+      <td><span class="pass">preserved to round-off ($\sim 10^{-13}$)</span></td>
+    </tr>
+    <tr>
+      <td class="label">$\langle\psi|\psi\rangle$</td>
+      <td>$P|\psi\rangle = |\psi\rangle$</td>
+      <td><span class="fail">leaks at rate $2\,\mathrm{Im}\,\langle\psi_T|H|\psi_\perp\rangle$, $\sim 0.12$/time</span></td>
+    </tr>
+    <tr>
+      <td class="label">$\langle x\rangle$, $\langle p\rangle$</td>
+      <td>$[\Pi,P] = 0$ (parity-stable subspace)</td>
+      <td><span class="fail">drifts via parity-violating residual</span></td>
+    </tr>
+    <tr>
+      <td class="label">recurrence at $t = 2\pi$</td>
+      <td>$P = P_T$ on the entire orbit</td>
+      <td><span class="fail">orbit closes on the wrong manifold sheet (fidelity $0.86$)</span></td>
+    </tr>
+  </tbody>
+</table>
 
 <p>
-  Even with the truncated $C^{-1}$, the projected flow is still
-  $\dot z \propto C^{-1} \nabla E$. Following any descent direction of a
-  smooth functional preserves the &ldquo;flat&rdquo; component (in this case,
-  the constant-$E$ surface) up to roundoff. The bug is that the flow stays
-  on the wrong constant-$E$ surface.
+  All four failure signatures share a single root cause: the seed
+  $|\psi\rangle$ has nonzero overlap with the truncated complement
+  $T_\psi\mathcal{M}\setminus T_r$, so $P_{T_r}$ no longer commutes with the
+  symmetries (norm, parity) that the full $P_T$ does commute with. Energy is
+  the unique invariant whose conservation depends only on $P$ being an
+  orthogonal projector &mdash; not on which subspace it projects onto &mdash;
+  and that is why it alone survives. Increasing $K$ (Section&nbsp;10, option B)
+  attacks the root cause directly: a larger basis lifts the C-matrix
+  degeneracy, fewer singular values fall below $r\sigma_1$, $T_r$ approaches
+  $T_\psi\mathcal{M}$, and the residual terms in Sections 9.3 and 9.5 shrink
+  toward machine precision.
 </p>
 
 <h2>10. Recommended next steps</h2>
