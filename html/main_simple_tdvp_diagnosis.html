@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>main_simple.cpp TDVP failure diagnosis — basis functions and root causes</title>
+<script>
+  MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] } };
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  body {
+    max-width: 1000px;
+    margin: 2em auto;
+    padding: 0 1em;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    line-height: 1.6;
+    color: #222;
+  }
+  h1 { border-bottom: 2px solid #333; padding-bottom: 0.3em; }
+  h2 { border-bottom: 1px solid #bbb; padding-bottom: 0.2em; margin-top: 2em; }
+  h3 { margin-top: 1.6em; color: #333; }
+  h4 { margin-top: 1.2em; color: #444; }
+  code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+  pre  { background: #f4f4f4; padding: 0.7em 1em; border-radius: 4px; overflow-x: auto; font-size: 0.9em; }
+  code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.92em; }
+  table { border-collapse: collapse; margin: 1em 0; font-size: 0.95em; }
+  th, td { border: 1px solid #aaa; padding: 0.35em 0.8em; text-align: left; vertical-align: top; }
+  th { background: #eee; text-align: center; }
+  td.num { text-align: right; font-family: "SFMono-Regular", Consolas, monospace; }
+  .pass { color: #0a7d2c; font-weight: 600; }
+  .warn { color: #c06b00; font-weight: 600; }
+  .fail { color: #b00020; font-weight: 600; }
+  .nb   { background: #fffbdc; padding: 0.7em 1em; border-left: 4px solid #e0c000; margin: 1em 0; }
+  .alert{ background: #fdecea; padding: 0.7em 1em; border-left: 4px solid #b00020; margin: 1em 0; }
+  blockquote { border-left: 4px solid #bbb; margin: 1em 0; padding: 0.1em 1em; background: #fafafa; color: #444; }
+  .toc { background: #fafafa; border: 1px solid #ddd; padding: 0.5em 1.2em; border-radius: 4px; }
+  .toc ol { margin: 0.3em 0; }
+</style>
+</head>
+<body>
+
+<h1>Basis function and TDVP failure diagnosis for <code>main_simple.cpp</code></h1>
+
+<p>
+  Recorded on 2026-04-27. This document summarizes a focused review of two
+  verification reports
+  (<code>out/verify/N=1_verification.html</code> and
+  <code>out/verify/N=1_step4_verification.html</code>) and explains:
+</p>
+
+<ol>
+  <li>Which ECG basis function is used in both verification runs (and is shared by <code>main_simple.cpp</code>).</li>
+  <li>Why real-time TDVP usually fails in <code>main_simple.cpp</code> — and why imaginary-time TDVP does not.</li>
+  <li>Which knobs to flip when a <code>task5</code>/<code>task7</code>/<code>task10</code> run fails.</li>
+</ol>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li>The basis function used in both reports</li>
+    <li>Initialization and basis size <code>K</code></li>
+    <li>Why TDVP usually fails in <code>main_simple.cpp</code></li>
+    <li>Practical knobs to flip when a real-time task fails</li>
+    <li>Failure-mode summary table</li>
+  </ol>
+</div>
+
+<h2>1. Basis function used in both reports</h2>
+
+<p>
+  Both verification reports and every TDVP task in <code>main_simple.cpp</code>
+  use the same explicitly-correlated-Gaussian (ECG) ansatz. For one particle
+  (<code>N=1</code>) the basis function indexed by <code>i</code> is
+</p>
+
+\[
+  \phi_i(x) \;=\; u_i\,\exp\!\bigl[-(A_i + B_i)\,x^{2} + 2 R_i B_i\,x - R_i B_i R_i\bigr],
+  \qquad
+  \psi(x) \;=\; \sum_{i=1}^{K} \phi_i(x).
+\]
+
+<p>
+  Each basis function carries four complex parameters, stored in the struct
+  <code>BasisParams</code> (<code>src/basis_params.hpp</code>):
+</p>
+
+<table>
+  <thead>
+    <tr><th>symbol</th><th>role</th><th>code field</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>$u_i$</td>
+      <td>linear coefficient (amplitude + phase)</td>
+      <td><code>BasisParams::u</code></td>
+    </tr>
+    <tr>
+      <td>$A_i + B_i$</td>
+      <td>effective Gaussian width (real part) / chirp (imag part). $A$ is the variational part, $B$ is held near zero in static optimization and used to encode kicks in dynamics.</td>
+      <td><code>A + B</code></td>
+    </tr>
+    <tr>
+      <td>$R_i$</td>
+      <td>complex center: $\mathrm{Re}\,R_i$ is the position shift, $2 B_i\,\mathrm{Im}\,R_i$ is the momentum boost.</td>
+      <td><code>BasisParams::R</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Expanding the exponent makes the shifted-Gaussian structure explicit:
+</p>
+
+\[
+  \phi_i(x) \;=\; u_i\,
+  \exp\!\Bigl[-(A_i+B_i)\bigl(x - \tfrac{R_i B_i}{A_i+B_i}\bigr)^{2}
+              + \tfrac{(R_i B_i)^{2}}{A_i+B_i} - R_i B_i R_i\Bigr].
+\]
+
+<p>
+  At $B_i = 0$ the linear term vanishes and $R_i$ drops out entirely &mdash;
+  which is why the SVM initial basis is pure-$A$.
+</p>
+
+<p>
+  The same form generalizes to $N$ particles by promoting $A$ to an $N\times N$
+  symmetric complex matrix, $B$ to its diagonal, and $R$ to an $N$-vector. The
+  TDVP variational parameter list <code>alpha_z_list</code> is built from these
+  four channels via the <code>AlphaIndex{a1, a2, a3, a4}</code> tag with
+  <code>a1 &isin; {1,2,3,4}</code> selecting <code>(u, B, R, A)</code>.
+</p>
+
+<h2>2. Initialization and basis size <code>K</code></h2>
+
+<p>
+  Both reports reach the same physical state, but they use slightly different
+  basis sizes for different stages:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>report</th>
+      <th>stage</th>
+      <th>K</th>
+      <th>seed</th>
+      <th>flow</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>N=1_verification.html</code></td>
+      <td>Steps 1&ndash;3 (ground state of $H_\text{full}$)</td>
+      <td>5</td>
+      <td>HO ground state + 4 <code>BasisParams::randoman</code> perturbations (<code>step1_imag_time_ecg.cpp:62-71</code>)</td>
+      <td>imaginary-time TDVP, <code>resolve_u = true</code></td>
+    </tr>
+    <tr>
+      <td><code>N=1_step4_verification.html</code></td>
+      <td>Step 4 (quench off cosine, real-time TDVP)</td>
+      <td>3</td>
+      <td>Step-1 ground state, then quench</td>
+      <td>real-time TDVP with <code>--enforce-norm --u-split-trotter</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  The static report (Steps 1&ndash;3) optimizes all $4K = 20$ complex parameters
+  by imaginary-time TDVP and converges in 16 steps with $|\Delta E|<10^{-12}$.
+  The Step-4 report begins from that ground state and propagates under
+  $H_\text{evolve}=T+V_\text{ho}$ in real time. The accepted recipe is
+  <strong>K = 3</strong> with norm enforcement and split-$u$ Trotter; raw K = 5
+  is kept only as a failure diagnosis.
+</p>
+
+<p>
+  In <code>main_simple.cpp</code> the corresponding helpers are
+  <code>prepare_ground_state_K1</code> at <code>main_simple.cpp:725-764</code>
+  and <code>prepare_kicked_state_route1</code> at
+  <code>main_simple.cpp:1004-1053</code>. They construct the same family of
+  basis functions, so the failure mechanism analyzed below transfers directly
+  to every real-time task in the file.
+</p>
+
+<h2>3. Why TDVP usually fails in <code>main_simple.cpp</code></h2>
+
+<p>
+  Real-time TDVP solves
+</p>
+
+\[
+  i\,C_{\alpha\beta}\,\dot z_\beta \;=\; g_\alpha,
+  \qquad
+  C_{\alpha\beta} \;=\; \langle\partial_\alpha\psi|\partial_\beta\psi\rangle,
+  \qquad
+  g_\alpha \;=\; \langle\partial_\alpha\psi|H|\psi\rangle,
+\]
+
+<p>
+  with $z = (u, A, B, R)$ packed into a single complex vector. The Step-4 report
+  identifies three coupled root causes of the failure pattern observed in
+  <code>task5</code>, <code>task6</code>, <code>task7</code>, <code>task9</code>,
+  and <code>task10</code>.
+</p>
+
+<h3>3.1 Ill-conditioned $C$ + SVD truncation breaks norm conservation</h3>
+
+<p>
+  Run-time inspection during Step 4 gives $\mathrm{cond}(C)\sim 3.5\times 10^{11}$
+  at K = 5 with $H = T + V_\text{ho}$. The pseudoinverse used in the code is
+</p>
+
+\[
+  C^{+}_{r} \;=\; \sum_{\sigma_i \,\geq\, r\,\sigma_1}\,
+  \frac{1}{\sigma_i}\,|v_i\rangle\langle v_i|,
+  \qquad r \equiv \mathrm{rcond} = 10^{-4}.
+\]
+
+<p>
+  This drops every singular value below $r\sigma_1\sim 10^{-4}$, so the actual
+  TDVP projector is a strict subspace
+  $P_{T_r}\subsetneq P_T$ of the true tangent space. The resulting velocity is
+  $|\dot\psi\rangle = -i\,P_{T_r}\,H|\psi\rangle$. The two relevant invariants
+  evolve as
+</p>
+
+\[
+  \frac{d}{dt}\langle\psi|\psi\rangle
+  \;=\; 2\,\mathrm{Im}\,\langle\psi|P_{T_r}H|\psi\rangle,
+  \qquad
+  \frac{d}{dt}\langle\psi|H|\psi\rangle
+  \;=\; 2\,\mathrm{Im}\,\langle\psi|H\,P_{T_r}\,H|\psi\rangle.
+\]
+
+<ul>
+  <li>
+    <strong>Energy conservation</strong> only requires
+    $P^\dagger = P^2 = P$ (any orthogonal projector). So $H P_{T_r} H$ is Hermitian
+    and $\langle H\rangle$ is preserved to round-off &mdash;
+    <em>regardless</em> of which subspace $P_{T_r}$ projects onto.
+  </li>
+  <li>
+    <strong>Norm conservation</strong> additionally requires
+    $P|\psi\rangle = |\psi\rangle$. After SVD truncation this is violated and
+    norm leaks at the rate
+    $2\,\mathrm{Im}\,\langle\psi_T|H|\psi_\perp\rangle / \langle\psi|\psi\rangle$.
+  </li>
+</ul>
+
+<p>
+  Empirically: raw K = 5 over one HO period loses 53 % of its norm, drives
+  $|\langle x\rangle|\to 0.18$ and $|\langle p\rangle|\to 0.28$ (parity should
+  pin both to zero), and fails to recur (fidelity drops to 0.86 at $t=2\pi$).
+</p>
+
+<h3>3.2 Why imaginary-time TDVP (<code>task1</code>) is fine but real-time is not</h3>
+
+<p>
+  The Step-4 report's section 9.6 gives three structural reasons:
+</p>
+
+<ol>
+  <li>
+    <strong>Imaginary-time is steepest descent on $E$.</strong> The flow
+    $\dot z = -C^{+}_{r}\,\nabla E$ has
+    $\dot E = -(\nabla E)^\dagger\,C^{+}_{r}\,(\nabla E) \leq 0$ for any PSD
+    $C^{+}_{r}$. Truncation just slows descent &mdash; it never reverses sign.
+  </li>
+  <li>
+    <strong>Linear-coefficient resolve absorbs basis errors.</strong>
+    With <code>resolve_u = true</code> (set in
+    <code>main_simple.cpp:282</code> and <code>main_simple.cpp:551</code>) the
+    code re-solves $u$ exactly via the generalized eigenproblem
+    $H_{kl} u_l = E\,S_{kl} u_l$ after every step. This soaks up any residual
+    basis incompleteness.
+  </li>
+  <li>
+    <strong>The minimum is internal to the manifold.</strong> Near the ground
+    state $\nabla E$ is small and points along directions the manifold can
+    resolve well, so truncated descent suffices.
+  </li>
+</ol>
+
+<p>
+  Real-time TDVP loses all three protections. It must follow $-iH|\psi\rangle$
+  at every instant, so any mismatch between $T_r$ and the radial direction
+  $|\psi\rangle$ accumulates as norm drift, and there is no analogue of
+  <code>resolve_u</code> to clean it up.
+</p>
+
+<h3>3.3 More basis is not always better</h3>
+
+<p>
+  Section 0 of the Step-4 report compared K = 3 vs K = 5 under the same flags:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>setting</th>
+      <th>relE</th>
+      <th>norm_final</th>
+      <th>max $|\langle x\rangle|$</th>
+      <th>verdict</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>K = 3 + enforce-norm + u-split, T = 0.5</td>
+      <td class="num">6.987e-15</td>
+      <td class="num">1.000000000</td>
+      <td class="num">7.108e-06</td>
+      <td><span class="pass">best short test</span></td>
+    </tr>
+    <tr>
+      <td>K = 5 + enforce-norm + u-split, T = 0.5</td>
+      <td class="num"><span class="fail">3.003e-02</span></td>
+      <td class="num">1.000000000</td>
+      <td class="num"><span class="fail">3.676e-01</span></td>
+      <td><span class="fail">reject</span></td>
+    </tr>
+    <tr>
+      <td>K = 3 split-norm, T = 2&pi;</td>
+      <td class="num">1.780e-12</td>
+      <td class="num">1.000000000</td>
+      <td class="num">8.282e-03</td>
+      <td><span class="pass">full recurrence passed</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Adding more basis functions at fixed conditioning makes the C-matrix more
+  degenerate (similar Gaussians span nearly the same direction), pushing more
+  singular values below the rcond cutoff. The truncated subspace then leaves
+  out <em>more</em> of the radial mode rather than less. This means the natural
+  &ldquo;just add more K&rdquo; reflex is wrong for real-time evolution.
+</p>
+
+<p>
+  Notably, <code>prepare_kicked_state_route1</code> in
+  <code>main_simple.cpp:1004-1053</code> can grow K via
+  <code>augment_basis_with_momentum</code> (the <code>n_mom</code> parameter
+  adds momentum copies of the pre-kick basis), so even with
+  <code>--K-cap 3</code> a Route-1 kick may push K past 3 unless the cap is
+  enforced.
+</p>
+
+<h2>4. Practical knobs to flip when a real-time task fails</h2>
+
+<p>
+  In order of importance:
+</p>
+
+<ol>
+  <li>
+    <strong>Cap K to 3.</strong> Pass <code>--K-cap 3</code> (handled at
+    <code>main_simple.cpp:2236</code>) so that the C-matrix degeneracy stays
+    manageable.
+  </li>
+  <li>
+    <strong>Keep <code>--enforce-norm</code> on.</strong> This rescales
+    $u\to\sqrt{n_0/n_t}\,u$ each step to clamp $\langle\psi|\psi\rangle = 1$.
+    It does not fix the trajectory shape, but it isolates the norm leak from
+    the rest of the dynamics.
+  </li>
+  <li>
+    <strong>Keep <code>--u-split-trotter</code> on, and remove $u$ from
+    <code>alpha_z_list</code>.</strong> In split-Trotter mode TDVP only updates
+    the geometry $\{A, B, R\}$, and $u$ is propagated analytically by
+    $\exp(-iH\,dt)$ on the updated basis. <code>task5</code> at
+    <code>main_simple.cpp:1100-1102</code> already excludes $u$ when
+    <code>u_split=true</code>; <code>task6</code> at
+    <code>main_simple.cpp:1226-1230</code> and <code>task10</code> keep $u$ in
+    the list, which is incompatible with <code>u_split_trotter</code> and is a
+    likely failure mode.
+  </li>
+  <li>
+    <strong>Loosen <code>rcond</code> only as last resort.</strong> A larger
+    truncation threshold can amplify numerical noise. Section 10 of the Step-4
+    report rates this option D &mdash; risky.
+  </li>
+</ol>
+
+<p>
+  Tasks that have these defaults wired correctly:
+</p>
+
+<table>
+  <thead>
+    <tr><th>task</th><th>default <code>u_split</code></th><th>default <code>enforce_norm</code></th><th>$u$ in <code>alpha_z_list</code> when split is on</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>task5</code> (<code>main_simple.cpp:1100-1102</code>)</td><td class="pass">on</td><td class="pass">on</td><td class="pass">excluded</td></tr>
+    <tr><td><code>task6</code> (<code>main_simple.cpp:1226-1230</code>)</td><td class="warn">off</td><td class="pass">on</td><td>n/a</td></tr>
+    <tr><td><code>task7</code> (<code>main_simple.cpp:1747, 1782</code>)</td><td class="pass">on</td><td class="pass">on</td><td>excluded</td></tr>
+    <tr><td><code>task9</code> (<code>main_simple.cpp:1572, 1615</code>)</td><td class="pass">on</td><td class="pass">on</td><td>excluded</td></tr>
+    <tr><td><code>task10</code> (<code>main_simple.cpp:1395, 1438</code>)</td><td class="warn">off</td><td class="pass">on</td><td>n/a</td></tr>
+  </tbody>
+</table>
+
+<h2>5. Failure-mode summary table</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>invariant</th>
+      <th>conservation requires</th>
+      <th>under $P_{T_r}$ with $\mathrm{cond}(C)\sim 3.5\times 10^{11}$, $r=10^{-4}$</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>$\langle H\rangle$</td>
+      <td>$P^\dagger = P^2 = P$ only</td>
+      <td><span class="pass">preserved to round-off ($\sim 10^{-13}$)</span></td>
+    </tr>
+    <tr>
+      <td>$\langle\psi|\psi\rangle$</td>
+      <td>$P|\psi\rangle = |\psi\rangle$</td>
+      <td><span class="fail">leaks at rate $2\,\mathrm{Im}\,\langle\psi_T|H|\psi_\perp\rangle$, ~0.12/time</span></td>
+    </tr>
+    <tr>
+      <td>$\langle x\rangle$, $\langle p\rangle$</td>
+      <td>$[\Pi, P] = 0$ (parity-stable subspace)</td>
+      <td><span class="fail">drifts via parity-violating residual</span></td>
+    </tr>
+    <tr>
+      <td>recurrence at $t = 2\pi$</td>
+      <td>$P = P_T$ on the entire orbit</td>
+      <td><span class="fail">orbit closes on the wrong manifold sheet (fidelity 0.86)</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <strong>Takeaway.</strong> Energy conservation is necessary but not
+  sufficient for real-time TDVP &mdash; it follows from $P_{T_r}$ being an
+  orthogonal projector and tells you nothing about which subspace was
+  projected out. Always check norm, parity-protected observables
+  ($\langle x\rangle, \langle p\rangle$), and recurrence. The currently
+  validated <code>main_simple.cpp</code> recipe for an N = 1 real-time run is
+  K = 3 with both <code>--enforce-norm</code> and <code>--u-split-trotter</code>
+  enabled, and $u$ excluded from the TDVP parameter list.
+</blockquote>
+
+</body>
+</html>

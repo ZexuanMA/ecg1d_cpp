@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>N=1 Verification Basis and TDVP Failure Review</title>
+<style>
+  :root {
+    --fg: #24292f;
+    --muted: #57606a;
+    --line: #d0d7de;
+    --soft: #f6f8fa;
+    --blue: #0969da;
+    --green: #1a7f37;
+    --red: #cf222e;
+    --yellow: #9a6700;
+    --mono: Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  body {
+    max-width: 1040px;
+    margin: 2em auto;
+    padding: 0 1.5em 3em;
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.65;
+  }
+  h1 {
+    color: var(--blue);
+    border-bottom: 2px solid var(--blue);
+    padding-bottom: 0.25em;
+    margin-bottom: 0.25em;
+  }
+  h2 {
+    color: var(--blue);
+    margin-top: 2em;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 0.2em;
+  }
+  h3 { margin-top: 1.5em; color: #3b434b; }
+  p.small { color: var(--muted); margin-top: 0; }
+  code, pre { font-family: var(--mono); }
+  code {
+    background: var(--soft);
+    border: 1px solid #eaeef2;
+    border-radius: 4px;
+    padding: 2px 5px;
+    font-size: 0.92em;
+  }
+  pre {
+    background: #0d1117;
+    color: #e6edf3;
+    border-radius: 6px;
+    padding: 1em 1.2em;
+    overflow-x: auto;
+    line-height: 1.45;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 8px 10px;
+    vertical-align: top;
+    text-align: left;
+  }
+  th { background: var(--soft); font-weight: 600; }
+  .box {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--blue);
+    background: var(--soft);
+    border-radius: 6px;
+    padding: 0.85em 1em;
+    margin: 1em 0;
+  }
+  .box.bad { border-left-color: var(--red); background: #ffebe9; }
+  .box.warn { border-left-color: var(--yellow); background: #fff8c5; }
+  .box.ok { border-left-color: var(--green); background: #dafbe1; }
+  .math {
+    font-family: "Cambria Math", "Latin Modern Math", Georgia, serif;
+    font-style: italic;
+  }
+  .formula {
+    font-family: "Cambria Math", "Latin Modern Math", Georgia, serif;
+    font-size: 1.08em;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--blue);
+    border-radius: 6px;
+    padding: 0.9em 1.1em;
+    overflow-x: auto;
+  }
+  .pass { color: var(--green); font-weight: 600; }
+  .fail { color: var(--red); font-weight: 600; }
+  .warn-text { color: var(--yellow); font-weight: 600; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>N=1 Verification Basis and TDVP Failure Review</h1>
+<p class="small">Generated 2026-04-27. Scope: review of <code>out/verify/N=1_verification.html</code>, <code>out/verify/N=1_step4_verification.html</code>, and <code>main_simple.cpp</code>.</p>
+
+<div class="box">
+  <strong>Short conclusion.</strong>
+  The verification uses a complex one-dimensional ECG basis
+  <code>psi = sum_i u_i phi_i</code>. For N=1, the verification avoids the generic SVM path and manually seeds
+  <code>HO ground state + randoman perturbations</code>. <code>main_simple.cpp</code> often fails because its Task A still calls
+  <code>svm_build_basis(N=1, K&gt;1)</code>, but that path inserts <code>random_basis_2particle()</code> objects hardcoded to
+  <code>N=2</code>. Raw real-time TDVP has a separate failure mode: the tangent metric <code>C</code> is ill-conditioned, so SVD
+  regularization preserves energy while leaking norm and breaking observables.
+</div>
+
+<h2>1. Basis Function Used in Verification</h2>
+
+<p>For one particle, the ECG ansatz used by the verification is:</p>
+
+<div class="formula">
+psi(x) = sum_i u_i phi_i(x)<br>
+phi_i(x) = exp[-(A_i + B_i) x^2 + 2 R_i B_i x - R_i B_i R_i]
+</div>
+
+<p>
+All four parameters are complex numbers stored in <code>BasisParams</code>.
+For N=1, <code>A</code> and <code>B</code> are 1 by 1 matrices and <code>R</code> is a one-entry vector.
+The effective width/chirp is <code>A_i + B_i</code>. When <code>B = 0</code>, the linear term vanishes and
+<code>R</code> drops out of the basis function.
+</p>
+
+<table>
+  <thead>
+    <tr><th>Symbol</th><th>Code field</th><th>Meaning for N=1</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>u_i</code></td><td><code>BasisParams.u</code></td><td>Linear coefficient, amplitude and phase.</td></tr>
+    <tr><td><code>A_i + B_i</code></td><td><code>BasisParams.A + BasisParams.B</code></td><td>Gaussian width from real part, chirp from imaginary part.</td></tr>
+    <tr><td><code>R_i</code></td><td><code>BasisParams.R</code></td><td>Complex center. Its real part shifts position; with nonzero <code>B</code>, imaginary part carries momentum phase.</td></tr>
+  </tbody>
+</table>
+
+<p>Primary references:</p>
+<ul>
+  <li><a href="../out/verify/N=1_verification.html">../out/verify/N=1_verification.html</a>, section 1.1, basis function form.</li>
+  <li><a href="../src/basis_params.hpp">../src/basis_params.hpp</a>, <code>BasisParams</code>.</li>
+  <li><a href="../src/basis_params.cpp">../src/basis_params.cpp</a>, <code>BasisParams::randoman</code>.</li>
+</ul>
+
+<h2>2. Verification Setup</h2>
+
+<h3>Step 1: Ground State</h3>
+
+<p>
+For N=1, the verification prepares the ground state of:
+</p>
+
+<div class="formula">
+H_full = T + V_ho + kappa cos(2 k_L x)
+</div>
+
+<p>
+It uses <code>K=5</code> basis functions, initialized as one harmonic-oscillator ground-state Gaussian plus four
+<code>randoman</code> perturbations. This is intentionally different from <code>main_simple.cpp</code> Task A.
+</p>
+
+<pre><code>// src/verify/step1_imag_time_ecg.cpp
+if (N == 1) {
+    basis.push_back(HO_ground_state_A_0_5_B_0_R_0);
+    for (int k = 1; k &lt; K; k++) {
+        basis.push_back(BasisParams::randoman(N, 42 + k, k));
+    }
+}</code></pre>
+
+<p>The verification report records:</p>
+
+<table>
+  <thead>
+    <tr><th>Item</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>ECG basis size</td><td><code>K = 5</code></td></tr>
+    <tr><td>N=1 initialization</td><td>HO ground state + 4 <code>randoman</code> perturbations</td></tr>
+    <tr><td>Imaginary-time TDVP</td><td><code>lambda_C = 1e-8</code>, <code>rcond = 1e-4</code>, adaptive on</td></tr>
+    <tr><td>Convergence</td><td>Reached in 16 steps in the report</td></tr>
+    <tr><td>Final energy</td><td><code>E_ECG = 1.2226427831369</code></td></tr>
+    <tr><td>Components</td><td><code>T = 0.1453310471</code>, <code>V_ho = 0.4378627828</code>, <code>V_cos = 0.6394489532</code></td></tr>
+  </tbody>
+</table>
+
+<h3>Saved K=5 Basis Summary</h3>
+
+<p>
+The saved final basis is <a href="../out/verify/step1_ecg_basis_N1_K5.csv"><code>../out/verify/step1_ecg_basis_N1_K5.csv</code></a>.
+The table below groups each five-line block as <code>u, A, B, R, name</code>.
+</p>
+
+<table>
+  <thead>
+    <tr><th>i</th><th>|u| scale</th><th>A + B</th><th>R</th><th>Comment</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>0</td><td>1.000e+00</td><td>0.3623 + 0.1097i</td><td>-0.2409 + 0.1032i</td><td>Dominant component.</td></tr>
+    <tr><td>1</td><td>1.318e-07</td><td>0.0998 + 2.1584i</td><td>-0.6320 - 0.5953i</td><td>Tiny coefficient, still contributes tangent directions.</td></tr>
+    <tr><td>2</td><td>2.371e-08</td><td>4.8523 + 2.6741i</td><td>3.0493 + 0.5309i</td><td>Tiny coefficient, stiff/narrow component.</td></tr>
+    <tr><td>3</td><td>9.552e-09</td><td>0.1000 + 1.2430i</td><td>-0.6030 + 1.5806i</td><td>Tiny coefficient, still present in TDVP metric.</td></tr>
+    <tr><td>4</td><td>8.055e-01</td><td>0.3792 - 0.1481i</td><td>0.9545 - 0.3189i</td><td>Dominant component.</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  The state is mostly carried by basis functions 0 and 4, but the low-weight functions are still part of the nonlinear
+  parameter manifold. They can make the real-time TDVP tangent metric more singular even when their linear coefficients are tiny.
+</div>
+
+<h3>Step 4: Real-Time Verification</h3>
+
+<p>
+Step 4 starts from the Step 1 ECG ground state of <code>H_full</code>, turns off the cosine, and evolves under:
+</p>
+
+<div class="formula">
+H_evolve = T + V_ho = -1/2 d^2/dx^2 + 1/2 x^2
+</div>
+
+<p>
+For exact harmonic evolution over <code>T_total = 2 pi</code>, the state should recur. The reference grid and DVR solvers
+diagonalize <code>H_evolve</code> and propagate spectrally. Their agreement is the truth baseline.
+</p>
+
+<h2>3. Why <code>main_simple.cpp</code> Usually Fails</h2>
+
+<h3>Failure 1: Task A Uses the Wrong N=1 SVM Path</h3>
+
+<p>
+In <code>main_simple.cpp</code>, Task A calls:
+</p>
+
+<pre><code>SvmResult svm = svm_build_basis(N, K, 2000,
+                                HamiltonianTerms::kinetic_harmonic(),
+                                42, 0.0);</code></pre>
+
+<p>
+This is unsafe for <code>N=1, K&gt;1</code>. Inside <code>svm_build_basis</code>, every added trial basis comes from
+<code>random_basis_2particle</code>, which is hardcoded as:
+</p>
+
+<pre><code>BasisParams random_basis_2particle(std::mt19937_64&amp; rng, int name) {
+    int N = 2;
+    ...
+}</code></pre>
+
+<p>
+The verification source explicitly avoids this for N=1:
+</p>
+
+<pre><code>// svm_build_basis / stochastic_refine both use random_basis_2particle
+// internally, which is hardcoded for N=2 and produces invalid N=1
+// trial basis members.
+// Therefore seed manually for N=1.</code></pre>
+
+<div class="box bad">
+  Reproduced command: <code>./build/ecg1d_simple --task1 --N 1 --K 5</code>.
+  It generated impossible harmonic-oscillator energies below 0.5, then exited with code 139.
+  That is not a physical TDVP failure. It is an invalid mixed-dimension basis construction path.
+</div>
+
+<h3>Failure 2: K=1 Is Already Exact, but the Line Search Requires Strict Decrease</h3>
+
+<p>
+For the pure harmonic oscillator, one ECG with <code>A = 0.5</code>, <code>B = 0</code>, <code>R = 0</code> is already the exact ground state.
+Running <code>./build/ecg1d_simple --task1 --N 1 --K 1</code> gives the correct final energy <code>0.5</code>.
+However, the TDVP loop prints many line-search failures because <code>tdvp_step</code> only accepts a trial step if:
+</p>
+
+<pre><code>if (E_eigen &lt; E_pre.real()) {
+    return success;
+}</code></pre>
+
+<p>
+At the exact minimum, the correct update is zero and the energy cannot decrease. The code reports a line-search failure even
+though the result is already converged.
+</p>
+
+<div class="box warn">
+  This is a convergence-logic issue. It should stop cleanly when <code>|dz|</code> is small or when
+  <code>|E_new - E_pre|</code> is below tolerance, instead of requiring strict decrease.
+</div>
+
+<h3>Failure 3: Raw Real-Time TDVP Is Ill-Conditioned</h3>
+
+<p>
+The Step 4 report shows that raw real-time TDVP can conserve energy while still giving the wrong trajectory. The raw K=5 run
+had:
+</p>
+
+<table>
+  <thead>
+    <tr><th>Quantity</th><th>Raw K=5 outcome</th><th>Expected</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Energy drift</td><td class="pass">~4.6e-13 over one period</td><td>0</td></tr>
+    <tr><td>Norm drift</td><td class="fail">53 percent loss over one period</td><td>0</td></tr>
+    <tr><td>Max |&lt;x&gt;|</td><td class="fail">0.175</td><td>Approximately 0 by parity</td></tr>
+    <tr><td>Max |&lt;p&gt;|</td><td class="fail">0.284</td><td>Approximately 0 by parity</td></tr>
+    <tr><td>One-period fidelity</td><td class="warn-text">0.86</td><td>Approximately 1</td></tr>
+  </tbody>
+</table>
+
+<p>
+The diagnostic cause is the tangent-space Gram matrix <code>C</code>. In the report, the raw K=5 real-time run has
+<code>cond(C) approximately 3.5e11 to 4.0e11</code>. The SVD cutoff <code>rcond = 1e-4</code> drops motion components.
+The remaining projected flow is still energy-conserving, but it is no longer norm-preserving and no longer parity-stable.
+</p>
+
+<p>
+The accepted Step 4 setting after the follow-up checks is:
+</p>
+
+<pre><code>./build/ecg1d_verify --N 1 --K 3 --run-step1 --run-step4 \
+  --enforce-norm --u-split-trotter</code></pre>
+
+<table>
+  <thead>
+    <tr><th>Control</th><th>Meaning</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>--enforce-norm</code></td>
+      <td>After each real-time step, rescale all <code>u</code> coefficients to restore the initial norm.</td>
+    </tr>
+    <tr>
+      <td><code>--u-split-trotter</code></td>
+      <td>Remove <code>u</code> from the TDVP alpha list. TDVP updates nonlinear geometry first, then fixed-basis propagation evolves <code>u</code>.</td>
+    </tr>
+    <tr>
+      <td><code>K=3</code></td>
+      <td>Less overparameterized than raw K=5 for this recurrence test. The report rejected K=5 with split-u in the short test.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>4. Practical Fixes for <code>main_simple.cpp</code></h2>
+
+<ol>
+  <li>
+    For <code>N=1</code>, do not call <code>svm_build_basis</code> with <code>K&gt;1</code> until the SVM sampler is generalized.
+    Copy the verification initializer: one HO Gaussian plus <code>BasisParams::randoman(1, seed, name)</code> perturbations.
+  </li>
+  <li>
+    For pure HO ground-state teaching examples, use <code>K=1</code> and skip TDVP polish when the initial energy is already
+    within tolerance of <code>0.5 * N</code>.
+  </li>
+  <li>
+    Relax TDVP line-search success at stationary points. Accept convergence when <code>|dz| &lt; tol</code> or
+    <code>|dE| &lt; energy_tol</code>, even if there is no strict decrease.
+  </li>
+  <li>
+    For real-time N=1 evolution, prefer the verification controls:
+    <code>K=3</code>, <code>enforce_norm=true</code>, and <code>u_split_trotter=true</code>.
+  </li>
+  <li>
+    Treat energy conservation alone as insufficient. Always inspect norm, <code>&lt;x&gt;</code>, <code>&lt;p&gt;</code>,
+    density fidelity, and recurrence fidelity for real-time TDVP.
+  </li>
+</ol>
+
+<h2>5. Source Map</h2>
+
+<table>
+  <thead>
+    <tr><th>Topic</th><th>File</th><th>Relevant location</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Basis function formula</td>
+      <td><a href="../out/verify/N=1_verification.html"><code>out/verify/N=1_verification.html</code></a></td>
+      <td>Section 1.1</td>
+    </tr>
+    <tr>
+      <td>N=1 verification initializer</td>
+      <td><a href="../src/verify/step1_imag_time_ecg.cpp"><code>src/verify/step1_imag_time_ecg.cpp</code></a></td>
+      <td><code>if (N == 1)</code> block</td>
+    </tr>
+    <tr>
+      <td>Saved K=5 basis</td>
+      <td><a href="../out/verify/step1_ecg_basis_N1_K5.csv"><code>out/verify/step1_ecg_basis_N1_K5.csv</code></a></td>
+      <td>Five-line blocks per basis function</td>
+    </tr>
+    <tr>
+      <td>Simple driver unsafe SVM call</td>
+      <td><a href="../main_simple.cpp"><code>main_simple.cpp</code></a></td>
+      <td><code>task1_harmonic_ground_state</code></td>
+    </tr>
+    <tr>
+      <td>Hardcoded two-particle sampler</td>
+      <td><a href="../src/svm.cpp"><code>src/svm.cpp</code></a></td>
+      <td><code>random_basis_2particle</code></td>
+    </tr>
+    <tr>
+      <td>Strict line-search decrease</td>
+      <td><a href="../src/tdvp_solver.cpp"><code>src/tdvp_solver.cpp</code></a></td>
+      <td><code>tdvp_step</code></td>
+    </tr>
+    <tr>
+      <td>Step 4 accepted controls</td>
+      <td><a href="../out/verify/N=1_step4_verification.html"><code>out/verify/N=1_step4_verification.html</code></a></td>
+      <td>Sections 0 and 9</td>
+    </tr>
+    <tr>
+      <td>Split-u realtime implementation</td>
+      <td><a href="../src/verify/step4_realtime_tdvp.cpp"><code>src/verify/step4_realtime_tdvp.cpp</code></a></td>
+      <td><code>u_split_trotter</code> alpha-list filtering</td>
+    </tr>
+  </tbody>
+</table>
+
+</body>
+</html>
