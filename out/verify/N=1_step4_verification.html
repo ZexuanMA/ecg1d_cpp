@@ -57,6 +57,7 @@
 <div class="toc">
   <strong>Contents</strong>
   <ol>
+    <li>2026-04-27 follow-up summary</li>
     <li>Setup &amp; numerical parameters</li>
     <li>Headline results &mdash; energy conservation</li>
     <li>Headline finding &mdash; ECG dynamics diverge from the references</li>
@@ -66,10 +67,208 @@
     <li>Fidelity recurrence (figure)</li>
     <li>Wavefunction-density evolution (figures)</li>
     <li>Diagnosis &mdash; what went wrong</li>
-    <li>Recommended next steps</li>
+    <li>Historical recommended next steps (superseded)</li>
     <li>How to reproduce</li>
   </ol>
 </div>
+
+<h2>0. 2026-04-27 follow-up summary</h2>
+
+<div class="nb">
+  <strong>Status update.</strong>
+  The original report below is the raw K = 5 Step-4 result. It correctly found
+  that energy conservation alone was misleading: raw real-time TDVP conserved
+  energy but leaked norm and failed the harmonic-oscillator recurrence.
+  On 2026-04-27 we ran a focused follow-up: per-step diagnostics, CPU-pinned
+  short tests, new solver-control CLI flags, and one full-period recurrence
+  test. The accepted result is now:
+  <code>--N 1 --K 3 --enforce-norm --u-split-trotter</code>.
+</div>
+
+<h3>0.1 What was checked</h3>
+
+<table>
+  <thead>
+    <tr><th>task</th><th>purpose</th><th>result</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">CPU / run plan</td>
+      <td style="text-align:left">Use allowed CPUs <code>112-119,240-247</code>, prefer physical set <code>112-119</code>, keep each job short, and write isolated outputs under <code>/tmp/ecg1d_step4_checks</code>.</td>
+      <td><span class="pass">done</span></td>
+    </tr>
+    <tr>
+      <td class="label">raw verbose pilots</td>
+      <td style="text-align:left">Run T = 0.5, dt = 0.001 with every-step snapshots and <code>--rt-verbose</code> for K = 3 and K = 5.</td>
+      <td><span class="warn">energy passed, norm failed</span></td>
+    </tr>
+    <tr>
+      <td class="label">CLI controls</td>
+      <td style="text-align:left">Expose realtime solver controls in <code>ecg1d_verify</code>: <code>--enforce-norm</code>, <code>--u-split-trotter</code>, <code>--rcond</code>, <code>--lambda-C</code>, <code>--wiener</code>, <code>--no-wiener</code>.</td>
+      <td><span class="pass">implemented and built</span></td>
+    </tr>
+    <tr>
+      <td class="label">short fixed tests</td>
+      <td style="text-align:left">Repeat T = 0.5 checks after enabling norm correction and split-u evolution.</td>
+      <td><span class="pass">K = 3 passed; K = 5 rejected</span></td>
+    </tr>
+    <tr>
+      <td class="label">medium gate</td>
+      <td style="text-align:left">Run K = 3 split-norm to T = 1.0 with every-step snapshots.</td>
+      <td><span class="pass">passed</span></td>
+    </tr>
+    <tr>
+      <td class="label">full period</td>
+      <td style="text-align:left">Run K = 3 split-norm over one full harmonic period, T = 2&pi;.</td>
+      <td><span class="pass">passed</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>0.2 Raw verbose diagnosis</h3>
+
+<p>
+  The new verbose logs confirmed that the original failure was not a missing
+  printout or a reference-solver issue. Each short run produced exactly 500
+  <code>[rt_tdvp]</code> lines for 500 integration steps.
+</p>
+
+<table>
+  <thead>
+    <tr><th>run</th><th>relE</th><th>norm_final</th><th>norm loss</th><th>max |&lt;x&gt;|</th><th>max |&lt;p&gt;|</th><th>diagnosis</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">raw K=3, T=0.5</td>
+      <td>2.128e-09</td>
+      <td>0.921816711</td>
+      <td><span class="fail">7.818%</span></td>
+      <td>7.625e-06</td>
+      <td>9.117e-06</td>
+      <td style="text-align:left">energy good, norm leaks; C condition about 1.6e10-1.8e10</td>
+    </tr>
+    <tr>
+      <td class="label">raw K=5, T=0.5</td>
+      <td>2.251e-09</td>
+      <td>0.873699041</td>
+      <td><span class="fail">12.630%</span></td>
+      <td>3.586e-02</td>
+      <td>1.346e-02</td>
+      <td style="text-align:left">energy good, norm and observables worse; C condition about 3.5e11-4.0e11</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Both logs kept <code>sv_min3</code> pinned near <code>1e-08</code>, consistent
+  with a regularization-floor / ill-conditioned tangent-metric mechanism. The
+  practical conclusion was: do not scale raw Step 4 to longer runs.
+</p>
+
+<h3>0.3 Solver-control changes</h3>
+
+<p>
+  The verification binary was updated so the realtime solver controls can be
+  selected from the command line. The relevant code changes are in
+  <code>main_verification.cpp</code>,
+  <code>src/verify/step4_realtime_tdvp.hpp</code>, and
+  <code>src/verify/step4_realtime_tdvp.cpp</code>.
+</p>
+
+<table>
+  <thead>
+    <tr><th>flag</th><th>meaning</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">--enforce-norm</td>
+      <td style="text-align:left">After each real-time step, compute <code>norm_now=&lt;psi|psi&gt;</code> and rescale all coefficients <code>u</code> by <code>sqrt(norm_init/norm_now)</code>. This removes numerical amplitude leakage but does not by itself prove the trajectory is correct.</td>
+    </tr>
+    <tr>
+      <td class="label">--u-split-trotter</td>
+      <td style="text-align:left">Split each step: TDVP updates nonlinear Gaussian geometry first, then fixed-basis propagation updates the linear coefficients <code>u</code>. In Step 4, <code>u</code> is removed from the TDVP alpha list when this mode is active.</td>
+    </tr>
+    <tr>
+      <td class="label">--rcond / --lambda-C / --wiener / --no-wiener</td>
+      <td style="text-align:left">Expose the pseudoinverse and C-matrix regularization controls for diagnostic scans.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>0.4 Post-code results</h3>
+
+<table>
+  <thead>
+    <tr><th>run</th><th>relE</th><th>norm_final</th><th>max |&lt;x&gt;|</th><th>max |&lt;p&gt;|</th><th>verdict</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="label">K=3 + enforce-norm, T=0.5</td>
+      <td>2.129e-09</td>
+      <td>1.000000000</td>
+      <td>7.686e-06</td>
+      <td>9.173e-06</td>
+      <td><span class="pass">norm fixed</span></td>
+    </tr>
+    <tr>
+      <td class="label">K=5 + enforce-norm, T=0.5</td>
+      <td>2.254e-09</td>
+      <td>1.000000000</td>
+      <td>3.474e-02</td>
+      <td>1.366e-02</td>
+      <td><span class="warn">norm fixed, observables still worse</span></td>
+    </tr>
+    <tr>
+      <td class="label">K=3 + enforce-norm + u-split, T=0.5</td>
+      <td>6.987e-15</td>
+      <td>1.000000000</td>
+      <td>7.108e-06</td>
+      <td>4.190e-06</td>
+      <td><span class="pass">best short test</span></td>
+    </tr>
+    <tr>
+      <td class="label">K=5 + enforce-norm + u-split, T=0.5</td>
+      <td><span class="fail">3.003e-02</span></td>
+      <td>1.000000000</td>
+      <td><span class="fail">3.676e-01</span></td>
+      <td><span class="fail">2.984e-01</span></td>
+      <td><span class="fail">reject</span></td>
+    </tr>
+    <tr>
+      <td class="label">K=3 split-norm, T=1.0</td>
+      <td>3.668e-14</td>
+      <td>1.000000000</td>
+      <td>7.185e-06</td>
+      <td>1.117e-05</td>
+      <td><span class="pass">medium gate passed</span></td>
+    </tr>
+    <tr>
+      <td class="label">K=3 split-norm, T=2&pi;</td>
+      <td>1.780e-12</td>
+      <td>1.000000000</td>
+      <td>8.282e-03</td>
+      <td>9.432e-03</td>
+      <td><span class="pass">full recurrence passed</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  For the full-period K = 3 split-norm run, the final ECG-vs-grid quantities
+  were <code>L2_nx=3.595e-03</code>, <code>L2_nk=8.745e-03</code>, and
+  <code>fidelity=0.999905</code>. The recurrence fidelity recorded in
+  <code>step4_ecg_snap_N1_K3.csv</code> was <code>0.999906291592457</code>.
+</p>
+
+<blockquote>
+  <strong>Updated outcome.</strong>
+  Step 4 is now passed for N = 1 only in the setting
+  <code>K=3 --enforce-norm --u-split-trotter</code>. The raw K = 5 result below
+  should be kept as the failure diagnosis, not as the production setting.
+  The next MBDL-relevant task is to carry these realtime controls into the
+  kicked-evolution workflow and first validate a small N = 1 kicked run against
+  exact grid evolution with per-kick logs.
+</blockquote>
 
 <h2>1. Setup &amp; numerical parameters</h2>
 
@@ -627,9 +826,16 @@
   toward machine precision.
 </p>
 
-<h2>10. Recommended next steps</h2>
+<h2>10. Historical recommended next steps (superseded)</h2>
 
-<p>In increasing order of expected impact and effort:</p>
+<div class="nb">
+  This section is kept to explain the original raw K = 5 diagnosis. It is now
+  superseded by the 2026-04-27 follow-up in Section 0. The current accepted
+  Step-4 setting is <code>K=3 --enforce-norm --u-split-trotter</code>, not
+  raw K = 5 and not K = 10 as the immediate next step.
+</div>
+
+<p>Original candidate fixes, listed before the follow-up runs:</p>
 
 <table>
   <thead>
@@ -664,10 +870,12 @@
 </table>
 
 <p>
-  My recommendation: do <strong>A + B</strong> together. Re-run with
-  $K = 10$, $\text{enforce\_norm}=$ true, same $T = 2\pi$ but allow $dt = 10^{-3}$
-  to keep the wall-time manageable (RK4 truncation error stays well below
-  machine precision at that $dt$).
+  The follow-up tested these ideas. Norm enforcement fixed the amplitude leak.
+  Split-u Trotter evolution was beneficial for K = 3 but not for K = 5. The
+  tested and accepted path is therefore K = 3 with both controls enabled.
+  More-K scans are no longer the immediate next step; the next useful step is
+  carrying these controls into the kicked-evolution workflow and validating a
+  small N = 1 kicked case against exact grid evolution.
 </p>
 
 <h2>11. How to reproduce</h2>
@@ -676,6 +884,27 @@
 cd /home/gyqyan/zexuan/ecg1d_cpp
 ./build/ecg1d_verify --N 1 --K 5 --run-step1 --run-step4
 python3 scripts/plot_verification.py
+</code></pre>
+
+<p>
+  Current accepted full-period Step-4 recurrence command:
+</p>
+
+<pre><code>ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+mkdir -p $BASE/period_split_norm_K3_dt2e3
+
+(cd $BASE/period_split_norm_K3_dt2e3 &amp;&amp; \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 112 $ROOT/build/ecg1d_verify \
+   --N 1 --K 3 --run-step1 --run-step4 \
+   --T 6.283185307179586 --dt 0.00199974070884137 \
+   --dt-trace 0.00199974070884137 --n-snap 3143 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 \
+   --rt-verbose --enforce-norm --u-split-trotter) \
+   &gt; $ROOT/logs/period_split_norm_K3_dt2e3.log 2&gt;&amp;1 &amp;
+
+wait
 </code></pre>
 
 <p>Outputs under <code>out/verify/</code>:</p>
@@ -701,15 +930,16 @@ python3 scripts/plot_verification.py
 </code></pre>
 
 <blockquote>
-  <strong>Outcome.</strong> Step 4 has accomplished its purpose: cross-checking
-  ECG real-time TDVP against two independent reference solvers has revealed
-  that the K = 5 basis sufficient for the ground state is <em>not</em>
-  sufficient for time evolution. Energy is conserved to machine precision,
-  but norm leaks 53 % and the wavefunction loses its symmetries and
-  recurrence within one HO period. The fix is to enrich the basis (and
-  optionally enforce unitarity by post-correction); a follow-up run with
-  $K = 10$ + <code>enforce_norm</code> is the next step before any
-  larger-N or kicking dynamics can be trusted.
+  <strong>Final updated outcome.</strong>
+  Step 4 has accomplished its purpose twice. First, the raw K = 5 run revealed
+  the failure mode: energy conservation can pass while norm, observables, and
+  recurrence fail. Second, the follow-up found a usable realtime building block:
+  <code>N=1, K=3, --enforce-norm --u-split-trotter</code>. With this setting,
+  the one-period harmonic recurrence has
+  <code>relE=1.780e-12</code>, <code>norm_final=1.000000000</code>, and final
+  ECG-vs-grid fidelity <code>0.999905</code>. The next MBDL task is not more
+  harmonic Step-4 testing; it is to validate kicked evolution with the same
+  controls against an exact N = 1 grid reference.
 </blockquote>
 
 </body>

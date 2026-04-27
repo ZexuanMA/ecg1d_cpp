@@ -87,17 +87,38 @@
 # WHAT TO DO NOW
 ###############################################################################
 #
-# 1. Do not run more raw K=5/K7 Step-4 jobs. The useful verification path is
-#    now K=3 + --enforce-norm --u-split-trotter.
+# Short answer:
+# - Stop Step-4 harmonic oscillator testing for now. It has passed in the only
+#   setting we should trust:
+#       --N 1 --K 3 --enforce-norm --u-split-trotter
+# - Do not run more raw K=5/K7 Step-4 jobs. They either leak norm or give bad
+#   observables after split-u correction.
 #
-# 2. Run section 6 if you want a compact summary over all isolated outputs.
-#    Run section 7 only if you want to archive the large CSV outputs from /tmp
-#    back into the repo.
+# Why this is the correct stopping point:
+# - Raw K=3/K=5 real-time TDVP conserved energy but leaked norm, so the old
+#   result was not physically usable.
+# - --enforce-norm removes the numerical norm leak by rescaling u after each
+#   step.
+# - --u-split-trotter makes the linear coefficient update more physical:
+#     (1) TDVP updates Gaussian geometry,
+#     (2) fixed-basis evolution updates u.
+# - With K=3 + both controls, the harmonic oscillator recurrence passes one
+#   full period:
+#     relE=1.780e-12, norm_final=1.000000000, final fidelity=0.999905.
 #
+# What to do next, in order:
+# 1. Archive the successful K=3 split-norm outputs using section 7a below.
+# 2. Keep section 6 available for a compact summary over all /tmp runs.
 # 3. Next code/physics task for the real MBDL purpose:
-#    carry these real-time controls into the kicked-evolution workflow and make
-#    a small N=1 kicked exact-grid comparison with per-kick/per-step logs before
-#    spending CPU on larger-N MBDL scans.
+#    carry --enforce-norm and --u-split-trotter into the kicked-evolution path,
+#    then run a tiny N=1 kicked exact-grid comparison before larger scans.
+#
+# The first kicked/MBDL diagnostic should log per kick:
+#   kick_index, t, norm, energy, kinetic, <x>, <p>,
+#   fidelity_vs_exact, L2_nk_vs_exact
+#
+# Start with a small test such as 5-10 kicks. Do not start a long MBDL scan
+# until the N=1 kicked exact-grid comparison passes.
 
 
 ###############################################################################
@@ -724,22 +745,52 @@ done
 
 
 ###############################################################################
-# 7. Optional archive after all tasks finish
+# 7a. RECOMMENDED NOW: archive only the successful K=3 split-norm outputs
 ###############################################################################
 #
-# Keep the isolated output directories intact, but copy the important artifacts
-# back into the repo under out/checks_step4_per_step_YYYYMMDD_HHMMSS.
+# Run this now if you want to preserve the passed Step-4 verification result.
+# It copies the useful /tmp outputs back into the repo, with the logs needed to
+# prove how the result was produced.
+#
+# These are the three passed runs:
+# - fix_split_norm_K3_T0p5: short T=0.5 gate
+# - medium_split_norm_K3_T1: medium T=1.0 gate
+# - period_split_norm_K3_dt2e3: one full harmonic period
 
 ROOT=/home/gyqyan/zexuan/ecg1d_cpp
 BASE=/tmp/ecg1d_step4_checks
 STAMP=$(date +%Y%m%d_%H%M%S)
-DEST=$ROOT/out/checks_step4_per_step_$STAMP
+DEST=$ROOT/out/checks_step4_passed_K3_split_norm_$STAMP
+
 mkdir -p "$DEST"
-cp -a $BASE/* "$DEST"/
-cp -a $ROOT/logs/*K*_T*.log "$DEST"/ 2>/dev/null || true
-cp -a $ROOT/logs/period_*.log "$DEST"/ 2>/dev/null || true
+
+cp -a $BASE/fix_split_norm_K3_T0p5 "$DEST"/
+cp -a $BASE/medium_split_norm_K3_T1 "$DEST"/
+cp -a $BASE/period_split_norm_K3_dt2e3 "$DEST"/
+
+cp -a $ROOT/logs/fix_split_norm_K3_T0p5.log "$DEST"/
+cp -a $ROOT/logs/medium_split_norm_K3_T1.log "$DEST"/
+cp -a $ROOT/logs/period_split_norm_K3_dt2e3.log "$DEST"/
 
 echo "Archived to $DEST"
+
+
+###############################################################################
+# 7b. Optional full archive of every isolated run
+###############################################################################
+#
+# This copies all pilot, failed, and passed outputs. Use this only if you want a
+# complete debugging archive; it may be much larger than 7a.
+
+# ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+# BASE=/tmp/ecg1d_step4_checks
+# STAMP=$(date +%Y%m%d_%H%M%S)
+# DEST=$ROOT/out/checks_step4_all_runs_$STAMP
+# mkdir -p "$DEST"
+# cp -a $BASE/* "$DEST"/
+# cp -a $ROOT/logs/*K*_T*.log "$DEST"/ 2>/dev/null || true
+# cp -a $ROOT/logs/period_*.log "$DEST"/ 2>/dev/null || true
+# echo "Archived to $DEST"
 
 
 ###############################################################################
@@ -755,7 +806,43 @@ echo "Archived to $DEST"
 #   recurrence. A value around 0.86, as seen in the previous K=5 report, means
 #   the ECG trajectory is not reliable for long kicked MBDL.
 #
-# If K=5 and K=7 both fail norm/fidelity, do not spend time on larger-N kicked
-# runs yet. The next code task should be exposing enforce_norm / rcond /
-# lambda_C / wiener / u_split_trotter as CLI options in ecg1d_verify, then
-# repeating this checklist.
+# Current accepted Step-4 setting:
+#   --N 1 --K 3 --enforce-norm --u-split-trotter
+#
+# Rejected settings from this session:
+# - Raw K=3/K=5: energy passes but norm leaks.
+# - K=5 --enforce-norm --u-split-trotter: norm is fixed but energy and
+#   observables degrade badly.
+#
+# Do not spend time on larger-N kicked runs yet. The next useful task is to
+# move the accepted real-time controls into the kicked-evolution workflow and
+# verify N=1 kicked dynamics against exact grid evolution first.
+
+
+###############################################################################
+# 9. Meaning of the accepted controls
+###############################################################################
+#
+# --enforce-norm:
+# - After every real-time step, compute norm_now = <psi|psi>.
+# - Rescale all coefficients u by:
+#       scale = sqrt(norm_init / norm_now)
+# - Because the norm is quadratic in u, this forces the next stored norm back to
+#   norm_init. This corrects numerical amplitude leakage from the regularized
+#   TDVP solve. It does not by itself prove the trajectory is physically good,
+#   so energy, density, momentum, and fidelity still must be checked.
+#
+# --u-split-trotter:
+# - One step is split into two operations:
+#     1. TDVP updates nonlinear Gaussian geometry parameters.
+#     2. On the updated fixed basis, u is evolved by fixed-basis real-time
+#        propagation.
+# - In the code, Step 4 removes u from the TDVP alpha list when this mode is on.
+# - This avoided forcing the ill-conditioned TDVP tangent solve to update both
+#   geometry and linear amplitudes at the same time.
+#
+# Why K=3, not K=5:
+# - K=3 split-norm passes T=0.5, T=1.0, and T=2*pi.
+# - K=5 split-norm fixes norm but gives bad energy and observables by T=0.5.
+# - Therefore K=3 split-norm is the current verified realtime building block
+#   for the next kicked/MBDL comparison.
