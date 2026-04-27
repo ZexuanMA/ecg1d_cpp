@@ -1,0 +1,761 @@
+# Step 4 per-step dynamics verification checklist
+# Created 2026-04-27
+#
+# Goal
+# - Verify whether ECG real-time TDVP is trustworthy before using it for the
+#   MBDL purpose in Guo et al. Science: long kicked dynamics, n(k) freezing,
+#   energy/entropy saturation, and G^(1)(z).
+# - Every task below is designed to finish naturally. No timeout / kill command
+#   is used.
+# - Dynamic trace is sampled every integration step by setting:
+#       --dt-trace = --dt
+# - Density and momentum snapshots are also taken every integration step by
+#   setting:
+#       --n-snap = n_steps + 1
+# - Real-time TDVP diagnostics are printed into the .log at every RK4 step by
+#   passing:
+#       --rt-verbose
+#   Without --rt-verbose, the .log only shows each Step-4 leg boundary
+#   ("[step4] leg t=[...]"). The detailed scalar values are still in CSV, but
+#   they are not printed line-by-line in the .log.
+#
+# CPU notes from this session
+# - nproc reports 8 usable logical CPUs.
+# - lscpu reports the host has 256 logical CPUs, but this shell's allowed
+#   affinity is:
+#       112-119,240-247
+# - Use physical-core set 112-119 for jobs; avoid 240-247 unless deliberately
+#   using hyperthread siblings.
+# - Current machine load was high when checked, so run at most 3-4 Step-4 jobs
+#   at the same time. Run full-period jobs at most 2 at a time.
+#
+# Important output note
+# - ecg1d_verify writes fixed names under relative out/verify.
+# - To avoid parallel jobs overwriting each other, every run below uses its own
+#   working directory under /tmp/ecg1d_step4_checks.
+# - This environment does not have /usr/bin/time, so commands below do not use
+#   it. Use shell `time <command>` manually if runtime measurement is needed.
+#
+# Current status after solver-control tests (2026-04-27)
+# - Static N=1 and N=2 checks passed.
+# - Verbose K=3 and K=5 reruns finished and each log has exactly 500
+#   [rt_tdvp] lines, matching T=0.5, dt=0.001.
+# - Energy conservation still looks excellent, but the wavefunction norm fails:
+#     K=3: relE=2.128e-09, norm_final=0.921816711,
+#          norm_loss=7.818%,  max|x|=7.625e-06, max|p|=9.117e-06
+#     K=5: relE=2.251e-09, norm_final=0.873699041,
+#          norm_loss=12.630%, max|x|=3.586e-02, max|p|=1.346e-02
+# - Verbose log diagnosis:
+#     K=3: cond grows around 1.6e10-1.8e10; sv_min3 stays pinned at 1e-08.
+#     K=5: cond grows around 3.5e11-4.0e11; sv_min3 stays pinned at 1e-08.
+# - Interpretation: this is not mainly a timestep problem. The energy metric
+#   passes while the real-time TDVP metric is ill-conditioned and the regularized
+#   pseudoinverse leaks norm. K=3 is cleaner than K=5, but neither is acceptable
+#   for the real kicked/MBDL purpose yet.
+# - Code update completed:
+#     ecg1d_verify now supports --enforce-norm, --u-split-trotter, --rcond,
+#     --lambda-C, --wiener, and --no-wiener.
+# - Post-code short tests:
+#     K=3 + --enforce-norm:
+#       relE=2.129e-09, norm_final=1.000000000, max|x|=7.686e-06, max|p|=9.173e-06
+#     K=5 + --enforce-norm:
+#       relE=2.254e-09, norm_final=1.000000000, max|x|=3.474e-02, max|p|=1.366e-02
+#     K=3 + --enforce-norm --u-split-trotter:
+#       relE=6.987e-15, norm_final=1.000000000, max|x|=7.108e-06, max|p|=4.190e-06
+#     K=5 + --enforce-norm --u-split-trotter:
+#       relE=3.003e-02, norm_final=1.000000000, max|x|=3.676e-01, max|p|=2.984e-01
+# - Current conclusion:
+#     Use K=3 + --enforce-norm --u-split-trotter for the next controlled check.
+#     Do not use K=5 split-u; it fixes norm but breaks energy and observables.
+# - Medium and full-period K=3 split-norm checks passed:
+#     T=1.0:
+#       rt lines=1000, relE=3.668e-14, norm_final=1.000000000,
+#       max|x|=7.185e-06, max|p|=1.117e-05
+#       ECG_vs_grid at t=1: L2_nx=1.881e-03, L2_nk=2.522e-04, fidelity=0.969387
+#     T=2*pi:
+#       rt lines=3142, relE=1.780e-12, norm_final=1.000000000,
+#       max|x|=8.282e-03, max|p|=9.432e-03
+#       final ECG_vs_grid: L2_nx=3.595e-03, L2_nk=8.745e-03,
+#       fidelity=0.999905
+# - Updated conclusion:
+#     Step 4 harmonic recurrence is now usable for N=1 with K=3 split-norm.
+#     This replaces the old failing K=5 raw Step-4 result for deciding whether
+#     the real-time piece is ready for kicked/MBDL-style work.
+
+
+###############################################################################
+# WHAT TO DO NOW
+###############################################################################
+#
+# 1. Do not run more raw K=5/K7 Step-4 jobs. The useful verification path is
+#    now K=3 + --enforce-norm --u-split-trotter.
+#
+# 2. Run section 6 if you want a compact summary over all isolated outputs.
+#    Run section 7 only if you want to archive the large CSV outputs from /tmp
+#    back into the repo.
+#
+# 3. Next code/physics task for the real MBDL purpose:
+#    carry these real-time controls into the kicked-evolution workflow and make
+#    a small N=1 kicked exact-grid comparison with per-kick/per-step logs before
+#    spending CPU on larger-N MBDL scans.
+
+
+###############################################################################
+# 0. One-time setup and CPU check
+###############################################################################
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+nproc
+grep Cpus_allowed_list /proc/self/status
+taskset -pc $$
+uptime
+
+mkdir -p logs /tmp/ecg1d_step4_checks
+
+# Build once. This uses the approved build command.
+cmake --build build -j 8 --target ecg1d_verify
+
+
+###############################################################################
+# 1. Static baseline: prove the cached/starting states are still good
+###############################################################################
+#
+# These are not real-time checks. They validate the ground-state input and the
+# reference machinery. They can run in parallel because N=1 and N=2 filenames
+# are distinct in the repo-local out/verify directory.
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+taskset -c 112 ./build/ecg1d_verify \
+  --N 1 --K 5 --run-step1 --run-step2 --run-step3 \
+  > logs/static_N1_K5.log 2>&1 &
+
+env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+taskset -c 113 ./build/ecg1d_verify \
+  --N 2 --K 5 --run-step1 --run-step2 --run-step3 \
+  > logs/static_N2_K5.log 2>&1 &
+
+wait
+
+# Quick readout
+tail -n 40 logs/static_N1_K5.log
+tail -n 40 logs/static_N2_K5.log
+
+
+###############################################################################
+# 2. Pilot per-step dynamics: T = 0.5, dt = 1e-3, every-step snapshots
+###############################################################################
+#
+# Purpose
+# - Cheap early-time diagnosis.
+# - Captures scalar trace every step: E, norm, <x>, <p>.
+# - Captures density n(x,t) and momentum n(k,t) every step:
+#       T/dt = 500 steps, n_snap = 501.
+#
+# Run K=3,5,7 in parallel on separate CPUs. If these take too long or already
+# show severe norm/fidelity drift, do not continue to the full-period stage.
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+mkdir -p $BASE/pilot_K3_T0p5 $BASE/pilot_K5_T0p5 $BASE/pilot_K7_T0p5
+
+(cd $BASE/pilot_K3_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 114 $ROOT/build/ecg1d_verify \
+   --N 1 --K 3 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 --rt-verbose) \
+   > $ROOT/logs/pilot_K3_T0p5.log 2>&1 &
+
+(cd $BASE/pilot_K5_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 115 $ROOT/build/ecg1d_verify \
+   --N 1 --K 5 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 --rt-verbose) \
+   > $ROOT/logs/pilot_K5_T0p5.log 2>&1 &
+
+(cd $BASE/pilot_K7_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 116 $ROOT/build/ecg1d_verify \
+   --N 1 --K 7 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 --rt-verbose) \
+   > $ROOT/logs/pilot_K7_T0p5.log 2>&1 &
+
+wait
+
+
+###############################################################################
+# 2b. COMPLETED: verbose diagnostic rerun, T = 0.5, dt = 1e-3
+###############################################################################
+#
+# These commands created fresh output directories and fresh logs, so they did
+# not overwrite the first pilot outputs.
+#
+# Expected .log detail:
+#   [rt_tdvp] step ... t=... dt=... E=... norm=... cond=... sv_min3=... |dz|=...
+#
+# We ran only K=3 and K=5:
+# - K=3: cleanest pilot symmetry and density/momentum behavior.
+# - K=5: baseline used in the previous Step-4 report.
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+mkdir -p $BASE/pilot_verbose_K3_T0p5 $BASE/pilot_verbose_K5_T0p5
+
+(cd $BASE/pilot_verbose_K3_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 112 $ROOT/build/ecg1d_verify \
+   --N 1 --K 3 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 --rt-verbose) \
+   > $ROOT/logs/pilot_verbose_K3_T0p5.log 2>&1 &
+
+(cd $BASE/pilot_verbose_K5_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 113 $ROOT/build/ecg1d_verify \
+   --N 1 --K 5 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 --rt-verbose) \
+   > $ROOT/logs/pilot_verbose_K5_T0p5.log 2>&1 &
+
+wait
+
+# Confirm the logs really contain detailed realtime lines.
+for f in $ROOT/logs/pilot_verbose_K3_T0p5.log $ROOT/logs/pilot_verbose_K5_T0p5.log; do
+  echo "================================================================"
+  echo "$f"
+  printf "[rt_tdvp] line count: "
+  rg -c "\\[rt_tdvp\\]" "$f" || true
+  tail -n 30 "$f"
+done
+
+
+###############################################################################
+# 3. Summarize pilot runs before deciding whether to continue
+###############################################################################
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+for d in $BASE/pilot_*; do
+  f=$(ls "$d"/out/verify/step4_ecg_trace_N1_K*.csv 2>/dev/null | head -n 1)
+  s=$(ls "$d"/out/verify/step4_ecg_snap_N1_K*.csv 2>/dev/null | head -n 1)
+  [ -f "$f" ] || { echo "missing trace in $d"; continue; }
+
+  awk -F, '
+    NR==2 { E0=$2; n0=$3 }
+    NR>1 {
+      dE=$2-E0; if (dE<0) dE=-dE; if (dE>maxE) maxE=dE;
+      norm_ratio=$3/n0;
+      ax=$4<0 ? -$4 : $4; if (ax>maxx) maxx=ax;
+      ap=$5<0 ? -$5 : $5; if (ap>maxp) maxp=ap;
+    }
+    END {
+      printf "%s\n  relE=%.3e  norm_final=%.6f  max|x|=%.3e  max|p|=%.3e\n",
+             FILENAME, maxE/(E0<0?-E0:E0), norm_ratio, maxx, maxp
+    }' "$f"
+
+  [ -f "$s" ] && { printf "  final snapshot: "; tail -n 1 "$s"; }
+done
+
+# Optional figure generation for each isolated run directory. This includes
+# both pilot_* and pilot_verbose_* directories.
+for d in $BASE/pilot_*; do
+  (cd "$d" && python3 $ROOT/scripts/plot_verification.py)
+done
+
+
+###############################################################################
+# 3b. Completed verbose diagnosis: quick reproducible readout
+###############################################################################
+#
+# Run this anytime to re-check the two logs and the two scalar traces.
+# Expected now:
+#   K=3 log count = 500; norm_final = 0.921816711
+#   K=5 log count = 500; norm_final = 0.873699041
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+for f in $ROOT/logs/pilot_verbose_K3_T0p5.log $ROOT/logs/pilot_verbose_K5_T0p5.log; do
+  echo "================================================================"
+  echo "$f"
+  printf "[rt_tdvp] line count: "
+  rg -c "\\[rt_tdvp\\]" "$f" || true
+  rg "\\[step4\\] E0=|\\[step4\\] wrote|\\[step4-ref/|\\[step4-xc\\]" "$f"
+done
+
+for f in \
+  $BASE/pilot_verbose_K3_T0p5/out/verify/step4_ecg_trace_N1_K3.csv \
+  $BASE/pilot_verbose_K5_T0p5/out/verify/step4_ecg_trace_N1_K5.csv
+do
+  awk -F, '
+    NR==2 { E0=$2; n0=$3 }
+    NR>1 {
+      dE=$2-E0; if (dE<0) dE=-dE; if (dE>maxE) maxE=dE;
+      norm_ratio=$3/n0;
+      ax=$4<0 ? -$4 : $4; if (ax>maxx) maxx=ax;
+      ap=$5<0 ? -$5 : $5; if (ap>maxp) maxp=ap;
+    }
+    END {
+      printf "%s\n  relE=%.3e  norm_final=%.9f  norm_loss=%.3f%%  max|x|=%.3e  max|p|=%.3e\n",
+             FILENAME, maxE/(E0<0?-E0:E0), norm_ratio, (1.0-norm_ratio)*100.0, maxx, maxp
+    }' "$f"
+done
+
+
+###############################################################################
+# 3c. COMPLETED CODE TASK: expose real-time solver controls in ecg1d_verify
+###############################################################################
+#
+# This is now implemented and the build passed.
+#
+# Files/logic to inspect:
+# - main_verification.cpp
+#     Add CLI fields, help text, parser branches, and pass settings to Step 4.
+# - src/verify/step4_realtime_tdvp.hpp
+# - src/verify/step4_realtime_tdvp.cpp
+#     Replace hard-coded:
+#       solver_cfg.lambda_C = 1e-8;
+#       solver_cfg.rcond = 1e-4;
+#       solver_cfg.wiener_smooth = true;
+#       rt_cfg.enforce_norm = false;
+#     with values from CLI/config.
+# - src/realtime_tdvp.hpp
+#     u_split_trotter already exists. If --u-split-trotter is enabled, make
+#     sure the Step-4 alpha list excludes u updates (a1=1) as required by the
+#     comment in RealtimeEvolutionConfig.
+#
+# Code search command:
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+rg -n "rt_verbose|step4_realtime_tdvp|enforce_norm|u_split_trotter|wiener_smooth|lambda_C|rcond|make_alpha_list" \
+  main_verification.cpp src/verify/step4_realtime_tdvp.* src/realtime_tdvp.* src/tdvp_solver.hpp
+
+# Build after the code edit:
+cmake --build build -j 8 --target ecg1d_verify
+
+# Help must show the new flags before running the post-code diagnostics.
+./build/ecg1d_verify --help | rg "enforce-norm|u-split-trotter|rcond|lambda-C|wiener|no-wiener|rt-verbose"
+
+
+###############################################################################
+# 3d. POST-CODE short reruns: norm enforcement test, T = 0.5
+###############################################################################
+#
+# Run only after section 3c is implemented and --help shows the new flags.
+# This is the first controlled test. It answers:
+#   Does explicit norm correction fix the dominant nonunitary drift without
+#   damaging density/momentum/fidelity?
+#
+# Keep this short. Two jobs, two CPUs, no timeout/kill.
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+mkdir -p $BASE/fix_norm_K3_T0p5 $BASE/fix_norm_K5_T0p5
+
+(cd $BASE/fix_norm_K3_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 112 $ROOT/build/ecg1d_verify \
+   --N 1 --K 3 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 \
+   --rt-verbose --enforce-norm) \
+   > $ROOT/logs/fix_norm_K3_T0p5.log 2>&1 &
+
+(cd $BASE/fix_norm_K5_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 113 $ROOT/build/ecg1d_verify \
+   --N 1 --K 5 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 \
+   --rt-verbose --enforce-norm) \
+   > $ROOT/logs/fix_norm_K5_T0p5.log 2>&1 &
+
+wait
+
+
+###############################################################################
+# 3e. POST-CODE short reruns: split-u plus norm enforcement, T = 0.5
+###############################################################################
+#
+# Run only if section 3d still has density/momentum/fidelity problems, or if
+# you want to compare against the current raw TDVP-u behavior.
+#
+# Important implementation detail:
+#   --u-split-trotter should use TDVP for geometry and exact fixed-basis
+#   propagation for u. Do not leave u in the TDVP alpha list for this mode.
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+mkdir -p $BASE/fix_split_norm_K3_T0p5 $BASE/fix_split_norm_K5_T0p5
+
+(cd $BASE/fix_split_norm_K3_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 114 $ROOT/build/ecg1d_verify \
+   --N 1 --K 3 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 \
+   --rt-verbose --enforce-norm --u-split-trotter) \
+   > $ROOT/logs/fix_split_norm_K3_T0p5.log 2>&1 &
+
+(cd $BASE/fix_split_norm_K5_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 115 $ROOT/build/ecg1d_verify \
+   --N 1 --K 5 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 \
+   --rt-verbose --enforce-norm --u-split-trotter) \
+   > $ROOT/logs/fix_split_norm_K5_T0p5.log 2>&1 &
+
+wait
+
+
+###############################################################################
+# 3f. POST-CODE optional regularization comparison, K = 3 only
+###############################################################################
+#
+# Run this only after 3d/3e. It is a cheap one-CPU scan to see whether the
+# wiener/hard-pinv and rcond choices are the source of the norm leak.
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+mkdir -p $BASE/fix_nowiener_K3_T0p5 $BASE/fix_rcond1e3_K3_T0p5
+
+(cd $BASE/fix_nowiener_K3_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 112 $ROOT/build/ecg1d_verify \
+   --N 1 --K 3 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 \
+   --rt-verbose --enforce-norm --no-wiener --rcond 1e-4 --lambda-C 1e-8) \
+   > $ROOT/logs/fix_nowiener_K3_T0p5.log 2>&1 &
+
+(cd $BASE/fix_rcond1e3_K3_T0p5 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 113 $ROOT/build/ecg1d_verify \
+   --N 1 --K 3 --run-step1 --run-step4 \
+   --T 0.5 --dt 0.001 --dt-trace 0.001 --n-snap 501 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 \
+   --rt-verbose --enforce-norm --wiener --rcond 1e-3 --lambda-C 1e-8) \
+   > $ROOT/logs/fix_rcond1e3_K3_T0p5.log 2>&1 &
+
+wait
+
+
+###############################################################################
+# 3g. Completed post-code short-test result
+###############################################################################
+#
+# The first usable setting is:
+#   K=3 --enforce-norm --u-split-trotter
+#
+# Short-test table at T=0.5:
+#
+#   raw K=3:
+#     relE=2.128e-09, norm_final=0.921816711, norm_loss=7.818%
+#   raw K=5:
+#     relE=2.251e-09, norm_final=0.873699041, norm_loss=12.630%
+#   K=3 --enforce-norm:
+#     relE=2.129e-09, norm_final=1.000000000, max|x|=7.686e-06, max|p|=9.173e-06
+#   K=5 --enforce-norm:
+#     relE=2.254e-09, norm_final=1.000000000, max|x|=3.474e-02, max|p|=1.366e-02
+#   K=3 --enforce-norm --u-split-trotter:
+#     relE=6.987e-15, norm_final=1.000000000, max|x|=7.108e-06, max|p|=4.190e-06
+#     ECG_vs_grid at t=0.5: L2_nx=9.505e-04, L2_nk=7.307e-05, fidelity=0.973665
+#   K=5 --enforce-norm --u-split-trotter:
+#     relE=3.003e-02, norm_final=1.000000000, max|x|=3.676e-01, max|p|=2.984e-01
+#     ECG_vs_grid at t=0.5: L2_nx=1.535e-01, L2_nk=1.713e-01, fidelity=0.927506
+#
+# Decision:
+# - Advance only K=3 split-norm to T=1.0.
+# - Keep K=5 split-norm as a failed diagnostic, not a production setting.
+
+
+###############################################################################
+# 4. Medium per-step dynamics: T = 1.0, dt = 1e-3, every-step snapshots
+###############################################################################
+
+###############################################################################
+# 4a. COMPLETED: medium K=3 split-norm check
+###############################################################################
+#
+# Purpose:
+# - Confirm that the good T=0.5 setting remains stable to T=1.0.
+# - One job only, so it should stay well inside the one-hour task budget.
+# - If this fails energy/norm/cross-check, do not run the full-period check.
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+mkdir -p $BASE/medium_split_norm_K3_T1
+
+(cd $BASE/medium_split_norm_K3_T1 && \
+ env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+ taskset -c 112 $ROOT/build/ecg1d_verify \
+   --N 1 --K 3 --run-step1 --run-step4 \
+   --T 1.0 --dt 0.001 --dt-trace 0.001 --n-snap 1001 \
+   --n-grid 256 --n-dvr 128 --x-max 15.0 \
+   --rt-verbose --enforce-norm --u-split-trotter) \
+   > $ROOT/logs/medium_split_norm_K3_T1.log 2>&1 &
+
+wait
+
+# Readout for the K=3 medium check.
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+rg -c "\\[rt_tdvp\\]" $ROOT/logs/medium_split_norm_K3_T1.log
+rg "\\[step4\\] E0=|\\[step4\\] wrote|\\[step4-ref/|\\[step4-xc\\]" \
+  $ROOT/logs/medium_split_norm_K3_T1.log
+
+awk -F, '
+  NR==2 { E0=$2; n0=$3 }
+  NR>1 {
+    dE=$2-E0; if (dE<0) dE=-dE; if (dE>maxE) maxE=dE;
+    norm_ratio=$3/n0;
+    ax=$4<0 ? -$4 : $4; if (ax>maxx) maxx=ax;
+    ap=$5<0 ? -$5 : $5; if (ap>maxp) maxp=ap;
+  }
+  END {
+    printf "relE=%.3e  norm_final=%.9f  norm_loss=%.3f%%  max|x|=%.3e  max|p|=%.3e\n",
+           maxE/(E0<0?-E0:E0), norm_ratio, (1.0-norm_ratio)*100.0, maxx, maxp
+  }' $BASE/medium_split_norm_K3_T1/out/verify/step4_ecg_trace_N1_K3.csv
+
+awk -F, 'NR==1{next} $1=="ECG_vs_grid" && $2=="1"{print}' \
+  $BASE/medium_split_norm_K3_T1/out/verify/step4_crosscheck_N1.csv
+
+# Completed result:
+#   [rt_tdvp] line count = 1000
+#   relE=3.668e-14, norm_final=1.000000000, norm_loss=0.000%
+#   max|x|=7.185e-06, max|p|=1.117e-05
+#   ECG_vs_grid at t=1:
+#     L2_nx=1.881e-03, L2_nk=2.522e-04, fidelity=0.969387
+
+###############################################################################
+# 4b. HOLD: older K=5/K7 medium templates
+###############################################################################
+#
+# HOLD for now.
+#
+# Reason: the short post-code tests show K=5 is not trustworthy. Keep the old
+# K=5/K7 commands only for later debugging, not for the next physics check.
+#
+# If you still choose to run this, run at most two jobs at once if the system
+# load is high.
+#
+# T/dt = 1000 steps, n_snap = 1001.
+
+# Commands intentionally commented while Step 4 is failing at T=0.5.
+# Uncomment only after sections 3d/3e produce acceptable norm and cross-checks.
+#
+# ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+# BASE=/tmp/ecg1d_step4_checks
+#
+# mkdir -p $BASE/medium_K5_T1 $BASE/medium_K7_T1
+#
+# (cd $BASE/medium_K5_T1 && \
+#  env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+#  taskset -c 112 $ROOT/build/ecg1d_verify \
+#    --N 1 --K 5 --run-step1 --run-step4 \
+#    --T 1.0 --dt 0.001 --dt-trace 0.001 --n-snap 1001 \
+#    --n-grid 256 --n-dvr 128 --x-max 15.0 --rt-verbose) \
+#    > $ROOT/logs/medium_K5_T1.log 2>&1 &
+#
+# (cd $BASE/medium_K7_T1 && \
+#  env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+#  taskset -c 113 $ROOT/build/ecg1d_verify \
+#    --N 1 --K 7 --run-step1 --run-step4 \
+#    --T 1.0 --dt 0.001 --dt-trace 0.001 --n-snap 1001 \
+#    --n-grid 256 --n-dvr 128 --x-max 15.0 --rt-verbose) \
+#    > $ROOT/logs/medium_K7_T1.log 2>&1 &
+#
+# wait
+
+
+###############################################################################
+# 5. Coarse full-period recurrence: T = 2*pi, every-step snapshots
+###############################################################################
+
+###############################################################################
+# 5a. COMPLETED: full-period K=3 split-norm recurrence
+###############################################################################
+#
+# Purpose:
+# - This is the actual harmonic-oscillator recurrence test before any kicked
+#   MBDL-style evolution.
+# - One job only. It has 3142 steps and 3143 snapshots.
+
+# ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+# BASE=/tmp/ecg1d_step4_checks
+#
+# mkdir -p $BASE/period_split_norm_K3_dt2e3
+#
+# (cd $BASE/period_split_norm_K3_dt2e3 && \
+#  env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+#  taskset -c 112 $ROOT/build/ecg1d_verify \
+#    --N 1 --K 3 --run-step1 --run-step4 \
+#    --T 6.283185307179586 --dt 0.00199974070884137 \
+#    --dt-trace 0.00199974070884137 --n-snap 3143 \
+#    --n-grid 256 --n-dvr 128 --x-max 15.0 \
+#    --rt-verbose --enforce-norm --u-split-trotter) \
+#    > $ROOT/logs/period_split_norm_K3_dt2e3.log 2>&1 &
+#
+# wait
+#
+# rg -c "\\[rt_tdvp\\]" $ROOT/logs/period_split_norm_K3_dt2e3.log
+# rg "\\[step4\\] E0=|\\[step4\\] wrote|\\[step4-ref/|\\[step4-xc\\]" \
+#   $ROOT/logs/period_split_norm_K3_dt2e3.log
+#
+# awk -F, '
+#   NR==2 { E0=$2; n0=$3 }
+#   NR>1 {
+#     dE=$2-E0; if (dE<0) dE=-dE; if (dE>maxE) maxE=dE;
+#     norm_ratio=$3/n0;
+#     ax=$4<0 ? -$4 : $4; if (ax>maxx) maxx=ax;
+#     ap=$5<0 ? -$5 : $5; if (ap>maxp) maxp=ap;
+#   }
+#   END {
+#     printf "relE=%.3e  norm_final=%.9f  norm_loss=%.3f%%  max|x|=%.3e  max|p|=%.3e\n",
+#            maxE/(E0<0?-E0:E0), norm_ratio, (1.0-norm_ratio)*100.0, maxx, maxp
+#   }' $BASE/period_split_norm_K3_dt2e3/out/verify/step4_ecg_trace_N1_K3.csv
+#
+# awk -F, 'NR==1{next} $1=="ECG_vs_grid" && $2=="6.28318530717959"{print}' \
+#   $BASE/period_split_norm_K3_dt2e3/out/verify/step4_crosscheck_N1.csv
+
+# Completed result:
+#   [rt_tdvp] line count = 3142
+#   relE=1.780e-12, norm_final=1.000000000, norm_loss=0.000%
+#   max|x|=8.282e-03, max|p|=9.432e-03
+#   final ECG_vs_grid:
+#     abs_delta_x=8.282e-03, abs_delta_p=9.298e-03
+#     L2_nx=3.595e-03, L2_nk=8.745e-03
+#     fidelity=0.999905
+#   final ECG recurrence fidelity from step4_ecg_snap_N1_K3.csv:
+#     0.999906291592457
+
+###############################################################################
+# 5b. HOLD: older K=5/K7 full-period templates
+###############################################################################
+#
+# HOLD for now.
+#
+# Reason: this is the important physics benchmark, but it is not worth spending
+# CPU time on until the short T=0.5 norm leak is addressed. The harmonic
+# oscillator recurrence should come back at T = 2*pi; with the current real-time
+# TDVP settings, the short pilot says the trajectory is already nonunitary.
+#
+# Use 3142 steps:
+#   T = 6.283185307179586
+#   dt = T / 3142 = 0.00199974070884137
+#   n_snap = 3143
+#
+# Run one or two jobs at a time. K=5 is the baseline; K=7 is the comparison.
+
+# Commands intentionally commented while Step 4 is failing at T=0.5.
+# Uncomment only after the short post-code tests pass.
+#
+# ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+# BASE=/tmp/ecg1d_step4_checks
+#
+# mkdir -p $BASE/period_K5_dt2e3 $BASE/period_K7_dt2e3
+#
+# (cd $BASE/period_K5_dt2e3 && \
+#  env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+#  taskset -c 114 $ROOT/build/ecg1d_verify \
+#    --N 1 --K 5 --run-step1 --run-step4 \
+#    --T 6.283185307179586 --dt 0.00199974070884137 \
+#    --dt-trace 0.00199974070884137 --n-snap 3143 \
+#    --n-grid 256 --n-dvr 128 --x-max 15.0 --rt-verbose) \
+#    > $ROOT/logs/period_K5_dt2e3.log 2>&1 &
+#
+# (cd $BASE/period_K7_dt2e3 && \
+#  env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+#  taskset -c 115 $ROOT/build/ecg1d_verify \
+#    --N 1 --K 7 --run-step1 --run-step4 \
+#    --T 6.283185307179586 --dt 0.00199974070884137 \
+#    --dt-trace 0.00199974070884137 --n-snap 3143 \
+#    --n-grid 256 --n-dvr 128 --x-max 15.0 --rt-verbose) \
+#    > $ROOT/logs/period_K7_dt2e3.log 2>&1 &
+#
+# wait
+
+
+###############################################################################
+# 6. Final summary over all isolated runs
+###############################################################################
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+
+for d in $BASE/*; do
+  f=$(ls "$d"/out/verify/step4_ecg_trace_N1_K*.csv 2>/dev/null | head -n 1)
+  s=$(ls "$d"/out/verify/step4_ecg_snap_N1_K*.csv 2>/dev/null | head -n 1)
+  [ -f "$f" ] || continue
+
+  echo "================================================================"
+  echo "$d"
+  awk -F, '
+    NR==2 { E0=$2; n0=$3 }
+    NR>1 {
+      dE=$2-E0; if (dE<0) dE=-dE; if (dE>maxE) maxE=dE;
+      norm_ratio=$3/n0;
+      ax=$4<0 ? -$4 : $4; if (ax>maxx) maxx=ax;
+      ap=$5<0 ? -$5 : $5; if (ap>maxp) maxp=ap;
+    }
+    END {
+      printf "relE=%.3e  norm_final=%.6f  max|x|=%.3e  max|p|=%.3e\n",
+             maxE/(E0<0?-E0:E0), norm_ratio, maxx, maxp
+    }' "$f"
+
+  [ -f "$s" ] && { printf "final snapshot: "; tail -n 1 "$s"; }
+  du -sh "$d/out/verify" 2>/dev/null
+done
+
+
+###############################################################################
+# 7. Optional archive after all tasks finish
+###############################################################################
+#
+# Keep the isolated output directories intact, but copy the important artifacts
+# back into the repo under out/checks_step4_per_step_YYYYMMDD_HHMMSS.
+
+ROOT=/home/gyqyan/zexuan/ecg1d_cpp
+BASE=/tmp/ecg1d_step4_checks
+STAMP=$(date +%Y%m%d_%H%M%S)
+DEST=$ROOT/out/checks_step4_per_step_$STAMP
+mkdir -p "$DEST"
+cp -a $BASE/* "$DEST"/
+cp -a $ROOT/logs/*K*_T*.log "$DEST"/ 2>/dev/null || true
+cp -a $ROOT/logs/period_*.log "$DEST"/ 2>/dev/null || true
+
+echo "Archived to $DEST"
+
+
+###############################################################################
+# 8. Acceptance logic
+###############################################################################
+#
+# A run is useful for the real MBDL direction only if it passes more than energy:
+# - relE should remain small, target < 1e-4.
+# - norm_final should stay close to 1. Large norm loss is a fail.
+# - max|<x>| and max|<p>| should stay near the grid/DVR reference scale for the
+#   parity-even no-kick test.
+# - In the full-period run, final fidelity should be close to the grid/DVR
+#   recurrence. A value around 0.86, as seen in the previous K=5 report, means
+#   the ECG trajectory is not reliable for long kicked MBDL.
+#
+# If K=5 and K=7 both fail norm/fidelity, do not spend time on larger-N kicked
+# runs yet. The next code task should be exposing enforce_norm / rcond /
+# lambda_C / wiener / u_split_trotter as CLI options in ecg1d_verify, then
+# repeating this checklist.

@@ -38,6 +38,14 @@ struct Step4EcgResult {
     double max_rel_E_drift = 0.0;
 };
 
+struct Step4RealtimeOptions {
+    double lambda_C = 1e-8;
+    double rcond = 1e-4;
+    bool wiener_smooth = true;
+    bool enforce_norm = false;
+    bool u_split_trotter = false;
+};
+
 // Step 4 — ECG real-time TDVP under H_evolve = kinetic + harmonic trap (cos
 // turned off). Starts from `basis_init` (Step-1 ECG ground state of H_full).
 //
@@ -59,7 +67,8 @@ Step4EcgResult step4_realtime_tdvp(int N, int K,
                                    const Eigen::VectorXd& k_grid,
                                    const std::vector<double>& t_snap,
                                    double dt_trace,
-                                   bool rt_verbose = false);
+                                   bool rt_verbose = false,
+                                   const Step4RealtimeOptions& rt_options = Step4RealtimeOptions{});
 
 } // namespace verify
 } // namespace ecg1d

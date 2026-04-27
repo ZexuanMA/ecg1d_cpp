@@ -71,18 +71,31 @@ Step4EcgResult step4_realtime_tdvp(int N, int K,
                                    const Eigen::VectorXd& k_grid,
                                    const std::vector<double>& t_snap_in,
                                    double dt_trace,
-                                   bool rt_verbose) {
+                                   bool rt_verbose,
+                                   const Step4RealtimeOptions& rt_options) {
     std::cout << "\n=== Step 4 — ECG real-time TDVP (N=" << N << ", K=" << K
               << ", T=" << T_total << ", dt=" << dt << ") ===\n";
 
     HamiltonianTerms terms = HamiltonianTerms::kinetic_harmonic();
     PermutationSet perms   = PermutationSet::generate(N);
     std::vector<AlphaIndex> alpha = make_alpha_list(N, K);
+    if (rt_options.u_split_trotter) {
+        alpha.erase(std::remove_if(alpha.begin(), alpha.end(),
+                                   [](const AlphaIndex& a) { return a.a1 == 1; }),
+                    alpha.end());
+    }
 
     SolverConfig solver_cfg = SolverConfig::dynamics();
-    solver_cfg.lambda_C = 1e-8;
-    solver_cfg.rcond    = 1e-4;
-    solver_cfg.wiener_smooth = true;
+    solver_cfg.lambda_C = rt_options.lambda_C;
+    solver_cfg.rcond    = rt_options.rcond;
+    solver_cfg.wiener_smooth = rt_options.wiener_smooth;
+
+    std::cout << "[step4] solver lambda_C=" << solver_cfg.lambda_C
+              << " rcond=" << solver_cfg.rcond
+              << " wiener=" << (solver_cfg.wiener_smooth ? "on" : "off")
+              << " enforce_norm=" << (rt_options.enforce_norm ? "on" : "off")
+              << " u_split_trotter=" << (rt_options.u_split_trotter ? "on" : "off")
+              << "\n";
 
     // Sort, dedup, and bracket snapshot times by 0 and T_total.
     std::vector<double> t_snap = t_snap_in;
@@ -154,7 +167,8 @@ Step4EcgResult step4_realtime_tdvp(int N, int K,
         rt_cfg.sample_every = std::max(1, static_cast<int>(std::round(dt_trace / dt)));
         rt_cfg.verbose      = rt_verbose;     // CLI-controlled: --rt-verbose
         rt_cfg.print_every  = rt_verbose ? 1 : 0;
-        rt_cfg.enforce_norm = false;
+        rt_cfg.enforce_norm = rt_options.enforce_norm;
+        rt_cfg.u_split_trotter = rt_options.u_split_trotter;
 
         std::cout << "[step4] leg t=[" << t_a << ", " << t_b << "]\n";
         RealtimeEvolutionResult rt = realtime_tdvp_evolution(

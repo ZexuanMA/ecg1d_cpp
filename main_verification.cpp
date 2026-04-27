@@ -46,6 +46,11 @@ struct Args {
     int    n_dvr   = 256;
     int    n_snap  = 11;
     bool   rt_verbose = false;
+    double rt_lambda_C = 1e-8;
+    double rt_rcond = 1e-4;
+    bool   rt_wiener_smooth = true;
+    bool   rt_enforce_norm = false;
+    bool   rt_u_split_trotter = false;
     bool   help    = false;
 };
 
@@ -70,6 +75,12 @@ Options:
   --n-dvr <int>     sinc-DVR grid size                          [default 256]
   --n-snap <int>    number of real-time density snapshots       [default 11]
   --rt-verbose      print Step-4 ECG E(t) at every RK4 step      [default off]
+  --enforce-norm    rescale u after each realtime step           [default off]
+  --u-split-trotter update geometry by TDVP, then evolve u       [default off]
+  --rcond <float>   realtime pseudoinverse rcond                 [default 1e-4]
+  --lambda-C <float> realtime C-matrix Tikhonov lambda           [default 1e-8]
+  --wiener          use smooth Wiener pseudoinverse filter       [default on]
+  --no-wiener       use hard rcond pseudoinverse truncation
   --help            show this message
 )";
 }
@@ -94,6 +105,12 @@ static Args parse(int argc, char** argv) {
         else if (f == "--n-dvr")      a.n_dvr = next_int();
         else if (f == "--n-snap")     a.n_snap = next_int();
         else if (f == "--rt-verbose") a.rt_verbose = true;
+        else if (f == "--enforce-norm") a.rt_enforce_norm = true;
+        else if (f == "--u-split-trotter") a.rt_u_split_trotter = true;
+        else if (f == "--rcond")      a.rt_rcond = next_float();
+        else if (f == "--lambda-C")   a.rt_lambda_C = next_float();
+        else if (f == "--wiener")     a.rt_wiener_smooth = true;
+        else if (f == "--no-wiener")  a.rt_wiener_smooth = false;
         else if (f == "--help" || f == "-h") a.help = true;
         else {
             std::cerr << "unknown flag: " << f << "\n";
@@ -205,9 +222,16 @@ int main_inner(int argc, char** argv) {
         }
 
         // ECG side
+        Step4RealtimeOptions rt_options;
+        rt_options.lambda_C = args.rt_lambda_C;
+        rt_options.rcond = args.rt_rcond;
+        rt_options.wiener_smooth = args.rt_wiener_smooth;
+        rt_options.enforce_norm = args.rt_enforce_norm;
+        rt_options.u_split_trotter = args.rt_u_split_trotter;
+
         Step4EcgResult ecg = step4_realtime_tdvp(
             args.N, args.K, basis_for_rt, args.T_total, args.dt,
-            x_grid, k_grid, t_snap, args.dt_trace, args.rt_verbose);
+            x_grid, k_grid, t_snap, args.dt_trace, args.rt_verbose, rt_options);
 
         // N=1 only: the reference dynamics solvers below propagate a single-
         // particle wavefunction. For N>=2 we'd need a different reference.
