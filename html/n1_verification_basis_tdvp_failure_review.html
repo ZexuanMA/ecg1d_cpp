@@ -340,6 +340,94 @@ The accepted Step 4 setting after the follow-up checks is:
   </tbody>
 </table>
 
+<h3>Why the Verification Wavefunction Can Evolve, but the <code>main_simple.cpp</code> Cases Often Cannot</h3>
+
+<p>
+The verification result should not be read as "any ECG state will real-time evolve correctly." A more precise statement is:
+the verification wavefunction is a near-Gaussian bound state, and the accepted Step 4 path uses controls that keep the
+ill-conditioned ECG TDVP geometry from dominating the result.
+</p>
+
+<table>
+  <thead>
+    <tr><th>Difference</th><th>Verification path</th><th><code>main_simple.cpp</code> failure-prone path</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Initial state</td>
+      <td>Validated N=1 Step 1 ground state of <code>H_full = T + V_ho + kappa cos(2 k_L x)</code>.</td>
+      <td>Task A can call the invalid N=1 generic SVM path for <code>K&gt;1</code>.</td>
+    </tr>
+    <tr>
+      <td>Wavefunction shape</td>
+      <td>Near-Gaussian bound state. Harmonic evolution maps Gaussian/squeezed Gaussian packets to the same family.</td>
+      <td>Kicked states contain many Jacobi-Anger momentum sidebands; a small fixed ECG basis cannot represent all shifted components.</td>
+    </tr>
+    <tr>
+      <td>Hamiltonian during real-time test</td>
+      <td><code>H_evolve = T + V_ho</code>, with cosine quenched off. This is the most ECG-friendly real-time test.</td>
+      <td>Several tasks add kick or pulse dynamics, which strongly stress the basis through phase modulation and momentum splitting.</td>
+    </tr>
+    <tr>
+      <td>TDVP variables</td>
+      <td>Accepted run uses <code>u_split_trotter</code>: nonlinear geometry is moved by TDVP, while <code>u</code> is propagated by fixed-basis evolution.</td>
+      <td>Raw full TDVP often includes <code>u, B, R, A</code> together, making gauge/null directions worse.</td>
+    </tr>
+    <tr>
+      <td>Norm handling</td>
+      <td>Accepted run uses <code>enforce_norm</code> after each step.</td>
+      <td>Without norm enforcement, regularized TDVP can conserve energy but lose amplitude.</td>
+    </tr>
+    <tr>
+      <td>Basis size</td>
+      <td>The accepted recurrence setting is <code>K=3</code>, not raw <code>K=5</code>.</td>
+      <td>Larger or poorly chosen K can make the tangent metric <code>C</code> more singular instead of more accurate.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box ok">
+  Harmonic evolution is special: Gaussian wavepackets are almost closed under <code>T + V_ho</code>. This is why a carefully
+  controlled ECG basis can pass the recurrence test. The same basis technology becomes much harder after a kick, because
+  <code>exp[-i kappa cos(2 k_L x)]</code> creates multiple momentum-shifted Gaussian components.
+</div>
+
+<p>
+In code terms, the verification's accepted real-time controls do two stabilizing things:
+</p>
+
+<pre><code>// src/verify/step4_realtime_tdvp.cpp
+if (rt_options.u_split_trotter) {
+    remove u from alpha_z_list;
+}
+
+// src/realtime_tdvp.cpp
+if (rt_cfg.u_split_trotter) {
+    build H,S on the current basis;
+    free_evolve_fixed_basis(basis, H, S, dt);
+}
+if (rt_cfg.enforce_norm) {
+    rescale all u_i so &lt;psi|psi&gt; returns to its initial value;
+}</code></pre>
+
+<p>
+So the real contrast is:
+</p>
+
+<pre><code>verification can evolve because:
+  validated N=1 initializer
+  near-Gaussian state
+  harmonic-only H_evolve
+  K=3 accepted path
+  u_split_trotter
+  enforce_norm
+
+main_simple.cpp often fails because:
+  N=1 SVM path can insert N=2 basis objects
+  kicked states need many momentum-shifted Gaussians
+  raw u/B/R/A TDVP makes C nearly singular
+  energy conservation alone can hide wrong norm and trajectory</code></pre>
+
 <h2>4. Practical Fixes for <code>main_simple.cpp</code></h2>
 
 <ol>
