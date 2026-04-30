@@ -1,5 +1,6 @@
 #pragma once
 #include "basis_params.hpp"
+#include "realtime_tdvp.hpp"
 #include "types.hpp"
 #include <Eigen/Dense>
 #include <string>
@@ -54,6 +55,7 @@ struct Step4RealtimeOptions {
     bool enforce_norm = false;
     bool u_split_trotter = false;
     MomentForm moment_form = MomentForm::Both;
+    RtIntegrator integrator = RtIntegrator::RK4;
 };
 
 // Step 4 — ECG real-time TDVP under H_evolve = kinetic + harmonic trap (cos

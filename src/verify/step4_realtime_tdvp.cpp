@@ -164,7 +164,7 @@ Step4EcgResult step4_realtime_tdvp(int N, int K,
 
         RealtimeEvolutionConfig rt_cfg;
         rt_cfg.dt           = dt;
-        rt_cfg.integrator   = RtIntegrator::RK4;
+        rt_cfg.integrator   = rt_options.integrator;
         rt_cfg.sample_every = std::max(1, static_cast<int>(std::round(dt_trace / dt)));
         rt_cfg.verbose      = rt_verbose;     // CLI-controlled: --rt-verbose
         rt_cfg.print_every  = rt_verbose ? 1 : 0;

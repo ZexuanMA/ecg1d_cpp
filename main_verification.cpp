@@ -52,6 +52,7 @@ struct Args {
     bool   rt_enforce_norm = false;
     bool   rt_u_split_trotter = false;
     std::string rt_moment_form = "both";  // raw | normalized | both
+    std::string rt_integrator = "rk4";    // euler | rk4 | rk45
     bool   help    = false;
 };
 
@@ -86,6 +87,8 @@ Options:
                     normalized: t,E,norm,x_mean,p_mean,x2,p2 (7 cols, plotter-compatible)
                     both:       above + x_mean_raw,p_mean_raw,x2_raw,p2_raw (11 cols)
                     raw:        NaN at cols 3-6 then raw cols (11; plotter-incompatible)
+  --rt-integrator <s>  realtime integrator: euler|rk4|rk45         [default rk4]
+                       rk45: Dormand-Prince 5(4) adaptive (--dt is initial guess)
   --help            show this message
 )";
 }
@@ -117,6 +120,7 @@ static Args parse(int argc, char** argv) {
         else if (f == "--wiener")     a.rt_wiener_smooth = true;
         else if (f == "--no-wiener")  a.rt_wiener_smooth = false;
         else if (f == "--moment-form") a.rt_moment_form = argv[++i];
+        else if (f == "--rt-integrator") a.rt_integrator = argv[++i];
         else if (f == "--help" || f == "-h") a.help = true;
         else {
             std::cerr << "unknown flag: " << f << "\n";
@@ -245,6 +249,18 @@ int main_inner(int argc, char** argv) {
                       << "', falling back to 'both'\n";
             rt_options.moment_form = MomentForm::Both;
         }
+        if (args.rt_integrator == "euler") {
+            rt_options.integrator = RtIntegrator::Euler;
+        } else if (args.rt_integrator == "rk4") {
+            rt_options.integrator = RtIntegrator::RK4;
+        } else if (args.rt_integrator == "rk45") {
+            rt_options.integrator = RtIntegrator::RK45;
+        } else {
+            std::cerr << "[step4] unknown --rt-integrator '" << args.rt_integrator
+                      << "', falling back to 'rk4'\n";
+            rt_options.integrator = RtIntegrator::RK4;
+        }
+        std::cout << "[step4] integrator: " << args.rt_integrator << "\n";
 
         Step4EcgResult ecg = step4_realtime_tdvp(
             args.N, args.K, basis_for_rt, args.T_total, args.dt,
