@@ -1,0 +1,257 @@
+==============================================================================
+What is rcond, and how does it interact with cond(C)?
+==============================================================================
+
+Short answer
+------------
+rcond is a CONTROL PARAMETER you set: the relative cutoff below which
+singular values of the Gram matrix C are treated as zero in the SVD-
+based pseudoinverse. cond(C) = sigma_max / sigma_min is a MEASURED
+PROPERTY of C at the current variational state, telling you how many
+decades the singular spectrum spans.
+
+You pick rcond. You do not pick cond(C); it is determined by the basis
+and the current state.
+
+==============================================================================
+1. Where rcond enters the TDVP equations
+==============================================================================
+
+TDVP (real-time, Schrodinger version) solves at every step:
+
+    i C zdot = g                         (1)
+
+with
+    C_{alpha,beta} = <d_alpha psi | d_beta psi>     (Gram matrix)
+    g_alpha       = <d_alpha psi | H | psi>         (gradient)
+
+Here C is a d-by-d Hermitian positive semidefinite matrix, where d is
+the number of variational parameters. To solve (1) we need the inverse
+of C, but C is generically nearly singular for two reasons:
+
+  - some tangent directions overlap heavily with each other (small
+    relative angle in Hilbert space), and
+  - some directions are exactly redundant (e.g. permutation symmetry
+    creates zero modes for bosonic states; see section 6).
+
+Direct inversion of a nearly-singular matrix amplifies tiny singular
+values into huge components of zdot, producing numerical garbage. The
+standard remedy is the SVD-truncated pseudoinverse:
+
+    C = sum_i sigma_i  v_i v_i^*       (eigendecomposition; sigma_i >= 0)
+
+    C^+ = sum_{sigma_i large enough}  (1 / sigma_i)  v_i v_i^*    (2)
+
+The phrase "large enough" needs a threshold. The standard choice is
+relative to the LARGEST singular value:
+
+    keep mode i  iff  sigma_i  >=  rcond * sigma_max               (3)
+
+That is what rcond is. It is the relative cutoff that decides which
+singular directions are inverted and which are dropped.
+
+==============================================================================
+2. rcond as a "decade keeper"
+==============================================================================
+
+The criterion (3) is logarithmic. If sigma_max = 1 and rcond = 1e-4,
+then the SVD keeps every mode with sigma_i >= 1e-4 and drops every
+mode with sigma_i < 1e-4.
+
+In other words, rcond = 10^(-K) means "keep the top K decades of the
+singular spectrum, drop the rest".
+
+  rcond = 1e-2   keeps top 2 decades
+  rcond = 1e-4   keeps top 4 decades   (default in this code)
+  rcond = 1e-6   keeps top 6 decades
+  rcond = 1e-8   keeps top 8 decades
+
+The CLI accepts any positive value. Practical range is 1e-2 (very
+aggressive truncation; usually too lossy) to 1e-12 (essentially no
+truncation; sensitive to noise).
+
+==============================================================================
+3. cond(C) is what you actually have
+==============================================================================
+
+cond(C) is the condition number of the Gram matrix at runtime:
+
+    cond(C) = sigma_max(C) / sigma_min(C)
+
+Equivalently, log10(cond(C)) is the number of decades the singular
+spectrum spans.
+
+You CANNOT set cond(C) directly. It is determined by:
+
+  - the variational ansatz (which basis you chose),
+  - the current state (how the parameters are configured right now),
+  - any structural redundancies (e.g. bosonic symmetry, product-state
+    structure).
+
+Typical observed values in this project:
+
+  N=1 K=3          cond(C) ~ 1e2 - 1e3       (well-conditioned)
+  N=1 K=5          cond(C) ~ 1e6 - 1e8       (moderately ill)
+  N=2 K=5          cond(C) ~ 1e9 - 1e10      (severely ill from step 1)
+
+==============================================================================
+4. The interaction:  how many directions get truncated
+==============================================================================
+
+The number of dropped singular directions equals the count of
+sigma_i below the cutoff:
+
+    decades dropped  =  log10(cond(C))  -  log10(1/rcond)
+                     =  log10(cond(C) * rcond)
+
+If cond(C) * rcond  >=  1, you are dropping modes. If cond(C) * rcond
+< 1, no truncation happens (rcond is below the smallest sigma).
+
+Examples (default rcond = 1e-4):
+
+  cond(C) = 1e2:   1e2 * 1e-4 = 1e-2 < 1     no truncation
+  cond(C) = 1e6:   1e6 * 1e-4 = 1e2  > 1     drop ~2 decades
+  cond(C) = 1e10:  1e10 * 1e-4 = 1e6 > 1     drop ~6 decades
+
+Same numbers with rcond = 1e-8:
+
+  cond(C) = 1e6:   1e6 * 1e-8  = 1e-2 < 1    no truncation
+  cond(C) = 1e10:  1e10 * 1e-8 = 1e2  > 1    drop ~2 decades
+
+So: making rcond smaller = keeping more singular directions = closer
+to the true unregularised inverse.
+
+==============================================================================
+5. Why does small rcond not always help?
+==============================================================================
+
+Two competing effects:
+
+  (a) Smaller rcond keeps more PHYSICAL singular directions. If the
+      truncation was dropping modes the dynamics actually needs, this
+      restores them and the trajectory becomes accurate again.
+
+  (b) Smaller rcond also amplifies NOISE in the bottom-decade modes.
+      The pseudoinverse gives weight 1/sigma_i to mode i. As sigma_i
+      drops toward floating-point noise, 1/sigma_i blows up. If a
+      direction's "physical" singular value is genuinely zero (a true
+      symmetry redundancy) and only finite-precision noise prevents
+      it from being exactly zero, dividing by that noise produces
+      random unit-norm contributions to zdot.
+
+The Tikhonov damping parameter lambda_C is a separate knob that
+addresses (b): the implementation actually solves
+
+    (C + lambda_C * I) zdot = -i g                                 (4)
+
+before the SVD truncation. A non-zero lambda_C shifts every singular
+value by lambda_C (effectively a floor), so true zero modes become
+"sigma = lambda_C" rather than "sigma = floating-point noise". They
+get weight 1/lambda_C in the pseudoinverse, which is finite but
+controlled.
+
+Default lambda_C = 1e-8 in this code. You can see lambda_C in action
+in the verbose output as sv_min3 = (1e-8, 1e-8, 1e-8) when three or
+more directions are at the floor.
+
+The interaction:
+
+  - rcond defines what gets DROPPED.
+  - lambda_C defines the FLOOR for what is kept.
+
+A direction is kept iff sigma_i >= rcond * sigma_max. After being
+kept, it contributes with weight 1 / max(sigma_i, lambda_C).
+
+Empirical pattern in this project:
+
+  N=1 K=5, default rcond=1e-4, lambda_C=1e-8:
+    cond(C) ~ 1e8 -> drop ~4 decades. Some of the dropped modes
+    carried physical breathing flow. Result: 53 % raw E*norm drift,
+    parity violation 0.18, density peaks misalign by 50 %.
+
+  N=2 K=5, default rcond=1e-4, lambda_C=1e-8:
+    cond(C) ~ 1e10 -> drop ~6 decades. Catastrophic: norm crashes
+    to 0.06 in 50 steps, energy basin-hops from 1.149 to 1.241.
+
+  N=2 K=5, rcond=1e-8, lambda_C=1e-8:
+    Now cond(C) * rcond = 1e10 * 1e-8 = 1e2 > 1, still drop ~2
+    decades. Plus the kept low-sigma directions are noise-amplified
+    by 1/sigma_i, with sigma_i at the lambda_C floor giving
+    1/sigma_i = 1e8. Empirically this also gave a bad result -- the
+    over-amplified noise is now the dominant problem.
+
+Lesson: lowering rcond alone is not always enough. You also need
+lambda_C low enough to handle the residual noise floor. For severely
+ill-conditioned manifolds the proper combination is roughly:
+
+    rcond ~ 10 * (numerical noise floor / sigma_max)
+    lambda_C ~ noise floor
+
+with both 10-100x below the smallest physically meaningful sigma.
+
+==============================================================================
+6. Why does N=2 (bosonic) have rank-deficient C?
+==============================================================================
+
+For a bosonic state |psi> the variational ansatz is symmetrised over
+particle permutations. Many parameter directions then produce the
+SAME tangent vector after symmetrisation. Specifically, for a
+permutation-invariant pair Gaussian:
+
+    d|psi>/d R_{k,1}  =  d|psi>/d R_{k,2}     (via the symmetriser)
+
+so the antisymmetric combination
+
+    d_minus = d|psi>/d R_{k,1} - d|psi>/d R_{k,2}
+
+has zero norm: <d_minus | d_minus> = 0. That is a TRUE zero singular
+value of C, not a numerical artefact.
+
+For N=2 with K basis functions, every basis-and-particle pair
+contributes one such zero direction. With K=5 you have 5 such
+exact zeros plus several near-zeros from product-state gauge
+freedom. cond(C) is then bounded below by 1 / lambda_C, which is
+why we observed cond(C) ~ 1e10 at lambda_C = 1e-8 from step 1.
+
+For N=1 there is no permutation, so no such redundancy. cond(C) is
+then a genuine measure of how clustered the Gaussians are in
+parameter space, and it stays small (< 1e3) for K <= 3.
+
+==============================================================================
+7. How to choose rcond in practice
+==============================================================================
+
+Diagnostic recipe:
+
+  1. Run a short test with default rcond = 1e-4 and --rt-verbose.
+  2. Look at cond(C) and sv_min3 in the per-step log:
+       grep "rt_tdvp.*step 1/" logs/<your_log>
+  3. If cond(C) <= 1e3:  default rcond is fine.
+  4. If cond(C) is between 1e3 and 1e6:  try rcond = 1e-6 or 1e-7.
+  5. If cond(C) >= 1e8:  consider whether your manifold is genuinely
+       rank-deficient (bosonic symmetry, product structure, etc.).
+       Lowering rcond alone may not fix it -- you may need to also
+       lower lambda_C, or choose a non-redundant ansatz, or accept
+       that the variational dynamics is fundamentally limited.
+
+  6. If lowering rcond produces NaN or worse drift than default, you
+       have hit case (b) above: the kept low-sigma modes are
+       noise-amplified. Restore rcond and tune lambda_C lower instead.
+
+==============================================================================
+8. The four-line summary
+==============================================================================
+
+  - rcond is a parameter you set to truncate the SVD pseudoinverse
+    of the Gram matrix C in TDVP.
+
+  - It says: "keep the top -log10(rcond) decades of singular values".
+
+  - cond(C) is a runtime property telling you how many decades the
+    singular spectrum spans. The number of dropped directions is
+    log10(cond(C) * rcond), if positive; else zero.
+
+  - Smaller rcond keeps more directions but amplifies noise in the
+    bottom modes. The right value depends on cond(C), lambda_C, and
+    whether your manifold has structural rank-deficiencies.
+==============================================================================

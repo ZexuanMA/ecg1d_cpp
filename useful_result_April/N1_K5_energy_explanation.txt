@@ -1,0 +1,68 @@
+N=1, K=5 energy explanation
+============================
+
+Question:
+Why does static_N1_K5.log show energy about 1.222642783, while
+realtime_N1_K5.log shows energy about 0.583193830?
+
+Conclusion:
+Everything is consistent if the intended real-time evolution is without the
+cosine potential.
+
+The static run computes the Step-1 ground state of the full Hamiltonian:
+
+    H_full = T + V_ho + V_cos
+
+The final Step-1 energy components from static_N1_K5.log are:
+
+    T       = 0.145331047104
+    V_ho    = 0.437862782808
+    V_cos   = 0.639448953224
+    E_full  = 1.22264278314
+
+The realtime run starts from the same Step-1 ECG wavefunction, loaded from:
+
+    out/verify/step1_ecg_basis_N1_K5.csv
+
+Then Step 4 turns off the cosine potential and evolves with:
+
+    H_evolve = T + V_ho
+
+Therefore the expected initial real-time energy is:
+
+    E_no_cos = T + V_ho
+             = 0.145331047104 + 0.437862782808
+             = 0.583193829912
+
+This matches realtime_N1_K5.log:
+
+    [step4] E0=0.5831938299
+
+The apparent decrease from 1.222642783 to 0.583193830 is not a dynamical
+energy loss. It is the same initial wavefunction evaluated with a different
+Hamiltonian after removing the cosine contribution:
+
+    1.22264278314 - 0.639448953224 = 0.583193829916
+
+Relevant code:
+
+1. main_verification.cpp says Step 4 is real-time TDVP with cos potential
+   turned off.
+
+2. src/verify/step4_realtime_tdvp.cpp uses:
+
+       HamiltonianTerms terms = HamiltonianTerms::kinetic_harmonic();
+
+   This means only kinetic + harmonic terms are used in realtime Step 4.
+
+3. src/verify/step4_reference_dynamics.cpp also builds:
+
+       H_evolve = T + V_ho
+
+   with no cosine term.
+
+Important caveat:
+The Hamiltonian choice and the energy value are correct for no-cos evolution.
+However, the ECG realtime log shows norm drift because enforce_norm=off.
+This is a numerical TDVP issue, not a sign that the no-cos energy value is
+wrong.

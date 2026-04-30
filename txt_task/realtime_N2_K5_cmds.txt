@@ -1,0 +1,84 @@
+Task: Real-time TDVP, N=2 K=5, full HO period (T = 2π), per-step trace + verbose log
+
+Purpose
+- Mirror the N=1 K=3 analysis for the 2-particle case.
+- Reference solvers (FD grid + sinc-DVR) are N=1 only, so this is ECG-only.
+- Trace every dt so the CSV captures full per-step dynamics:
+    T / dt = 6283 steps, dt-trace = dt, sample_every = 1.
+- Verbose log records E, norm, <x>, <p>, <x^2>, <p^2>, cond(C), |dz|, min(Re A+B), min(Re A) per step.
+
+Pre-flight: pick a free core (filtered to your allowed set)
+
+# 1. Your allowed cores (cgroup / affinity)
+ALLOWED=$(taskset -pc $$ | awk -F'list: ' '{print $2}')
+echo "your allowed cores: $ALLOWED"
+
+# 2. Per-allowed-core usage; cores absent here are 100% idle.
+top -bn2 -d 1 -1 2>/dev/null | awk -v allowed="$ALLOWED" '
+  BEGIN {
+    n=split(allowed, parts, ",")
+    for (i=1;i<=n;i++) {
+      if (split(parts[i], r, "-") == 2) for (c=r[1]+0;c<=r[2]+0;c++) ok[c]=1
+      else ok[parts[i]+0]=1
+    }
+    snap=0
+  }
+  /^top - / { snap++ }
+  snap==2 && /^%Cpu[0-9]/ {
+    c=$1; gsub(/^%Cpu/,"",c); gsub(/[^0-9]/,"",c)
+    if ((c+0) in ok) {
+      for (i=1;i<=NF;i++) if ($i=="id,") { idle=$(i-1); break }
+      printf "cpu %3d  used=%5.1f%%  idle=%5.1f%%\n", c, 100-idle, idle
+    }
+  }
+' | sort -k3 -t= -nr
+
+How to run
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+mkdir -p logs && env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+nohup taskset -c 112 ./build/ecg1d_verify \
+  --N 2 --K 5 --run-step4 \
+  --T 6.283185307 --dt 1e-3 --dt-trace 1e-3 \
+  --n-snap 11 --moment-form both --rt-verbose \
+  > logs/realtime_N2_K5.log 2>&1 &
+
+# If the run was started WITHOUT nohup, in the same shell run instead:
+#   disown -h %1
+# (or:  disown -h <PID> )
+# That makes the running job SIGHUP-immune so SSH disconnect won't kill it.
+
+Monitor
+
+# live progress
+tail -f logs/realtime_N2_K5.log
+
+# is it still alive?
+ps -o pid,etime,pcpu,cmd -p $(pgrep -f "ecg1d_verify --N 2") 2>/dev/null
+
+# any blowups or warnings?
+grep -E "BLOWUP|WARN|FATAL|drift" logs/realtime_N2_K5.log
+
+Estimated runtime
+- ~25–40 minutes wall-clock on one core.
+- Cost scales as K^2 · N! per RK4 stage; this run is ~30–50× heavier than N=1 K=3.
+
+Outputs
+- logs/realtime_N2_K5.log         — per-step verbose log
+- out/verify/step4_ecg_trace_N2_K5.csv     — 6283 rows × 11 columns (raw + normalized moments)
+- out/verify/step4_ecg_density_N2_K5.csv   — snapshot densities (long format)
+- out/verify/step4_ecg_nk_N2_K5.csv        — snapshot momentum densities (long format)
+
+When the task finishes, generate the figures with
+
+python scripts/plot_step4_moments.py 2 5
+python scripts/plot_step4_wavefunction.py 2 5
+
+Both scripts auto-detect the missing reference data and fall back to ECG-only plots:
+- fig_step4_moments_N2_K5.png
+- fig_step4_norm_energy_N2_K5.png
+- fig_step4_raw_vs_norm_N2_K5.png
+- fig_step4_density_overlay_N2_K5.png
+- fig_step4_density_heat_N2_K5.png
+- fig_step4_nk_overlay_N2_K5.png

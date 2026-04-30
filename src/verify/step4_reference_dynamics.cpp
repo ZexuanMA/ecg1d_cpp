@@ -112,6 +112,8 @@ Step4RefResult propagate_spectral(const Eigen::VectorXd& x,
     r.E       = Eigen::VectorXd(n_tr);
     r.x_mean  = Eigen::VectorXd(n_tr);
     r.p_mean  = Eigen::VectorXd(n_tr);
+    r.x2      = Eigen::VectorXd(n_tr);
+    r.p2      = Eigen::VectorXd(n_tr);
     r.norm    = Eigen::VectorXd(n_tr);
     r.overlap0 = Eigen::VectorXcd(n_tr);
     r.x = x;
@@ -124,24 +126,35 @@ Step4RefResult propagate_spectral(const Eigen::VectorXd& x,
 
         Eigen::VectorXcd psi = propagate_to(t);
 
-        // norm = sum |psi|^2 dx
-        Eigen::VectorXd p2(Nx);
-        for (int j = 0; j < Nx; j++) p2(j) = std::norm(psi(j));
-        double n_t = trapezoid(p2, dx);
+        // norm = sum |psi|^2 dx (local renamed from `p2` to `prob` to avoid
+        // shadowing the new r.p2 trace field).
+        Eigen::VectorXd prob(Nx);
+        for (int j = 0; j < Nx; j++) prob(j) = std::norm(psi(j));
+        double n_t = trapezoid(prob, dx);
         r.norm(i) = n_t;
+        const double inv_n_t = (n_t > 0.0) ? 1.0 / n_t : 0.0;
 
-        // <x>
-        Eigen::VectorXd x_p2(Nx);
-        for (int j = 0; j < Nx; j++) x_p2(j) = x(j) * p2(j);
-        r.x_mean(i) = trapezoid(x_p2, dx);
+        // <x>, <x^2> in position space (normalized by n_t for safety even though
+        // unitary spectral propagation keeps n_t = 1 to round-off).
+        Eigen::VectorXd x_p(Nx), x2_p(Nx);
+        for (int j = 0; j < Nx; j++) {
+            x_p(j)  = x(j) * prob(j);
+            x2_p(j) = x(j) * x(j) * prob(j);
+        }
+        r.x_mean(i) = trapezoid(x_p,  dx) * inv_n_t;
+        r.x2(i)     = trapezoid(x2_p, dx) * inv_n_t;
 
-        // <p> via k-space integral: <p> = integral k |psi_tilde(k)|^2 dk on k_grid
-        // (k_grid range must cover the support; verified at HO scale).
+        // <p>, <p^2> via k-space integral on k_grid (one DFT, two moments).
         Eigen::VectorXcd psi_k = dft_to_kgrid(psi, x, k_grid);
         double dk = k_grid(1) - k_grid(0);
-        Eigen::VectorXd kpk(k_grid.size());
-        for (int ki = 0; ki < k_grid.size(); ki++) kpk(ki) = k_grid(ki) * std::norm(psi_k(ki));
-        r.p_mean(i) = trapezoid(kpk, dk);
+        Eigen::VectorXd kpk(k_grid.size()), k2pk(k_grid.size());
+        for (int ki = 0; ki < k_grid.size(); ki++) {
+            double pk = std::norm(psi_k(ki));
+            kpk(ki)  = k_grid(ki)               * pk;
+            k2pk(ki) = k_grid(ki) * k_grid(ki)  * pk;
+        }
+        r.p_mean(i) = trapezoid(kpk,  dk) * inv_n_t;
+        r.p2(i)     = trapezoid(k2pk, dk) * inv_n_t;
 
         // <H>: should be conserved exactly to roundoff
         Cd Et = (psi.adjoint() * (H.cast<Cd>() * psi))(0) * dx;
@@ -221,10 +234,11 @@ void write_step4_ref_csvs(const std::string& tag, int N,
     std::ostringstream suf;
     suf << "_N" << N << ".csv";
 
-    // Trace
+    // Trace. x2/p2 appended at end so existing positional readers (which
+    // expect cols 0-5 = t,E,norm,x_mean,p_mean,fidelity) still work.
     {
         std::ofstream f(out_path("step4_" + tag + "_trace" + suf.str()));
-        f << "t,E,norm,x_mean,p_mean,fidelity\n";
+        f << "t,E,norm,x_mean,p_mean,fidelity,x2,p2\n";
         f << std::setprecision(15);
         const double n0 = (r.norm.size() > 0) ? r.norm(0) : 1.0;
         for (int i = 0; i < r.t_trace.size(); i++) {
@@ -234,7 +248,8 @@ void write_step4_ref_csvs(const std::string& tag, int N,
                 fid = (denom > 0) ? std::norm(r.overlap0(i)) / denom : 0.0;
             }
             f << r.t_trace(i) << "," << r.E(i) << "," << r.norm(i) << ","
-              << r.x_mean(i) << "," << r.p_mean(i) << "," << fid << "\n";
+              << r.x_mean(i) << "," << r.p_mean(i) << "," << fid << ","
+              << r.x2(i)     << "," << r.p2(i)     << "\n";
         }
     }
     // Density (long format)

@@ -297,8 +297,10 @@ static void sample_observables(const std::vector<BasisParams>& basis,
     Cd V_ho  = Harmonic_functional(basis);
     Cd E = (T_kin + V_ho) / S;   // normalized
 
-    double x2 = 2.0 * (V_ho / S).real() / (mass * omega * omega);
-    double p2 = 2.0 * mass * (T_kin / S).real();
+    double x2_raw = 2.0 * V_ho.real() / (mass * omega * omega);
+    double p2_raw = 2.0 * mass * T_kin.real();
+    double x2 = x2_raw / S.real();
+    double p2 = p2_raw / S.real();
 
     // <psi(0)|psi(t)>  — a bit ugly because overlap() wants one basis; build 2K basis
     // Simpler: manually compute via PairCache.
@@ -319,17 +321,17 @@ static void sample_observables(const std::vector<BasisParams>& basis,
         }
     }
 
-    // <x>, <p> from analytic ECG matrix elements. Single-particle (N=1) only;
-    // for N>=2 we record NaN (the marginal <x_a> would require a kernel that
-    // sums over particle index a with permutation symmetrization — added later
-    // if Step-4 is extended to N>=2).
-    //   Per pair (i,j), single perm:
-    //     <phi_i| x |phi_j>      = M_G * mu                    (mu = c.mu(0))
-    //     <phi_i| -i d/dx |phi_j> = -i * M_G * ((-2 alpha_j) mu + beta_j)
-    //   where alpha_j = c.K_Mj(0,0) = A_j+B_j and beta_j = c.g_Mj(0) = 2 R_j B_j.
-    double x_mean = std::numeric_limits<double>::quiet_NaN();
-    double p_mean = std::numeric_limits<double>::quiet_NaN();
-    if (N == 1) {
+    // <X> = sum_a <x_a> and <P> = sum_a <p_a>, total position / momentum
+    // operators summed over all N particles. Closed-form on the Gaussian basis:
+    //   <phi_i| x_a |phi_j>  = M_G * mu(a)
+    //   <phi_i| p_a |phi_j>  = -i M_G * (-2 (K_Mj * mu)(a) + g_Mj(a))
+    // sum over a => <X> = M_G * sum(mu),
+    //               <P> = -i M_G * (-2 * (K_Mj * mu).sum() + g_Mj.sum())
+    // Permutation symmetrisation handled by summing over perms (same convention
+    // as overlap and energy functionals).
+    double x_mean_raw = 0.0;
+    double p_mean_raw = 0.0;
+    {
         Cd amp_x(0.0, 0.0);
         Cd amp_p(0.0, 0.0);
         for (int i = 0; i < Kt; ++i) {
@@ -340,19 +342,21 @@ static void sample_observables(const std::vector<BasisParams>& basis,
                 for (int p = 0; p < perms.SN; ++p) {
                     PairCache c = PairCache::build(basis[i], basis[j], perms.matrices[p]);
                     double sign = static_cast<double>(perms.signs[p]);
-                    Cd mu     = c.mu(0);
-                    Cd alpha  = c.K_Mj(0, 0);
-                    Cd beta   = c.g_Mj(0);
-                    term_x += sign * c.M_G * mu;
-                    term_p += sign * Cd(0.0, -1.0) * c.M_G * ((-2.0 * alpha) * mu + beta);
+                    Cd mu_sum   = c.mu.sum();
+                    Cd Km_mu    = (c.K_Mj * c.mu).sum();
+                    Cd g_sum    = c.g_Mj.sum();
+                    term_x += sign * c.M_G * mu_sum;
+                    term_p += sign * Cd(0.0, -1.0) * c.M_G * (-2.0 * Km_mu + g_sum);
                 }
                 amp_x += conj_ui * basis[j].u * term_x;
                 amp_p += conj_ui * basis[j].u * term_p;
             }
         }
-        x_mean = (amp_x / S).real();
-        p_mean = (amp_p / S).real();
+        x_mean_raw = amp_x.real();
+        p_mean_raw = amp_p.real();
     }
+    double x_mean = x_mean_raw / S.real();
+    double p_mean = p_mean_raw / S.real();
 
     trace.t.push_back(t);
     trace.E.push_back(E.real());
@@ -361,6 +365,10 @@ static void sample_observables(const std::vector<BasisParams>& basis,
     trace.p_mean.push_back(p_mean);
     trace.x2.push_back(x2);
     trace.p2.push_back(p2);
+    trace.x_mean_raw.push_back(x_mean_raw);
+    trace.p_mean_raw.push_back(p_mean_raw);
+    trace.x2_raw.push_back(x2_raw);
+    trace.p2_raw.push_back(p2_raw);
     trace.overlap0.push_back(amp);
     (void)norm0;
 }
@@ -478,7 +486,41 @@ RealtimeEvolutionResult realtime_tdvp_evolution(
             Cd S = overlap(basis);
             Cd T_kin = kinetic_energy_functional(basis);
             Cd V_ho  = Harmonic_functional(basis);
-            double E = ((T_kin + V_ho) / S).real();
+            double E_norm  = ((T_kin + V_ho) / S).real();
+            double x2_norm = 2.0 * (V_ho / S).real() / (mass * omega * omega);
+            double p2_norm = 2.0 * mass * (T_kin / S).real();
+
+            // <X> = sum_a <x_a> and <P> = sum_a <p_a> (total position / momentum
+            // summed over all N particles). Same closed-form kernel used by
+            // sample_observables; works for any N >= 1.
+            double x_mean_v, p_mean_v;
+            {
+                const int N_local = basis[0].N();
+                PermutationSet perms_local = PermutationSet::generate(N_local);
+                Cd amp_x(0.0, 0.0), amp_p(0.0, 0.0);
+                const int Kt_local = static_cast<int>(basis.size());
+                for (int i = 0; i < Kt_local; ++i) {
+                    Cd conj_ui = std::conj(basis[i].u);
+                    for (int j = 0; j < Kt_local; ++j) {
+                        Cd term_x(0.0, 0.0), term_p(0.0, 0.0);
+                        for (int p = 0; p < perms_local.SN; ++p) {
+                            PairCache c = PairCache::build(basis[i], basis[j],
+                                                           perms_local.matrices[p]);
+                            double sign = static_cast<double>(perms_local.signs[p]);
+                            Cd mu_sum = c.mu.sum();
+                            Cd Km_mu  = (c.K_Mj * c.mu).sum();
+                            Cd g_sum  = c.g_Mj.sum();
+                            term_x += sign * c.M_G * mu_sum;
+                            term_p += sign * Cd(0.0, -1.0) * c.M_G *
+                                      (-2.0 * Km_mu + g_sum);
+                        }
+                        amp_x += conj_ui * basis[j].u * term_x;
+                        amp_p += conj_ui * basis[j].u * term_p;
+                    }
+                }
+                x_mean_v = (amp_x / S).real();
+                p_mean_v = (amp_p / S).real();
+            }
 
             // Per-basis min Re(A+B) — if this approaches 0, the Gaussian is
             // losing normalizability (pathology suspected for step-348 blowup).
@@ -497,8 +539,12 @@ RealtimeEvolutionResult realtime_tdvp_evolution(
             if (!adaptive) std::cout << "/" << n_steps_fixed;
             std::cout << " t=" << std::fixed << std::setprecision(4) << t
                       << " dt=" << std::scientific << std::setprecision(2) << r.used_dt
-                      << " E=" << std::fixed << std::setprecision(8) << E
+                      << " E=" << std::fixed << std::setprecision(8) << E_norm
                       << " norm=" << S.real()
+                      << " <x>=" << std::scientific << std::setprecision(3) << x_mean_v
+                      << " <p>=" << p_mean_v
+                      << " <x2>=" << std::fixed << std::setprecision(6) << x2_norm
+                      << " <p2>=" << p2_norm
                       << " cond=" << std::scientific << std::setprecision(2)
                       << r.cond_C
                       << " sv_min3=(" << r.sv_small[2] << "," << r.sv_small[1]

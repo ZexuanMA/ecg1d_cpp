@@ -51,6 +51,7 @@ struct Args {
     bool   rt_wiener_smooth = true;
     bool   rt_enforce_norm = false;
     bool   rt_u_split_trotter = false;
+    std::string rt_moment_form = "both";  // raw | normalized | both
     bool   help    = false;
 };
 
@@ -81,6 +82,10 @@ Options:
   --lambda-C <float> realtime C-matrix Tikhonov lambda           [default 1e-8]
   --wiener          use smooth Wiener pseudoinverse filter       [default on]
   --no-wiener       use hard rcond pseudoinverse truncation
+  --moment-form <s> moment columns in trace CSV: raw|normalized|both [default both]
+                    normalized: t,E,norm,x_mean,p_mean,x2,p2 (7 cols, plotter-compatible)
+                    both:       above + x_mean_raw,p_mean_raw,x2_raw,p2_raw (11 cols)
+                    raw:        NaN at cols 3-6 then raw cols (11; plotter-incompatible)
   --help            show this message
 )";
 }
@@ -111,6 +116,7 @@ static Args parse(int argc, char** argv) {
         else if (f == "--lambda-C")   a.rt_lambda_C = next_float();
         else if (f == "--wiener")     a.rt_wiener_smooth = true;
         else if (f == "--no-wiener")  a.rt_wiener_smooth = false;
+        else if (f == "--moment-form") a.rt_moment_form = argv[++i];
         else if (f == "--help" || f == "-h") a.help = true;
         else {
             std::cerr << "unknown flag: " << f << "\n";
@@ -228,6 +234,17 @@ int main_inner(int argc, char** argv) {
         rt_options.wiener_smooth = args.rt_wiener_smooth;
         rt_options.enforce_norm = args.rt_enforce_norm;
         rt_options.u_split_trotter = args.rt_u_split_trotter;
+        if (args.rt_moment_form == "raw") {
+            rt_options.moment_form = MomentForm::Raw;
+        } else if (args.rt_moment_form == "normalized" || args.rt_moment_form == "norm") {
+            rt_options.moment_form = MomentForm::Normalized;
+        } else if (args.rt_moment_form == "both") {
+            rt_options.moment_form = MomentForm::Both;
+        } else {
+            std::cerr << "[step4] unknown --moment-form '" << args.rt_moment_form
+                      << "', falling back to 'both'\n";
+            rt_options.moment_form = MomentForm::Both;
+        }
 
         Step4EcgResult ecg = step4_realtime_tdvp(
             args.N, args.K, basis_for_rt, args.T_total, args.dt,

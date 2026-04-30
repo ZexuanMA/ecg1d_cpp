@@ -1,0 +1,98 @@
+Task: Real-time TDVP, N=2 K=5, full HO period (T = 2*pi), dt = 1e-3, rcond = 1e-8
+
+Purpose
+- The original N=2 K=5 run (default rcond=1e-4) had cond(C)~3.8e9 from
+  step 1, sv_min stuck at the Tikhonov floor 1e-8, and broke down within
+  50 RK4 steps: norm crashed to 0.06, raw E*norm drifted 14x, parity
+  badly broken.
+- Hypothesis: bosonic permutation symmetry creates rank-deficient C from
+  the start, and rcond=1e-4 truncates ~5 decades below the genuinely
+  zero modes. Lowering rcond to 1e-8 should keep all the physically
+  active singular directions.
+- If this fixes the dynamics, the N=2 K=5 failure was an SVD-tuning
+  problem, not a fundamental basis-size problem.
+- If it does NOT fix it, the manifold is irreducibly rank-deficient and
+  we'd need either lambda_C ~ 1e-12 or a different (non-redundant)
+  ansatz.
+- NOT enabled: --enforce-norm, --u-split-trotter (per user request).
+
+Note on output filenames: the original N=2 K=5 run was killed before
+the trace CSV writer ran, so there is nothing to back up. This run will
+write the first complete N=2 K=5 trace.
+
+Pre-flight: pick a free core (filtered to your allowed set)
+
+ALLOWED=$(taskset -pc $$ | awk -F'list: ' '{print $2}')
+echo "your allowed cores: $ALLOWED"
+
+top -bn2 -d 1 -1 2>/dev/null | awk -v allowed="$ALLOWED" '
+  BEGIN {
+    n=split(allowed, parts, ",")
+    for (i=1;i<=n;i++) {
+      if (split(parts[i], r, "-") == 2) for (c=r[1]+0;c<=r[2]+0;c++) ok[c]=1
+      else ok[parts[i]+0]=1
+    }
+    snap=0
+  }
+  /^top - / { snap++ }
+  snap==2 && /^%Cpu[0-9]/ {
+    c=$1; gsub(/^%Cpu/,"",c); gsub(/[^0-9]/,"",c)
+    if ((c+0) in ok) {
+      for (i=1;i<=NF;i++) if ($i=="id,") { idle=$(i-1); break }
+      printf "cpu %3d  used=%5.1f%%  idle=%5.1f%%\n", c, 100-idle, idle
+    }
+  }
+' | sort -k3 -t= -nr
+
+How to run
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+mkdir -p logs && env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+nohup taskset -c 242 ./build/ecg1d_verify \
+  --N 2 --K 5 --run-step4 \
+  --T 6.283185307 --dt 1e-3 --dt-trace 1e-3 \
+  --n-snap 11 --moment-form both --rt-verbose \
+  --rcond 1e-8 \
+  > logs/realtime_N2_K5_rcond1e-8.log 2>&1 &
+echo "PID=$!"
+
+Monitor
+
+tail -f logs/realtime_N2_K5_rcond1e-8.log
+ps -o pid,etime,pcpu,cmd -p $(pgrep -f "ecg1d_verify --N 2 --K 5 --run-step4") 2>/dev/null
+grep -E "BLOWUP|FATAL|WARN|drift" logs/realtime_N2_K5_rcond1e-8.log
+
+# First few steps tell you immediately whether the projector is sane:
+grep "rt_tdvp.*step [1-5]/" logs/realtime_N2_K5_rcond1e-8.log
+
+Estimated runtime
+- No Step 1 (cached); Step 4 only. Total 6283 steps.
+- Default-rcond N=2 K=5 was at ~46 steps/min (extrapolating from the 553
+  steps in 12 min before it was killed). With rcond=1e-8 the dynamics
+  should be tamer (smaller |dz|), so expect similar or slightly faster:
+  roughly 30-60 minutes wall-clock.
+- If the run finishes much faster (< 10 min) it is probably crashing
+  with NaN early -- inspect the log.
+
+Outputs
+- logs/realtime_N2_K5_rcond1e-8.log              per-step verbose log
+- out/verify/step4_ecg_trace_N2_K5.csv           6283 rows x 11 columns
+- out/verify/step4_ecg_density_N2_K5.csv         snapshot densities
+- out/verify/step4_ecg_nk_N2_K5.csv              snapshot momentum densities
+- out/verify/step4_ecg_snap_N2_K5.csv            per-snapshot E + fidelity
+
+When the task finishes, follow up with
+
+python scripts/plot_step4_moments.py 2 5
+python scripts/plot_step4_wavefunction.py 2 5
+
+Success criteria (the K=5 run with rcond=1e-8 should be MUCH better than default):
+- |dz| should stay below ~1 throughout (default-rcond run had |dz| up to
+  232 by step 426).
+- Raw E*norm should be roughly conserved (default ran it from 0.68 to
+  0.07 to 2.42 within 350 steps -- a 35x swing).
+- Norm should oscillate moderately, not collapse to 0.06 like default.
+- E_norm should NOT have the discrete jump from 1.149 to 1.241 at step
+  ~421 (that jump signals a manifold-boundary crossing under aggressive
+  truncation).

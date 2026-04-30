@@ -1,0 +1,91 @@
+Task: Real-time TDVP, N=1 K=5, full HO period (T = 2*pi), dt = 1e-3, rcond = 1e-6
+
+Purpose
+- Middle-ground rcond between default (1e-4, too aggressive: kept top 4
+  decades) and the failed rcond=1e-8 attempt (kept top 8 decades, but
+  noise-amplified the bottom modes).
+- N=1 K=5 has cond(C) ~ 1e8. With rcond=1e-6:
+    decades dropped = log10(1e8 * 1e-6) = 2 decades
+  vs 4 decades dropped at default rcond=1e-4. Should keep enough
+  parity-symmetric breathing flow to fix the dynamics, without going
+  far enough into the noise floor to amplify it.
+- NOT enabled: --enforce-norm, --u-split-trotter (per user request).
+- The default-rcond K=5 data has been backed up to
+    out/verify/rcond_default/
+  so this overwrite is safe.
+
+Pre-flight: pick a free core (filtered to your allowed set)
+
+ALLOWED=$(taskset -pc $$ | awk -F'list: ' '{print $2}')
+echo "your allowed cores: $ALLOWED"
+
+top -bn2 -d 1 -1 2>/dev/null | awk -v allowed="$ALLOWED" '
+  BEGIN {
+    n=split(allowed, parts, ",")
+    for (i=1;i<=n;i++) {
+      if (split(parts[i], r, "-") == 2) for (c=r[1]+0;c<=r[2]+0;c++) ok[c]=1
+      else ok[parts[i]+0]=1
+    }
+    snap=0
+  }
+  /^top - / { snap++ }
+  snap==2 && /^%Cpu[0-9]/ {
+    c=$1; gsub(/^%Cpu/,"",c); gsub(/[^0-9]/,"",c)
+    if ((c+0) in ok) {
+      for (i=1;i<=NF;i++) if ($i=="id,") { idle=$(i-1); break }
+      printf "cpu %3d  used=%5.1f%%  idle=%5.1f%%\n", c, 100-idle, idle
+    }
+  }
+' | sort -k3 -t= -nr
+
+How to run
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+mkdir -p logs && env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+nohup taskset -c 244 ./build/ecg1d_verify \
+  --N 1 --K 5 --run-step4 \
+  --T 6.283185307 --dt 1e-3 --dt-trace 1e-3 \
+  --n-snap 11 --moment-form both --rt-verbose \
+  --rcond 1e-6 \
+  > logs/realtime_N1_K5_rcond1e-6.log 2>&1 &
+echo "PID=$!"
+
+Monitor
+
+tail -f logs/realtime_N1_K5_rcond1e-6.log
+ps -o pid,etime,pcpu,cmd -p $(pgrep -f "ecg1d_verify --N 1 --K 5 --run-step4") 2>/dev/null
+grep -E "BLOWUP|FATAL|WARN|drift" logs/realtime_N1_K5_rcond1e-6.log
+
+# Look at the first few steps -- cond(C) and sv_min3 tell you immediately
+# whether the projector is healthy:
+grep "rt_tdvp.*step [1-5]/" logs/realtime_N1_K5_rcond1e-6.log
+
+Estimated runtime
+- No Step 1 (cached); Step 4 only. Total 6283 steps.
+- Default-rcond N=1 K=5 took ~5 min wall-clock. With rcond=1e-6 the SVD
+  solve is roughly the same cost; expect 5-7 min.
+
+Outputs
+- logs/realtime_N1_K5_rcond1e-6.log              per-step verbose log
+- out/verify/step4_ecg_trace_N1_K5.csv           OVERWRITES current data
+- out/verify/step4_ecg_density_N1_K5.csv         OVERWRITES
+- out/verify/step4_ecg_nk_N1_K5.csv              OVERWRITES
+- out/verify/step4_ecg_snap_N1_K5.csv            OVERWRITES
+
+When the task finishes, follow up with
+
+python scripts/plot_step4_moments.py 1 5
+python scripts/plot_step4_wavefunction.py 1 5
+
+Success criteria (rcond=1e-6 should be MUCH better than default rcond=1e-4):
+- max |<x>| should drop from 0.175 (default) toward grid value 6e-8.
+- Norm range should tighten from [1.59, 3.41] toward [~constant].
+- Raw E*norm drift should drop from 53% toward < 5%.
+- Density peak heights at every snapshot should match grid to <1%.
+- max |dz| should stay bounded; no sudden jumps in E_norm.
+
+If rcond=1e-6 is NOT enough (E*norm still drifts > 10%), try
+rcond=1e-7 next. If rcond=1e-6 produces NaN or worse drift than
+default, fall back to default rcond=1e-4 and try lowering lambda_C
+instead (--lambda-C 1e-10).

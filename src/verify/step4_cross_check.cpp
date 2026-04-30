@@ -179,13 +179,20 @@ void step4_cross_check(int N,
         double E_grid = trace_at(grid_res.t_trace, grid_res.E, t);
         double E_dvr  = trace_at(dvr_res.t_trace,  dvr_res.E,  t);
 
-        // <x>, <p> at this snapshot (interpolate from trace)
+        // <x>, <p>, <x^2>, <p^2> at this snapshot (interpolate from trace).
+        // ECG side uses normalized form to match the unitary references.
         double x_ecg  = trace_at(ecg.t_trace, ecg.x_mean, t);
         double p_ecg  = trace_at(ecg.t_trace, ecg.p_mean, t);
-        double x_grid_v = trace_at(grid_res.t_trace, grid_res.x_mean, t);
-        double p_grid_v = trace_at(grid_res.t_trace, grid_res.p_mean, t);
-        double x_dvr_v  = trace_at(dvr_res.t_trace,  dvr_res.x_mean,  t);
-        double p_dvr_v  = trace_at(dvr_res.t_trace,  dvr_res.p_mean,  t);
+        double x2_ecg = trace_at(ecg.t_trace, ecg.x2,     t);
+        double p2_ecg = trace_at(ecg.t_trace, ecg.p2,     t);
+        double x_grid_v  = trace_at(grid_res.t_trace, grid_res.x_mean, t);
+        double p_grid_v  = trace_at(grid_res.t_trace, grid_res.p_mean, t);
+        double x2_grid_v = trace_at(grid_res.t_trace, grid_res.x2,     t);
+        double p2_grid_v = trace_at(grid_res.t_trace, grid_res.p2,     t);
+        double x_dvr_v   = trace_at(dvr_res.t_trace,  dvr_res.x_mean,  t);
+        double p_dvr_v   = trace_at(dvr_res.t_trace,  dvr_res.p_mean,  t);
+        double x2_dvr_v  = trace_at(dvr_res.t_trace,  dvr_res.x2,      t);
+        double p2_dvr_v  = trace_at(dvr_res.t_trace,  dvr_res.p2,      t);
 
         // Densities resampled to user x_grid (ECG already is)
         Eigen::VectorXd nx_ecg = ecg.density_snaps.row(s);
@@ -223,6 +230,8 @@ void step4_cross_check(int N,
                              double Ea, double Eb,
                              double xa, double xb,
                              double pa, double pb,
+                             double x2a, double x2b,
+                             double p2a, double p2b,
                              const Eigen::VectorXd& nxa, const Eigen::VectorXd& nxb,
                              const Eigen::VectorXd& nka, const Eigen::VectorXd& nkb,
                              const Eigen::VectorXcd* psi_a,
@@ -230,6 +239,8 @@ void step4_cross_check(int N,
             write(pair, t, "delta_E",       Ea - Eb);
             write(pair, t, "abs_delta_x",   std::abs(xa - xb));
             write(pair, t, "abs_delta_p",   std::abs(pa - pb));
+            write(pair, t, "abs_delta_x2",  std::abs(x2a - x2b));
+            write(pair, t, "abs_delta_p2",  std::abs(p2a - p2b));
             write(pair, t, "L2_nx",         L2_diff(nxa, nxb, dx));
             write(pair, t, "L2_nk",         L2_diff(nka, nkb, dk));
             write(pair, t, "bhattacharyya", bhattacharyya(nxa, nxb, dx));
@@ -239,16 +250,19 @@ void step4_cross_check(int N,
 
         pair_diag("ECG_vs_grid",
                   E_ecg, E_grid, x_ecg, x_grid_v, p_ecg, p_grid_v,
+                  x2_ecg, x2_grid_v, p2_ecg, p2_grid_v,
                   nx_ecg, nx_grid, nk_ecg, nk_grid,
                   (N == 1) ? &psi_ecg : nullptr,
                   (N == 1) ? &psi_grid : nullptr);
         pair_diag("ECG_vs_DVR",
                   E_ecg, E_dvr, x_ecg, x_dvr_v, p_ecg, p_dvr_v,
+                  x2_ecg, x2_dvr_v, p2_ecg, p2_dvr_v,
                   nx_ecg, nx_dvr, nk_ecg, nk_dvr,
                   (N == 1) ? &psi_ecg : nullptr,
                   (N == 1) ? &psi_dvr : nullptr);
         pair_diag("grid_vs_DVR",
                   E_grid, E_dvr, x_grid_v, x_dvr_v, p_grid_v, p_dvr_v,
+                  x2_grid_v, x2_dvr_v, p2_grid_v, p2_dvr_v,
                   nx_grid, nx_dvr, nk_grid, nk_dvr,
                   (N == 1) ? &psi_grid : nullptr,
                   (N == 1) ? &psi_dvr : nullptr);

@@ -13,7 +13,8 @@ namespace verify {
 // density / n(k) on the user grids at every t in `t_snap`. Snapshot bases are
 // also stashed so cross-check code can compute exact ECG-vs-grid fidelity.
 struct Step4EcgResult {
-    // Trace (dense in time)
+    // Trace (dense in time). x_mean, p_mean, x2, p2 are normalized: <A>/<psi|psi>.
+    // The *_raw versions are <psi|A|psi> without dividing by <psi|psi>.
     Eigen::VectorXd t_trace;
     Eigen::VectorXd E;
     Eigen::VectorXd norm;
@@ -21,6 +22,10 @@ struct Step4EcgResult {
     Eigen::VectorXd p_mean;
     Eigen::VectorXd x2;
     Eigen::VectorXd p2;
+    Eigen::VectorXd x_mean_raw;
+    Eigen::VectorXd p_mean_raw;
+    Eigen::VectorXd x2_raw;
+    Eigen::VectorXd p2_raw;
 
     // Snapshots
     Eigen::VectorXd t_snap;
@@ -38,12 +43,17 @@ struct Step4EcgResult {
     double max_rel_E_drift = 0.0;
 };
 
+// Which form of the four moments (x_mean, p_mean, x2, p2) to write to the
+// trace CSV. Both forms are always computed; this only affects CSV output.
+enum class MomentForm { Normalized, Raw, Both };
+
 struct Step4RealtimeOptions {
     double lambda_C = 1e-8;
     double rcond = 1e-4;
     bool wiener_smooth = true;
     bool enforce_norm = false;
     bool u_split_trotter = false;
+    MomentForm moment_form = MomentForm::Both;
 };
 
 // Step 4 — ECG real-time TDVP under H_evolve = kinetic + harmonic trap (cos

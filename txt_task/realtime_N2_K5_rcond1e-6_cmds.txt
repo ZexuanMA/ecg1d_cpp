@@ -1,0 +1,93 @@
+Task: Real-time TDVP, N=2 K=5, full HO period (T = 2*pi), dt = 1e-3, rcond = 1e-6
+
+Purpose
+- Same middle-ground rcond test as N=1 K=5 but for the harder N=2 case.
+- N=2 K=5 has cond(C) ~ 1e10 (bosonic-symmetry rank deficiencies). With
+  rcond=1e-6:
+    decades dropped = log10(1e10 * 1e-6) = 4 decades
+  vs 6 decades at default rcond=1e-4 and 2 decades at rcond=1e-8.
+- The rcond=1e-8 attempt produced bad results because keeping the
+  bottom-decade modes amplified noise (1/sigma blew up at sigma near
+  the lambda_C floor 1e-8). rcond=1e-6 is a softer truncation that
+  may dodge that without going as far as default into useful modes.
+- NOT enabled: --enforce-norm, --u-split-trotter (per user request).
+
+Pre-flight: pick a free core (filtered to your allowed set)
+
+ALLOWED=$(taskset -pc $$ | awk -F'list: ' '{print $2}')
+echo "your allowed cores: $ALLOWED"
+
+top -bn2 -d 1 -1 2>/dev/null | awk -v allowed="$ALLOWED" '
+  BEGIN {
+    n=split(allowed, parts, ",")
+    for (i=1;i<=n;i++) {
+      if (split(parts[i], r, "-") == 2) for (c=r[1]+0;c<=r[2]+0;c++) ok[c]=1
+      else ok[parts[i]+0]=1
+    }
+    snap=0
+  }
+  /^top - / { snap++ }
+  snap==2 && /^%Cpu[0-9]/ {
+    c=$1; gsub(/^%Cpu/,"",c); gsub(/[^0-9]/,"",c)
+    if ((c+0) in ok) {
+      for (i=1;i<=NF;i++) if ($i=="id,") { idle=$(i-1); break }
+      printf "cpu %3d  used=%5.1f%%  idle=%5.1f%%\n", c, 100-idle, idle
+    }
+  }
+' | sort -k3 -t= -nr
+
+How to run
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+mkdir -p logs && env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+nohup taskset -c 246 ./build/ecg1d_verify \
+  --N 2 --K 5 --run-step4 \
+  --T 6.283185307 --dt 1e-3 --dt-trace 1e-3 \
+  --n-snap 11 --moment-form both --rt-verbose \
+  --rcond 1e-6 \
+  > logs/realtime_N2_K5_rcond1e-6.log 2>&1 &
+echo "PID=$!"
+
+Monitor
+
+tail -f logs/realtime_N2_K5_rcond1e-6.log
+ps -o pid,etime,pcpu,cmd -p $(pgrep -f "ecg1d_verify --N 2 --K 5 --run-step4") 2>/dev/null
+grep -E "BLOWUP|FATAL|WARN|drift" logs/realtime_N2_K5_rcond1e-6.log
+
+grep "rt_tdvp.*step [1-5]/" logs/realtime_N2_K5_rcond1e-6.log
+
+Estimated runtime
+- No Step 1 (cached); Step 4 only. Total 6283 steps.
+- Default-rcond N=2 K=5 ran at ~46 steps/min before being killed early.
+  Smaller rcond should be similar cost. Expect 30-60 minutes wall-clock.
+- If the run finishes much faster (< 10 min) it likely crashed early
+  with NaN -- inspect the log.
+
+Outputs
+- logs/realtime_N2_K5_rcond1e-6.log              per-step verbose log
+- out/verify/step4_ecg_trace_N2_K5.csv           6283 rows x 11 columns
+- out/verify/step4_ecg_density_N2_K5.csv         snapshot densities
+- out/verify/step4_ecg_nk_N2_K5.csv              snapshot momentum densities
+- out/verify/step4_ecg_snap_N2_K5.csv            per-snapshot E + fidelity
+
+When the task finishes, follow up with
+
+python scripts/plot_step4_moments.py 2 5
+python scripts/plot_step4_wavefunction.py 2 5
+
+Success criteria (rcond=1e-6 should be much better than default 1e-4):
+- |dz| should stay below ~10 throughout (default ran |dz| up to 232).
+- Raw E*norm should be roughly flat (default swung 14x).
+- Norm should oscillate within a factor 2-3 of initial, not crash to 0.06.
+- E_norm should NOT have the discrete jump from 1.149 to 1.241 at step
+  ~421 that the default-rcond run had.
+
+Decision tree:
+- If rcond=1e-6 works for N=2 K=5: this is the recommended setting.
+- If rcond=1e-6 fails the same way as default 1e-4: the manifold is
+  truly rank-deficient at higher levels. Next try --lambda-C 1e-10
+  along with rcond=1e-7 to push the noise floor down too.
+- If rcond=1e-6 produces NaN: probably the kept low-sigma directions
+  are still noise-amplified. Restore rcond=1e-4 and lower lambda_C
+  alone, or accept that N=2 K=5 is fundamentally limited.

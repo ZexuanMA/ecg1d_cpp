@@ -1,0 +1,83 @@
+Task: Real-time TDVP, N=2 K=6, full HO period (T = 2*pi), dt = 1e-3
+
+Purpose
+- Sweep K = 6, 7, 9 at N=2 to locate the sweet spot for SVD-truncated TDVP
+  (analogous to the N=1 K=3 vs K=5 comparison: K=3 was good, K=5 broke).
+- Same dt = 1e-3, dt-trace = 1e-3, rcond = 1e-4, lambda_C = 1e-8, T = 2*pi
+  used for the N=1 baseline so results are directly comparable.
+- NOT enabled: --enforce-norm, --u-split-trotter (per user request).
+- Step-1 ground state for N=2 K=6 is NOT cached, so this command runs both
+  Step 1 and Step 4 in one shot.
+
+Pre-flight: pick a free core (filtered to your allowed set)
+
+# 1. Your allowed cores (cgroup / affinity)
+ALLOWED=$(taskset -pc $$ | awk -F'list: ' '{print $2}')
+echo "your allowed cores: $ALLOWED"
+
+# 2. Per-allowed-core usage; cores absent here are 100% idle.
+top -bn2 -d 1 -1 2>/dev/null | awk -v allowed="$ALLOWED" '
+  BEGIN {
+    n=split(allowed, parts, ",")
+    for (i=1;i<=n;i++) {
+      if (split(parts[i], r, "-") == 2) for (c=r[1]+0;c<=r[2]+0;c++) ok[c]=1
+      else ok[parts[i]+0]=1
+    }
+    snap=0
+  }
+  /^top - / { snap++ }
+  snap==2 && /^%Cpu[0-9]/ {
+    c=$1; gsub(/^%Cpu/,"",c); gsub(/[^0-9]/,"",c)
+    if ((c+0) in ok) {
+      for (i=1;i<=NF;i++) if ($i=="id,") { idle=$(i-1); break }
+      printf "cpu %3d  used=%5.1f%%  idle=%5.1f%%\n", c, 100-idle, idle
+    }
+  }
+' | sort -k3 -t= -nr
+
+# Pick a core with idle near 100% (cores absent in the listing are 100% idle).
+
+How to run
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+mkdir -p logs && env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+nohup taskset -c 113 ./build/ecg1d_verify \
+  --N 2 --K 6 --run-step1 --run-step4 \
+  --T 6.283185307 --dt 1e-3 --dt-trace 1e-3 \
+  --n-snap 11 --moment-form both --rt-verbose \
+  > logs/realtime_N2_K6.log 2>&1 &
+echo "PID=$!"
+
+Monitor
+
+# live progress
+tail -f logs/realtime_N2_K6.log
+
+# is it still alive?
+ps -o pid,etime,pcpu,cmd -p $(pgrep -f "ecg1d_verify --N 2 --K 6") 2>/dev/null
+
+# any blowups or warnings?
+grep -E "BLOWUP|FATAL|WARN|drift" logs/realtime_N2_K6.log
+
+Estimated runtime
+- Step 1 (imag-time TDVP): ~1-2 minutes
+- Step 4: total 6283 steps. Cost vs N=2 K=5 (~46 steps/min): scaling with
+  parameter count d (K=5:40, K=6:48) gives d^3 ratio ~1.7 and pair-cache
+  ratio (K=6/K=5)^2=1.44. Combined ~1.5x slower per step => ~30 steps/min.
+  Total ~3-4 hours wall-clock.
+
+Outputs
+- logs/realtime_N2_K6.log                      per-step verbose log
+- out/verify/step1_ecg_basis_N2_K6.csv         ECG ground state (newly cached)
+- out/verify/step1_ecg_energy_N2_K6.csv
+- out/verify/step4_ecg_trace_N2_K6.csv         6283 rows × 11 columns
+- out/verify/step4_ecg_density_N2_K6.csv       snapshot densities (long format)
+- out/verify/step4_ecg_nk_N2_K6.csv            snapshot momentum densities
+
+When the task finishes, follow up with
+
+python scripts/plot_step4_moments.py 2 6
+python scripts/plot_step4_wavefunction.py 2 6
+
+Both scripts auto-detect missing reference data and fall back to ECG-only plots.

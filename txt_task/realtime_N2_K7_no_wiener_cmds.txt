@@ -1,0 +1,136 @@
+Task: Real-time TDVP, N=2 K=7, full HO period (T = 2*pi), dt = 1e-3, Wiener filter OFF (--no-wiener)
+       — runs CONCURRENTLY with any other Step-4 jobs, writing to a separate sandbox cwd.
+
+Purpose
+- N=2 K=7 Step-4 with --no-wiener for comparison against the
+  Wiener-on baseline at the same N,K (default rcond=1e-4).
+- Same dt = 1e-3, dt-trace = 1e-3, T = 2*pi, n-snap = 11,
+  moment-form = both, rt-verbose on.
+- NOT enabled: --enforce-norm, --u-split-trotter (per prior runs).
+  --rcond is left at its built-in default (1e-4).
+- Step-1 ground state for N=2 K=7 IS already cached
+  (out/verify/step1_ecg_basis_N2_K7.csv).  We run Step 4 only.
+
+How separation works (READ THIS)
+- The binary writes its CSVs via out_path(), which is hard-coded to
+  the relative directory "out/verify".  There is NO CLI override.
+- Therefore output paths are determined entirely by the cwd of the
+  process.  By running this --no-wiener job from a sandbox cwd
+  (runs/no_wiener_N2K7/), its CSVs land at
+      runs/no_wiener_N2K7/out/verify/step4_ecg_*_N2_K7.csv
+  while any other job started from the project root keeps writing to
+      out/verify/step4_ecg_*_N2_K7.csv
+  The two output sets never collide.
+- Step 4 needs the cached Step-1 basis as input
+  (out/verify/step1_ecg_basis_N2_K7.csv), so the sandbox symlinks
+  that file in.
+- The binary path is ABSOLUTE so the sandboxed cd does not break it.
+- The log redirect is ABSOLUTE so the log lands in the project's
+  logs/ directory regardless of cwd.
+
+Pre-flight: pick a free core (filtered to your allowed set)
+
+# 1. Your allowed cores (cgroup / affinity)
+ALLOWED=$(taskset -pc $$ | awk -F'list: ' '{print $2}')
+echo "your allowed cores: $ALLOWED"
+
+# 2. Per-allowed-core usage; cores not listed are 100% idle.
+top -bn2 -d 1 -1 2>/dev/null | awk -v allowed="$ALLOWED" '
+  BEGIN {
+    n=split(allowed, parts, ",")
+    for (i=1;i<=n;i++) {
+      if (split(parts[i], r, "-") == 2) for (c=r[1]+0;c<=r[2]+0;c++) ok[c]=1
+      else ok[parts[i]+0]=1
+    }
+    snap=0
+  }
+  /^top - / { snap++ }
+  snap==2 && /^%Cpu[0-9]/ {
+    c=$1; gsub(/^%Cpu/,"",c); gsub(/[^0-9]/,"",c)
+    if ((c+0) in ok) {
+      for (i=1;i<=NF;i++) if ($i=="id,") { idle=$(i-1); break }
+      printf "cpu %3d  used=%5.1f%%  idle=%5.1f%%\n", c, 100-idle, idle
+    }
+  }
+' | sort -k3 -t= -nr
+
+How to run
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+# 1) Build the sandbox cwd, symlink the Step-1 basis cache in.
+mkdir -p runs/no_wiener_N2K7/out/verify logs
+ln -sf /home/gyqyan/zexuan/ecg1d_cpp/out/verify/step1_ecg_basis_N2_K7.csv \
+       runs/no_wiener_N2K7/out/verify/step1_ecg_basis_N2_K7.csv
+
+# 2) Launch from inside the sandbox.  Absolute path to the binary;
+#    log goes to the project's logs/ dir; CSVs land in
+#    runs/no_wiener_N2K7/out/verify/.
+env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+nohup taskset -c 117 bash -c '
+  cd /home/gyqyan/zexuan/ecg1d_cpp/runs/no_wiener_N2K7
+  /home/gyqyan/zexuan/ecg1d_cpp/build/ecg1d_verify \
+    --N 2 --K 7 --run-step4 \
+    --T 6.283185307 --dt 1e-3 --dt-trace 1e-3 \
+    --n-snap 11 --moment-form both --rt-verbose \
+    --no-wiener
+' > logs/realtime_N2_K7_no_wiener.log 2>&1 &
+echo "PID=$!"
+
+Monitor
+
+# live progress
+tail -f logs/realtime_N2_K7_no_wiener.log
+
+# is it still alive?
+ps -o pid,etime,pcpu,psr,cmd -p $(pgrep -f "ecg1d_verify --N 2 --K 7 --run-step4 .*--no-wiener") 2>/dev/null
+
+# confirm wiener=off picked up:
+grep -E "wiener=" logs/realtime_N2_K7_no_wiener.log | head
+
+# any blowups or warnings?
+grep -E "BLOWUP|FATAL|WARN|drift|NaN|nan" logs/realtime_N2_K7_no_wiener.log
+
+# first few step4 steps -- cond(C), sv_min are the canary for projector health:
+grep "rt_tdvp.*step [1-5]/" logs/realtime_N2_K7_no_wiener.log
+
+Estimated runtime
+- Step 4 only (Step 1 is cached). 6283 RK4 steps total.
+- N=2 K=7 throughput at default rcond is ~18 steps/min on a free
+  core (per the prior realtime_N2_K7_cmds.txt note).  Wiener-off
+  does not change SVD cost.  Wall-clock estimate: ~5-6 hours.
+
+Outputs (separated from any other Step-4 job by cwd)
+- logs/realtime_N2_K7_no_wiener.log                         per-step verbose log
+- runs/no_wiener_N2K7/out/verify/step4_ecg_trace_N2_K7.csv
+- runs/no_wiener_N2K7/out/verify/step4_ecg_density_N2_K7.csv
+- runs/no_wiener_N2K7/out/verify/step4_ecg_nk_N2_K7.csv
+- runs/no_wiener_N2K7/out/verify/step4_ecg_snap_N2_K7.csv
+
+When the task finishes, follow up with
+
+# Option A -- archive into the project's variant-subdir convention:
+mkdir -p out/verify/no_wiener
+cp runs/no_wiener_N2K7/out/verify/step4_ecg_*_N2_K7.csv out/verify/no_wiener/
+
+# Option B -- plot the no-wiener results.  The plotters read
+# out/verify/step4_ecg_*_N2_K7.csv, so swap the no-wiener CSVs into
+# the default slot (after backing up whatever was there).
+mkdir -p out/verify/wiener_on_default
+mv  out/verify/step4_ecg_*_N2_K7.csv          out/verify/wiener_on_default/  2>/dev/null
+cp  runs/no_wiener_N2K7/out/verify/step4_ecg_*_N2_K7.csv  out/verify/
+python scripts/plot_step4_moments.py 2 7
+python scripts/plot_step4_wavefunction.py 2 7
+
+Success criteria (vs Wiener-on baseline at the same N,K)
+- Norm should stay close to 1 across the whole period.
+- Raw E*norm drift should remain bounded.
+- Density / n(k) snapshots should overlay any reference within the
+  same tolerance as the Wiener-on run; large deviations indicate the
+  hard-rcond truncation alone is too aggressive (or not aggressive
+  enough) without the smooth filter.
+
+If --no-wiener produces NaN or visibly worse drift than the Wiener-on
+baseline, the natural next steps are:
+- restore Wiener filter (drop --no-wiener),
+- or pair --no-wiener with --rcond 1e-6 to keep more decades.

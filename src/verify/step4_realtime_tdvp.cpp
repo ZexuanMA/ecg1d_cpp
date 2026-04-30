@@ -141,6 +141,7 @@ Step4EcgResult step4_realtime_tdvp(int N, int K,
 
     // Trace accumulators
     std::vector<double> t_all, E_all, norm_all, xm_all, pm_all, x2_all, p2_all;
+    std::vector<double> xmraw_all, pmraw_all, x2raw_all, p2raw_all;
     bool first_leg = true;
 
     // Initial snapshot
@@ -189,22 +190,30 @@ Step4EcgResult step4_realtime_tdvp(int N, int K,
         std::vector<double> t_shift = tr.t;
         for (auto& v : t_shift) v += t_a;
         if (first_leg) {
-            t_all   = t_shift;
-            E_all   = tr.E;
-            norm_all= tr.norm;
-            xm_all  = tr.x_mean;
-            pm_all  = tr.p_mean;
-            x2_all  = tr.x2;
-            p2_all  = tr.p2;
+            t_all     = t_shift;
+            E_all     = tr.E;
+            norm_all  = tr.norm;
+            xm_all    = tr.x_mean;
+            pm_all    = tr.p_mean;
+            x2_all    = tr.x2;
+            p2_all    = tr.p2;
+            xmraw_all = tr.x_mean_raw;
+            pmraw_all = tr.p_mean_raw;
+            x2raw_all = tr.x2_raw;
+            p2raw_all = tr.p2_raw;
             first_leg = false;
         } else {
-            append_skip_first(t_all,    t_shift);
-            append_skip_first(E_all,    tr.E);
-            append_skip_first(norm_all, tr.norm);
-            append_skip_first(xm_all,   tr.x_mean);
-            append_skip_first(pm_all,   tr.p_mean);
-            append_skip_first(x2_all,   tr.x2);
-            append_skip_first(p2_all,   tr.p2);
+            append_skip_first(t_all,     t_shift);
+            append_skip_first(E_all,     tr.E);
+            append_skip_first(norm_all,  tr.norm);
+            append_skip_first(xm_all,    tr.x_mean);
+            append_skip_first(pm_all,    tr.p_mean);
+            append_skip_first(x2_all,    tr.x2);
+            append_skip_first(p2_all,    tr.p2);
+            append_skip_first(xmraw_all, tr.x_mean_raw);
+            append_skip_first(pmraw_all, tr.p_mean_raw);
+            append_skip_first(x2raw_all, tr.x2_raw);
+            append_skip_first(p2raw_all, tr.p2_raw);
         }
 
         R.t_snap(s) = t_b;
@@ -216,10 +225,14 @@ Step4EcgResult step4_realtime_tdvp(int N, int K,
     R.t_trace = Eigen::Map<Eigen::VectorXd>(t_all.data(), n_tr);
     R.E       = Eigen::Map<Eigen::VectorXd>(E_all.data(), n_tr);
     R.norm    = Eigen::Map<Eigen::VectorXd>(norm_all.data(), n_tr);
-    R.x_mean  = Eigen::Map<Eigen::VectorXd>(xm_all.data(), n_tr);
-    R.p_mean  = Eigen::Map<Eigen::VectorXd>(pm_all.data(), n_tr);
-    R.x2      = Eigen::Map<Eigen::VectorXd>(x2_all.data(), n_tr);
-    R.p2      = Eigen::Map<Eigen::VectorXd>(p2_all.data(), n_tr);
+    R.x_mean     = Eigen::Map<Eigen::VectorXd>(xm_all.data(),    n_tr);
+    R.p_mean     = Eigen::Map<Eigen::VectorXd>(pm_all.data(),    n_tr);
+    R.x2         = Eigen::Map<Eigen::VectorXd>(x2_all.data(),    n_tr);
+    R.p2         = Eigen::Map<Eigen::VectorXd>(p2_all.data(),    n_tr);
+    R.x_mean_raw = Eigen::Map<Eigen::VectorXd>(xmraw_all.data(), n_tr);
+    R.p_mean_raw = Eigen::Map<Eigen::VectorXd>(pmraw_all.data(), n_tr);
+    R.x2_raw     = Eigen::Map<Eigen::VectorXd>(x2raw_all.data(), n_tr);
+    R.p2_raw     = Eigen::Map<Eigen::VectorXd>(p2raw_all.data(), n_tr);
 
     // Energy drift summary
     R.E_init = (n_tr > 0) ? R.E(0) : 0.0;
@@ -232,18 +245,60 @@ Step4EcgResult step4_realtime_tdvp(int N, int K,
               << (R.max_rel_E_drift < 1e-4 ? "  [PASS]" : "  [WARN]")
               << std::defaultfloat << "\n";
 
+    // Raw <psi|H|psi> = E*norm should be flat to round-off under any Hermitian
+    // projector, regardless of norm leak (Q9 / Q11 conservation law).
+    if (n_tr > 0) {
+        double Eraw0 = R.E(0) * R.norm(0);
+        double maxdEraw = 0.0;
+        for (int i = 0; i < n_tr; i++) {
+            double Eraw_i = R.E(i) * R.norm(i);
+            maxdEraw = std::max(maxdEraw, std::abs(Eraw_i - Eraw0));
+        }
+        double rel_raw = (std::abs(Eraw0) > 0) ? maxdEraw / std::abs(Eraw0) : maxdEraw;
+        std::cout << "[step4] <psi|H|psi>_0=" << std::setprecision(10) << Eraw0
+                  << "  max|d(E*norm)|=" << std::scientific << maxdEraw
+                  << "  rel=" << rel_raw
+                  << (rel_raw < 1e-10 ? "  [structural]" : "  [drift]")
+                  << std::defaultfloat << "\n";
+    }
+
     // Write CSVs
     std::ostringstream suf;
     suf << "_N" << N << "_K" << K << ".csv";
 
-    // Trace
+    // Trace. Column policy (preserves backward compat with plot_verification.py
+    // which reads positional columns 3=x_mean, 4=p_mean for `normalized` and
+    // `both`; `raw` writes NaN at columns 3-6 and is plotter-incompatible):
+    //   normalized: t,E,norm,x_mean,p_mean,x2,p2                         (7 cols)
+    //   both:       t,E,norm,x_mean,p_mean,x2,p2,x_mean_raw,p_mean_raw,x2_raw,p2_raw (11)
+    //   raw:        t,E,norm,NaN,NaN,NaN,NaN,x_mean_raw,p_mean_raw,x2_raw,p2_raw     (11)
     {
         std::ofstream f(out_path("step4_ecg_trace" + suf.str()));
-        f << "t,E,norm,x_mean,p_mean\n";
+        const MomentForm mf = rt_options.moment_form;
+        const bool emit_norm = (mf != MomentForm::Raw);
+        const bool emit_raw  = (mf != MomentForm::Normalized);
+        if (mf == MomentForm::Normalized) {
+            f << "t,E,norm,x_mean,p_mean,x2,p2\n";
+        } else if (mf == MomentForm::Raw) {
+            f << "t,E,norm,x_mean,p_mean,x2,p2,x_mean_raw,p_mean_raw,x2_raw,p2_raw\n";
+        } else {
+            f << "t,E,norm,x_mean,p_mean,x2,p2,x_mean_raw,p_mean_raw,x2_raw,p2_raw\n";
+        }
         f << std::setprecision(15);
+        const double NaN = std::numeric_limits<double>::quiet_NaN();
         for (int i = 0; i < n_tr; i++) {
-            f << R.t_trace(i) << "," << R.E(i) << "," << R.norm(i) << ","
-              << R.x_mean(i) << "," << R.p_mean(i) << "\n";
+            f << R.t_trace(i) << "," << R.E(i) << "," << R.norm(i);
+            if (emit_norm) {
+                f << "," << R.x_mean(i) << "," << R.p_mean(i)
+                  << "," << R.x2(i)     << "," << R.p2(i);
+            } else {
+                f << "," << NaN << "," << NaN << "," << NaN << "," << NaN;
+            }
+            if (emit_raw) {
+                f << "," << R.x_mean_raw(i) << "," << R.p_mean_raw(i)
+                  << "," << R.x2_raw(i)     << "," << R.p2_raw(i);
+            }
+            f << "\n";
         }
     }
     // Density snapshots (long format)

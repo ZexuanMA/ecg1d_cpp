@@ -1,0 +1,120 @@
+Task: Real-time TDVP, N=2 K=7 dt=5e-4, full HO period (T = 2π) — bigger basis + smaller integrator step than the failed K=5 run
+
+Purpose
+- The N=2 K=5 dt=1e-3 run blew up: norm swung 0.14 → 2.0, raw E*norm drifted 14×,
+  energy jumped from 1.166 → 1.241. K=5 too small; dt=1e-3 too coarse.
+- This run: K=7 (40% more basis functions, ~2× variational dimension) and dt=5e-4
+  (half the previous step). Tighter integrator, richer manifold.
+- Multi-particle <X> and <P> kernels were just added so the log no longer prints NaN
+  for those fields when N>=2; they're now sum_a <x_a>, sum_a <p_a>.
+- NOT enabled: --enforce-norm, --u-split-trotter (per user request).
+- Step-1 ground state for N=2 K=7 is NOT cached, so this command runs both Step 1
+  and Step 4 in one shot.
+
+Pre-flight: pick a free core (filtered to your allowed set)
+
+# 1. Your allowed cores (cgroup / affinity)
+ALLOWED=$(taskset -pc $$ | awk -F'list: ' '{print $2}')
+echo "your allowed cores: $ALLOWED"
+
+# 2. Per-allowed-core usage; cores absent here are 100% idle.
+top -bn2 -d 1 -1 2>/dev/null | awk -v allowed="$ALLOWED" '
+  BEGIN {
+    n=split(allowed, parts, ",")
+    for (i=1;i<=n;i++) {
+      if (split(parts[i], r, "-") == 2) for (c=r[1]+0;c<=r[2]+0;c++) ok[c]=1
+      else ok[parts[i]+0]=1
+    }
+    snap=0
+  }
+  /^top - / { snap++ }
+  snap==2 && /^%Cpu[0-9]/ {
+    c=$1; gsub(/^%Cpu/,"",c); gsub(/[^0-9]/,"",c)
+    if ((c+0) in ok) {
+      for (i=1;i<=NF;i++) if ($i=="id,") { idle=$(i-1); break }
+      printf "cpu %3d  used=%5.1f%%  idle=%5.1f%%\n", c, 100-idle, idle
+    }
+  }
+' | sort -k3 -t= -nr
+
+# Pick any core not in the busy list. Avoid 112 if any other ecg1d_verify is running.
+# Plug the chosen number into <CORE> below.
+
+How to run
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+mkdir -p logs && env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+nohup taskset -c 113 ./build/ecg1d_verify \
+  --N 2 --K 7 --run-step1 --run-step4 \
+  --T 6.283185307 --dt 5e-4 --dt-trace 5e-4 \
+  --n-snap 11 --moment-form both --rt-verbose \
+  > logs/realtime_N2_K7_dt5e-4.log 2>&1 &
+
+# Note the PID so you can disown / monitor:
+echo "PID=$!"
+
+# IMPORTANT: if you launched without nohup, in the same shell run:
+#   disown -h %1
+# (or:  disown -h <PID> )
+# That makes the running job SIGHUP-immune so closing your Mac won't kill it.
+
+Monitor
+
+# live progress (you'll see step1 run first, then step4)
+tail -f logs/realtime_N2_K7_dt5e-4.log
+
+# is it still alive?
+ps -o pid,etime,pcpu,cmd -p $(pgrep -f "ecg1d_verify --N 2 --K 7") 2>/dev/null
+
+# any blowups or warnings?
+grep -E "BLOWUP|FATAL|WARN|drift|PASS" logs/realtime_N2_K7_dt5e-4.log
+
+# extract the per-step trace into a smaller file for quick inspection
+grep "^\[rt_tdvp\] step" logs/realtime_N2_K7_dt5e-4.log | tail -20
+
+Estimated runtime
+- Step 1 (imag-time TDVP for ground state): ~1-2 minutes
+- Step 4 (real-time over T=2π):
+    Total steps = T / dt = 12566.
+    Per-step cost vs N=2 K=5 dt=1e-3: ~(7/5)^2 = 1.96x for pair-caches, plus
+    a larger Gram solve (~2.7x cubic). Combined ~2.5x.
+    Previous N=2 K=5 dt=1e-3 ran ~46 steps/min before the killed run, so
+    expect ~18 steps/min => 12566 / 18 ≈ 700 min ≈ 11-12 hours.
+- Total wall-clock: roughly OVERNIGHT (~12 hours).
+- If this is too slow, alternatives:
+    --K 7 --dt 1e-3   (skip the dt halving)        ~6 hours
+    --K 6 --dt 5e-4   (smaller basis bump)         ~6 hours
+
+Outputs
+- logs/realtime_N2_K7_dt5e-4.log               per-step verbose log (~17 MB if it runs full T=2π)
+- out/verify/step1_ecg_basis_N2_K7.csv         ECG ground state (cached for future runs)
+- out/verify/step4_ecg_trace_N2_K7.csv         12566 rows × 11 columns (raw + normalized moments)
+- out/verify/step4_ecg_density_N2_K7.csv       snapshot densities (long format)
+- out/verify/step4_ecg_nk_N2_K7.csv            snapshot momentum densities (long format)
+
+When the task finishes, follow up with
+
+python scripts/plot_step4_moments.py 2 7
+python scripts/plot_step4_wavefunction.py 2 7
+
+Both scripts auto-detect missing reference data and fall back to ECG-only plots.
+
+Diagnostics to check after completion
+
+# 1. Did energy drift catastrophically?
+grep "step4\] E0" logs/realtime_N2_K7_dt5e-4.log
+grep "step4\] <psi|H|psi>_0" logs/realtime_N2_K7_dt5e-4.log
+
+# 2. Did norm stay reasonable (it WILL leak under SVD truncation, but should
+#    not swing wildly like the K=5 run)
+awk '/^\[rt_tdvp\] step/ {
+  match($0, /norm=[-0-9.]+/); v = substr($0, RSTART+5, RLENGTH-5)+0
+  if (NR==1 || v<min) min=v; if (NR==1 || v>max) max=v
+} END { print "norm range:", min, "to", max }' logs/realtime_N2_K7_dt5e-4.log
+
+# 3. Did the integrator break down (huge |dz|)?
+awk '/^\[rt_tdvp\] step/ {
+  match($0, /\|dz\|=[0-9.eE+-]+/); v = substr($0, RSTART+6, RLENGTH-6)+0
+  if (v>max) max=v
+} END { print "max |dz|:", max }' logs/realtime_N2_K7_dt5e-4.log

@@ -1,0 +1,146 @@
+==============================================================================
+Why does the Step-4 initial energy E0 differ between K=3 and K=5 (N=1)?
+==============================================================================
+
+K=3 reports  E0 = 0.5719990487
+K=5 reports  E0 = 0.5831938299
+Grid (exact) E0 = 0.5831938299       (matches K=5 to 10 digits)
+
+Both runs use the SAME evolution Hamiltonian
+    H_evolve = T + V_ho             (kinetic + harmonic trap, no cosine)
+
+so the difference is NOT in what we evolve. It's in the seed state.
+
+==============================================================================
+1. Where the seed comes from
+==============================================================================
+
+Step 1 finds the ground state of a DIFFERENT Hamiltonian:
+
+    H_full = T + V_ho + kappa * cos(2 k_L x)
+
+That seed is then plugged into Step 4 and evolved under H_evolve.
+Step 4 prints E0 := <psi_seed | H_evolve | psi_seed>, normalized by the seed
+norm. So E0 is the Step-1 ground-state energy with the cos term removed:
+
+    E0 = <T> + <V_ho>
+
+evaluated on the K=3 or K=5 ECG ground state of H_full (NOT on the harmonic
+ground state, which would give 1/2 hbar omega = 0.5).
+
+==============================================================================
+2. Step-1 component decomposition
+==============================================================================
+
+From out/verify/step1_ecg_energy_N1_K{3,5}.csv:
+
+                     K=3              K=5              grid (exact)
+    <T>           0.14709          0.14533              -
+    <V_ho>        0.42491          0.43786              -
+    <V_kick>      0.65383          0.63945              -
+    <H_full>      1.22583          1.22264          1.22259
+
+    E0 = <T> + <V_ho> = 0.57200    0.58319          (0.58319, see note)
+
+Note on the "grid (exact)" column for E0:
+    The 0.58319 value comes from the Step-4 grid run with the K=5 ECG
+    seed -- not from a grid-only calculation of <T+V_ho> on the H_full
+    ground state. It happens to be exact only because K=5 ECG has
+    converged to the exact GS to 10 digits. See section 4 for details.
+    The grid <H_full> = 1.22259 in the row above DOES come from a direct
+    diagonalisation of H_full (Step 2).
+
+K=5 reproduces this number to 10 significant figures.
+K=3 is off by about 2 percent because three complex Gaussians cannot
+smoothly represent the cosine modulation in psi_seed(x).
+
+==============================================================================
+3. Why does K=3 give a LOWER E0 even though its <H_full> is HIGHER?
+==============================================================================
+
+Variationally, K=5 must give a LOWER total <H_full> (more basis = better
+minimum). The numbers confirm this:
+
+    K=3: <H_full> = 1.22583
+    K=5: <H_full> = 1.22264   <- 0.003 lower (variational principle)
+
+But within that lower total, the components are redistributed.
+
+Compared to K=5, the K=3 GS:
+  - is over-localised in V_ho's well (saves about -0.013 in <T> + <V_ho>)
+  - sits less deeply in the cosine wells (costs about +0.014 in <V_kick>)
+  - net = +0.003 in <H_full>           <- the unavoidable variational cost
+
+When we drop V_kick for the time evolution, the +0.014 cost vanishes but
+the -0.013 saving stays, so K=3 ends up with E0 = 0.572 instead of the
+correct 0.583.
+
+So the 2 percent difference in E0 is precisely the K=3 truncation error
+in representing the H_full ground state, projected onto T + V_ho.
+
+==============================================================================
+4. What the grid reference dynamics actually does (read carefully)
+==============================================================================
+
+The Step-4 reference solvers do NOT diagonalise H_full and start from its
+exact ground state. They take the ECG seed (the same state Step 4 ECG is
+starting from), evaluate it on a 512-point grid (or 256-point sinc-DVR),
+and propagate THAT under H_evolve. So their reported E_init depends on
+which K's seed they got.
+
+  K=3 run (from logs/realtime_N1_K3.log):
+    [step4-ref/grid] E_init = 0.5719617590    (4e-5 below ECG; FD error)
+    [step4-ref/dvr]  E_init = 0.5719990408    (matches ECG to 8 digits)
+    K=3 ECG          E0     = 0.5719990487
+
+  K=5 run (from logs/realtime_N1_K5.log):
+    [step4-ref/grid] E_init = 0.5831938299    (matches ECG)
+    [step4-ref/dvr]  E_init = 0.5831938299    (matches ECG)
+    K=5 ECG          E0     = 0.5831938299
+
+In BOTH runs the grid and DVR reproduce the ECG value, because they all
+propagate the same seed. The K=5 number happens to coincide with the
+exact <T+V_ho> on the true H_full ground state, but only because K=5 ECG
+itself has converged to that exact state to 10 digits. The K=3 grid
+number 0.5720 is also a faithful discretisation of the K=3 ECG seed; it
+does not give 0.5832 because the seed is the K=3 ECG state, not the
+exact one.
+
+To get the truly exact E_init via the grid one would need a separate
+calculation:
+    1. Diagonalise H_full on the grid (this is Step 2; for N=1 it gives
+       <H_full> = 1.22259334 grid, 1.22262793 DVR).
+    2. Evaluate <T+V_ho> on the resulting eigenvector.
+
+We do not currently do step (2) in the Step-4 reference solvers. So when
+we say "the exact value is 0.5832", we mean it equals the K=5 ECG value
+because K=5 has converged the seed to the exact state — not because the
+grid solver computed it from scratch.
+
+==============================================================================
+5. Each run still conserves its OWN E0 to roundoff
+==============================================================================
+
+Both runs print:
+    K=3   E0 = 0.5719990487   max|dE| = 1.94e-08  rel = 3.4e-08  [PASS]
+    K=5   E0 = 0.5831938299   max|dE| = 2.76e-08  rel = 4.7e-08  [PASS]
+
+Each run is internally consistent. They just start from slightly different
+Hilbert-space vectors because the K=3 ECG basis cannot exactly represent
+the H_full ground state.
+
+==============================================================================
+6. Take-away
+==============================================================================
+
+  - E0 in the Step-4 log is a property of the SEED, not of the evolution.
+  - The seed is the K-dependent ECG ground state of H_full.
+  - K=5 has converged E0 to the exact value (0.583193...).
+  - K=3 is off by 2 percent because three Gaussians are not enough to
+    represent the cosine-modulated ground state.
+  - To make K=3 and K=5 start from the same E0, you would need K large
+    enough that the ECG basis fully captures the H_full ground state.
+    Empirically K >= 5 is sufficient at the current cosine amplitude.
+  - This 2 percent offset is REAL physics of the variational manifold and
+    has nothing to do with the dynamics, the projector, or the integrator.
+==============================================================================

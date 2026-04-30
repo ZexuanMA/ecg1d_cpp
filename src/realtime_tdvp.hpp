@@ -45,10 +45,17 @@ struct RealtimeTrace {
     std::vector<double> t;
     std::vector<double> E;        // <H> / <psi|psi>  (real, conserved)
     std::vector<double> norm;     // <psi|psi> (real, conserved)
-    std::vector<double> x_mean;   // <x>      (N=1; NaN for N>=2)
-    std::vector<double> p_mean;   // <p>      (N=1; NaN for N>=2)
-    std::vector<double> x2;       // <x^2>
-    std::vector<double> p2;       // <p^2>
+    std::vector<double> x_mean;   // <X> = sum_a <x_a>  (any N; normalized)
+    std::vector<double> p_mean;   // <P> = sum_a <p_a>  (any N; normalized)
+    std::vector<double> x2;       // <x^2>                          normalized
+    std::vector<double> p2;       // <p^2>                          normalized
+    // Raw (un-normalized) moments: <psi|A|psi> without dividing by <psi|psi>.
+    // Useful as numerical witness of the Q9 structural conservation laws under
+    // SVD-truncated TDVP (norm leaks but raw <psi|H|psi> stays flat to round-off).
+    std::vector<double> x_mean_raw; // <psi|X|psi>   (any N)
+    std::vector<double> p_mean_raw; // <psi|P|psi>   (any N)
+    std::vector<double> x2_raw;     // <psi|x^2|psi>
+    std::vector<double> p2_raw;     // <psi|p^2|psi>
     std::vector<Cd>     overlap0; // <psi(0)|psi(t)> — fidelity |<psi(0)|psi(t)>|^2/(n0*n(t))
 };
 

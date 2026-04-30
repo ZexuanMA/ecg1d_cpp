@@ -1,0 +1,72 @@
+Task: Real-time TDVP, N=2 K=7, full HO period (T = 2*pi), dt = 1e-3
+
+Purpose
+- Sweep K = 6, 7, 9 at N=2 to locate the sweet spot for SVD-truncated TDVP.
+- Same dt = 1e-3, dt-trace = 1e-3, rcond = 1e-4, lambda_C = 1e-8, T = 2*pi
+  as the N=1 baseline so results are directly comparable.
+- NOT enabled: --enforce-norm, --u-split-trotter (per user request).
+- Step-1 ground state for N=2 K=7 IS already cached
+  (out/verify/step1_ecg_basis_N2_K7.csv from the static run earlier),
+  so we run Step 4 only.
+- A separate file txt_task/realtime_N2_K7_dt5e-4_cmds.txt exists for the
+  smaller-dt variant if you want to revisit later. This one is dt=1e-3.
+
+Pre-flight: pick a free core (filtered to your allowed set)
+
+ALLOWED=$(taskset -pc $$ | awk -F'list: ' '{print $2}')
+echo "your allowed cores: $ALLOWED"
+
+top -bn2 -d 1 -1 2>/dev/null | awk -v allowed="$ALLOWED" '
+  BEGIN {
+    n=split(allowed, parts, ",")
+    for (i=1;i<=n;i++) {
+      if (split(parts[i], r, "-") == 2) for (c=r[1]+0;c<=r[2]+0;c++) ok[c]=1
+      else ok[parts[i]+0]=1
+    }
+    snap=0
+  }
+  /^top - / { snap++ }
+  snap==2 && /^%Cpu[0-9]/ {
+    c=$1; gsub(/^%Cpu/,"",c); gsub(/[^0-9]/,"",c)
+    if ((c+0) in ok) {
+      for (i=1;i<=NF;i++) if ($i=="id,") { idle=$(i-1); break }
+      printf "cpu %3d  used=%5.1f%%  idle=%5.1f%%\n", c, 100-idle, idle
+    }
+  }
+' | sort -k3 -t= -nr
+
+How to run
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+mkdir -p logs && env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+nohup taskset -c 115 ./build/ecg1d_verify \
+  --N 2 --K 7 --run-step4 \
+  --T 6.283185307 --dt 1e-3 --dt-trace 1e-3 \
+  --n-snap 11 --moment-form both --rt-verbose \
+  > logs/realtime_N2_K7.log 2>&1 &
+echo "PID=$!"
+
+Monitor
+
+tail -f logs/realtime_N2_K7.log
+ps -o pid,etime,pcpu,cmd -p $(pgrep -f "ecg1d_verify --N 2 --K 7") 2>/dev/null
+grep -E "BLOWUP|FATAL|WARN|drift" logs/realtime_N2_K7.log
+
+Estimated runtime
+- No Step 1 (cached); Step 4 only.
+- Total 6283 steps. Cost vs N=2 K=5 (~46 steps/min): d^3 ratio (K=5:40,
+  K=7:56) ~2.7 and pair-cache (K=7/K=5)^2=1.96. Combined ~2.5x => ~18
+  steps/min.
+- Total ~5-6 hours wall-clock.
+
+Outputs
+- logs/realtime_N2_K7.log                      per-step verbose log
+- out/verify/step4_ecg_trace_N2_K7.csv         6283 rows × 11 columns
+- out/verify/step4_ecg_density_N2_K7.csv       snapshot densities (long format)
+- out/verify/step4_ecg_nk_N2_K7.csv            snapshot momentum densities
+
+When the task finishes, follow up with
+
+python scripts/plot_step4_moments.py 2 7
+python scripts/plot_step4_wavefunction.py 2 7

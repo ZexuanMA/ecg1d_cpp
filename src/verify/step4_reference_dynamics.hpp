@@ -23,6 +23,8 @@ struct Step4RefResult {
     Eigen::VectorXd E;        // <H_evolve> at trace time -- conserved by construction
     Eigen::VectorXd x_mean;
     Eigen::VectorXd p_mean;
+    Eigen::VectorXd x2;       // <x^2>  -- normalized (reference has norm=1)
+    Eigen::VectorXd p2;       // <p^2>  -- normalized
     Eigen::VectorXd norm;     // integrated probability (should stay 1)
     Eigen::VectorXcd overlap0; // <psi(0) | psi(t)>  (for fidelity)
 
@@ -57,9 +59,10 @@ Step4RefResult step4_realtime_dvr(const std::vector<BasisParams>& ecg_psi0_basis
                                   const std::vector<double>& t_trace);
 
 // Write a Step4RefResult to CSVs:
-//   step4_{tag}_trace_N{N}.csv     : t,E,norm,x_mean,p_mean,fidelity
+//   step4_{tag}_trace_N{N}.csv     : t,E,norm,x_mean,p_mean,fidelity,x2,p2
 //   step4_{tag}_density_N{N}.csv   : t,x,n_x  (long format)
 //   step4_{tag}_nk_N{N}.csv        : t,k,n_k  (long format)
+// (x2, p2 are appended at the end so positional readers of cols 0-5 still work.)
 void write_step4_ref_csvs(const std::string& tag, int N,
                           const Step4RefResult& r);
 

@@ -1,0 +1,153 @@
+==============================================================================
+Why are <x>(t) and <p>(t) identically zero for every N=2 Step-4 run?
+==============================================================================
+
+Observation
+-----------
+In every N=2 Step-4 verbose log (e.g. logs/realtime_N2_K{5,6,7,9}.log,
+logs/realtime_N2_K7_no_wiener.log, etc.) the per-step diagnostic prints
+
+    <x>=0.000e+00  <p>=0.000e+00
+
+at *every* step, for the entire T = 2*pi evolution. The exact same trace
+column in step4_ecg_trace_N2_K*.csv is also identically zero. By contrast
+the N=1 logs show small but nonzero <x> ~ 1e-4 (round-off level).
+
+This is NOT a bug. It is a symmetry-protected zero with two reinforcing
+causes: (a) the cached N=2 basis carries no Gaussian shifts, and (b) the
+Step-4 Hamiltonian is parity-even and the initial state has even parity,
+so any odd one-body operator has zero expectation for all t.
+
+
+==============================================================================
+1. The closed-form kernel that ends up being multiplied by zero
+==============================================================================
+
+Per-particle position / momentum expectations are computed in
+src/realtime_tdvp.cpp:332-356 (and the same closed form in the verbose
+print block at :493-522):
+
+    <phi_i| x_a |phi_j>  =  M_G * mu(a)
+    <phi_i| p_a |phi_j>  = -i * M_G * (-2 (K_Mj * mu)(a) + g_Mj(a))
+
+with the PairCache pieces (src/pair_cache.cpp:30-49):
+
+    b      = 2 * conj(R_i)^T * conj(B_i) + 2 * R_j^T * B_j * P
+    mu     = 0.5 * K_inv * b
+    g_Mj   = ( 2 * R_j^T * B_j * P )^T
+
+So <X> and <P> are LINEAR in the basis shift parameters R. If every
+basis function carries R = 0, then b = 0  =>  mu = 0  AND  g_Mj = 0,
+hence both <X> and <P> are exact (machine) zero, not just small.
+
+
+==============================================================================
+2. The N=2 cached bases all have R == 0 by construction
+==============================================================================
+
+I extracted R[0], R[1] from every cached N=2 basis CSV:
+
+    out/verify/step1_ecg_basis_N2_K5.csv   ->  R[0]=0+0i, R[1]=0+0i
+    out/verify/step1_ecg_basis_N2_K6.csv   ->  R[0]=0+0i, R[1]=0+0i
+    out/verify/step1_ecg_basis_N2_K7.csv   ->  R[0]=0+0i, R[1]=0+0i
+    out/verify/step1_ecg_basis_N2_K9.csv   ->  R[0]=0+0i, R[1]=0+0i
+
+Why? src/verify/step1_imag_time_ecg.cpp:76-95 routes N>=2 through
+svm_build_basis() + stochastic_refine() (the SVM path). The SVM trial-state
+generator in src/svm.cpp hard-codes R = 0 for every candidate:
+
+    src/svm.cpp:288    VectorXcd R     = VectorXcd::Zero(N);
+    src/svm.cpp:316    VectorXcd R_new = VectorXcd::Zero(N);
+    src/svm.cpp:334    VectorXcd R0    = VectorXcd::Zero(N);
+
+The subsequent TDVP imaginary-time polish (with optimize_R = true) leaves
+R at zero too, because the harmonic ground state is parity-even and the
+gradient dE/dR vanishes at R=0 (see section 3).
+
+Compare with N=1: src/verify/step1_imag_time_ecg.cpp:56-75 takes a
+DIFFERENT path -- it seeds K-1 BasisParams::randoman(...) perturbations,
+which populate R with random complex values. e.g. line 4 of
+out/verify/step1_ecg_basis_N1_K5.csv reads R = -0.241 + 0.103i. That is
+why the N=1 logs show <x> ~ 1e-4 (parity-cancellation noise floor on a
+basis whose individual functions are not parity-even), instead of exact
+zero.
+
+
+==============================================================================
+3. Step-4 dynamics cannot move R off zero (parity argument)
+==============================================================================
+
+src/verify/step4_realtime_tdvp.cpp:79
+
+    HamiltonianTerms terms = HamiltonianTerms::kinetic_harmonic();
+
+so Step 4 evolves under  H_evolve = T + V_ho  only. Both terms are even
+under parity (x -> -x). The initial state is the SVM-built ground state of
+H_full = T + V_ho + kappa cos(2 k_L x), which is also parity-even (cos is
+even and the trap is centered at zero). Therefore:
+
+    [P, H_evolve] = 0    (parity is conserved)
+    psi(t)        is parity-even for all t
+    <psi(t)| O_odd |psi(t)> = 0  for any odd one-body operator O_odd
+
+x_a and p_a are odd, so <x_a>(t) = <p_a>(t) = 0 exactly, hence <X> = <P>
+= 0. The TDVP velocity along R, evaluated on a parity-even state with
+R=0, is also zero (the relevant gradient is odd in R), so R stays
+identically zero through the whole real-time evolution.
+
+
+==============================================================================
+4. How to make N=2 actually move (if you want a nonzero <x>(t))
+==============================================================================
+
+Two clean options:
+
+A. Break parity in the initial state.
+   Patch the cached basis (or seed Step 4) with a uniform shift
+   R(0) = R(1) = d. This rigidly displaces the N=2 cloud and gives
+   <X>(0) = N * d = 2 d. Under H_evolve = T + V_ho the cloud will then
+   undergo SHO breathing/oscillation: <X>(t) = 2 d cos(omega t),
+   <P>(t) = -2 d m omega sin(omega t).
+
+   Note: shifting R(0) = +d, R(1) = -d (opposite displacements) keeps
+   total CoM zero but breaks single-particle parity, useful for testing
+   relative-coordinate dynamics without driving.
+
+B. Drive the system.
+   Switch step4_realtime_tdvp.cpp:79 from
+       HamiltonianTerms::kinetic_harmonic()
+   to a Hamiltonian that includes the kicking term, AND start from a
+   parity-broken seed. The cosine kick alone preserves parity, so a
+   parity-even seed will still give <x>=0; you must combine the kick
+   with an initial displacement (option A).
+
+
+==============================================================================
+5. Where to look in the code
+==============================================================================
+
+Initialization:
+    src/verify/step1_imag_time_ecg.cpp:56-75    N=1 path (randoman -> R != 0)
+    src/verify/step1_imag_time_ecg.cpp:76-95    N>=2 path (SVM -> R == 0)
+    src/svm.cpp:288, 316, 334                   R hard-coded to zero in SVM
+
+Observable kernel:
+    src/realtime_tdvp.cpp:324-359     <X>, <P> closed form (sample)
+    src/realtime_tdvp.cpp:493-522     same kernel for verbose per-step print
+    src/pair_cache.cpp:14-49          mu, g_Mj, b construction (linear in R)
+
+Step-4 Hamiltonian and basis use:
+    src/verify/step4_realtime_tdvp.cpp:79    terms = kinetic_harmonic()
+    src/verify/step4_realtime_tdvp.cpp:140   basis = basis_init  (cached)
+
+
+==============================================================================
+6. Bottom line
+==============================================================================
+
+For N=2 with the current Step-4 setup, <x>(t) = <p>(t) = 0 is the EXACT,
+PHYSICALLY CORRECT answer. No round-off shows because the basis carries
+zero shifts, so the kernel returns machine zero rather than a small
+parity-cancellation residual. To see N=2 motion, the basis must be
+parity-broken at t=0 (uniform or staggered R-shift), or the parity-broken
+seed must be combined with a driving term in H_evolve.

@@ -1,0 +1,198 @@
+==============================================================================
+Why does N=1 real-time TDVP behave WELL at K=3 but FAIL at K=5?
+==============================================================================
+
+Setup
+-----
+Both runs use the same evolution Hamiltonian H_evolve = T + V_ho (cosine
+turned off for time evolution), the same time step dt = 1e-3, the same
+final time T = 2*pi, the same SVD cutoff rcond = 1e-4, and the same
+Tikhonov damping lambda_C = 1e-8. The only difference is the basis size
+K = 3 vs K = 5.
+
+  Seed (Step-1 ECG ground state of H_full = T + V_ho + kappa cos(2 k_L x))
+  K=3 has E_full = 1.22583 (less converged)
+  K=5 has E_full = 1.22264 (better converged; matches grid to 5 digits)
+
+So K=5 is variationally STRICTLY BETTER for the ground state.  Yet for
+the real-time evolution it is strictly WORSE.
+
+==============================================================================
+1. Numerical evidence  (computed directly from the trace CSVs)
+==============================================================================
+
+Trace-level scalars over T = 2*pi:
+
+                                K=3            K=5            grid (exact)
+    Normalized E drift     1.94e-08       2.76e-08         6.11e-14
+    norm range            1.36 - 2.31    1.59 - 3.41        1.000 (flat)
+    norm amplitude            0.95           1.82          ~ 0
+    Raw E*norm drift          41 %           53 %         < 1e-9
+    max |<x>|              4.17e-04       1.75e-01         6.53e-08
+    max |<p>|              5.14e-04       2.84e-01         6.33e-08
+    <x^2> breathing amp.     0.278          0.249           0.278
+    <p^2> breathing amp.     0.278          0.249           0.278
+
+K=3 reproduces the grid breathing amplitude to 4 digits and stays at the
+parity-zero baseline to ~1e-4. K=5 misses the breathing amplitude by
+about 10 percent and lets <x>, <p> wander to 0.18 and 0.28 (a real
+non-symmetric component).
+
+Density snapshot agreement (densities normalised to integrate to 1):
+
+  K=3, |psi(x,t)|^2 vs grid
+       L2 distance per snapshot ranges  1.8e-4 .. 1.9e-3
+       Bhattacharyya overlap            >= 0.999995 every snapshot
+       Peak heights agree to <= 0.5 % every snapshot
+
+  K=5, |psi(x,t)|^2 vs grid
+       L2 distance per snapshot up to   2.2e-1   (~ 1000x worse)
+       Bhattacharyya overlap            drops to 0.955
+       Peak heights disagree by up to   50 %
+
+Same picture for n(k,t) (momentum density):
+
+  K=3 ECG matches grid and DVR to <= 1 percent at every snapshot.
+  K=5 ECG vs grid disagrees increasingly with t and never recurses to
+  the initial shape at t = 2*pi.
+
+See figures in this same directory:
+
+    fig_step4_density_overlay_N1_K3.png   <- ECG and grid sit on top
+    fig_step4_density_overlay_N1_K5.png   <- ECG diverges around t = pi
+    fig_step4_nk_overlay_N1_K3.png        <- agreement
+    fig_step4_nk_overlay_N1_K5.png        <- disagreement
+
+==============================================================================
+2. What goes wrong dynamically for K=5
+==============================================================================
+
+The exact dynamics under H_evolve is a coherent breathing of the seed at
+frequency 2*omega:
+    grid density peaks alternate between 0.43 (wide)  at t = 0, pi, 2pi
+                                  and    0.68 (narrow) at t = pi/2, 3pi/2
+
+K=3 reproduces this breathing exactly (within 1 percent of the grid).
+K=5 does not breathe.  Its density peak grows monotonically from 0.41 at
+t = 0 to 0.65 at t = 2*pi and stays there.  The variational state
+collapses to a focused configuration and never recurses to the initial
+seed shape.
+
+Phase-by-phase comparison of the K=5 density peak vs grid:
+                t          ECG peak     grid peak
+              0.000          0.41          0.43
+              1.257          0.54          0.68     <- ECG too wide
+              3.142          0.63          0.43     <- ECG too narrow,
+                                                       half-period inverted
+              4.398          0.64          0.68
+              6.283          0.65          0.43     <- no recurrence
+
+So the K=5 result is not a small inaccuracy.  It is a qualitatively
+different trajectory.
+
+==============================================================================
+3. Root cause: over-parameterised manifold + SVD truncation
+==============================================================================
+
+TDVP solves  i C dz = g  for the parameter velocity dz, where C is the
+Gram matrix of tangent vectors (size d x d, d = number of variational
+parameters).  If C has near-zero singular values they are truncated by
+the rcond cutoff:
+    C^+_r  =  sum_{sigma_i >= rcond * sigma_max}  (1 / sigma_i) v_i v_i^*
+
+  K=3 (d ~ 12 variational parameters):  cond(C) ~ 1e2 - 1e3.
+  Top 4 decades of singular values are easily inside rcond = 1e-4.
+  Essentially nothing gets truncated.  SVD truncation is a no-op.
+  The TDVP equation is solved faithfully, the projector P_T is
+  effectively the full tangent projector, and the state breathes
+  correctly.
+
+  K=5 (d ~ 20):  cond(C) ~ 1e8 - 1e10.  The spectrum spans about 10
+  decades.  rcond = 1e-4 keeps only the top 4 decades, dropping
+  approximately HALF the singular directions.  The truncated projector
+  P_{T_r} has a strictly smaller range than T_psi M.  Some of the
+  dropped directions carry the parity-symmetric u-coefficient flow that
+  is needed for proper breathing.  As a result:
+
+    - <psi|psi> can change because |psi> escapes range(P_{T_r})
+      (Q9: dN/dt = 2 Im <psi| P_{T_r} H |psi>, no longer zero).
+    - The state acquires a parity-violating component because
+      P_{T_r} does not commute with parity once its range is restricted.
+    - The dynamics get stuck in a focused, non-breathing configuration.
+
+This is the classic "over-parameterised variational manifold" pathology:
+making the basis richer makes the unregularised manifold richer, but
+since the Gram matrix becomes nearly singular, SVD truncation throws
+away exactly the modes that the dynamics needs.  More variational
+freedom thus DEGRADES the SVD-regularised TDVP, and a smaller manifold
+that just barely covers the dynamics gives better real-time results.
+
+==============================================================================
+4. Why the ground state is BETTER at K=5 anyway
+==============================================================================
+
+Imaginary-time TDVP minimises <H_full> over the variational manifold.
+A larger manifold contains a strictly lower minimum, so K=5 GS energy
+must be <= K=3 GS energy.  Numerically:
+
+    K=3  E_full = 1.22583
+    K=5  E_full = 1.22264   (lower, matches grid to 5 digits)
+
+The same SVD truncation that hurts the dynamics is BENIGN in
+imaginary-time TDVP because the gradient g there points strictly
+downhill in energy.  The component of g that lies in the truncated
+subspace is also downhill, and dropping it just slows convergence in
+those modes.  It does not introduce qualitative artefacts.
+
+In real-time TDVP the gradient g is replaced by a UNITARY rotation
+direction; truncating any component of it generates an unphysical drift
+in the conserved quantities (norm, parity, structural <psi|H|psi>).
+That is why the same truncation that is harmless for Step 1 is
+catastrophic for Step 4 at K=5.
+
+==============================================================================
+5. How to fix K=5 without abandoning the bigger basis
+==============================================================================
+
+The single most effective lever is to lower the SVD cutoff so the
+truncated projector keeps the modes the dynamics needs:
+
+    --rcond 1e-6   keeps top 6 decades (drops ~1/4 of singular dirs)
+    --rcond 1e-7   keeps top 7 decades (drops only the noisiest dirs)
+    --rcond 1e-8   essentially no truncation; rely on lambda_C alone
+
+Other knobs (in decreasing order of usefulness):
+
+    --dt 1e-4              smaller integrator step; controls RK4 error
+                           when |dz| spikes
+    --lambda-C 1e-10       reduce Tikhonov damping in tandem
+    --K 7                  bigger basis but combine with smaller rcond,
+                           else the same problem grows
+
+==============================================================================
+6. Take-aways
+==============================================================================
+
+  - K=3 real-time dynamics are quantitatively faithful to the grid /
+    DVR exact reference for the cosine-quench problem at N=1: peak
+    heights agree to <1 %, L2 to <2e-3, breathing amplitude exact.
+
+  - K=5 real-time dynamics qualitatively fail under default rcond:
+    no breathing, half-period phase inversion, no recurrence at t=2pi.
+    The failure shows up first as 53 % drift in raw <psi|H|psi> and
+    parity violation at the 0.18 level.
+
+  - The failure is NOT in the ground state (K=5 is converged) and NOT
+    in the integrator (per-step normalised E drift is 3e-8, fine).
+    It is in the SVD-regularised projector P_{T_r} losing the tangent
+    directions needed for symmetric breathing.
+
+  - K=3 happens to fall in the sweet spot where the variational
+    manifold is just rich enough to carry the dynamics and small
+    enough that SVD truncation does nothing.  K=5 is over-
+    parameterised at rcond = 1e-4.
+
+  - To use K=5 (or larger) for real-time, lower rcond.  Otherwise stick
+    with K=3 for the dynamics study even though the ground state is
+    less accurate.
+==============================================================================
