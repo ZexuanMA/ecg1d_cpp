@@ -129,26 +129,31 @@ def main():
     print(f"wrote {out}")
 
     # ------ observables traced straight from the log ------
+    # Convention reminder: the log's E= field IS the rescaled energy
+    # E_resc = <psi|H|psi> / <psi|psi> (see realtime_tdvp.cpp:489).
+    # Raw matrix element: E_raw = E_resc * norm.
+    E_resc = d["E"]
+    E_raw  = d["E"] * d["norm"]
+
     fig, axes = plt.subplots(3, 2, figsize=(13, 10), sharex=True)
 
     ax = axes[0, 0]
-    ax.plot(t, d["E"], "-", color="C3", lw=1.0)
-    ax.axhline(d["E"][0], color="k", lw=0.4, alpha=0.4,
-               label=fr"$E_0={d['E'][0]:.6f}$")
-    ax.set_ylabel(r"$E(t)$")
-    ax.set_title("Energy (raw, un-normalised)")
+    ax.plot(t, E_resc, "-", color="C0", lw=1.0)
+    ax.axhline(E_resc[0], color="k", lw=0.4, alpha=0.4,
+               label=fr"$E_0={E_resc[0]:.6f}$")
+    ax.set_ylabel(r"$\langle\psi|H|\psi\rangle/\langle\psi|\psi\rangle$")
+    ax.set_title("Energy (norm-rescaled)  — log's E= field")
     ax.legend(fontsize=9)
     ax.grid(alpha=0.3)
 
     ax = axes[0, 1]
-    Enorm = d["E"] / d["norm"]
-    ax.plot(t, Enorm, "-", color="C0", lw=1.0)
-    ax.axhline(Enorm[0], color="k", lw=0.4, alpha=0.4,
-               label=fr"$E/\langle\psi|\psi\rangle\,_0={Enorm[0]:.6f}$")
-    ax.set_ylabel(r"$E(t)/\langle\psi|\psi\rangle$")
-    ax.set_title("Energy (norm-rescaled)")
+    ax.semilogy(t, np.abs(E_raw), "-", color="C3", lw=1.0)
+    ax.axhline(np.abs(E_raw[0]), color="k", lw=0.4, alpha=0.4,
+               label=fr"$\langle\psi|H|\psi\rangle_0={E_raw[0]:.4f}$")
+    ax.set_ylabel(r"$|\langle\psi|H|\psi\rangle|$")
+    ax.set_title("Energy (raw matrix element = E·norm)")
     ax.legend(fontsize=9)
-    ax.grid(alpha=0.3)
+    ax.grid(alpha=0.3, which="both")
 
     ax = axes[1, 0]
     ax.plot(t, d["x"], "-", color="C2", lw=1.0)
@@ -186,55 +191,62 @@ def main():
     plt.close(fig)
     print(f"wrote {out}")
 
-    # ------ dedicated energy figure: raw, rescaled, drift ------
-    Enorm = d["E"] / d["norm"]
-    E0 = d["E"][0]
-    Enorm0 = Enorm[0]
-    dE_raw  = d["E"] - E0
-    dE_resc = Enorm - Enorm0
+    # ------ dedicated energy figure: rescaled (top-left) vs raw (top-right), drifts below ------
+    # Convention: log's E= is rescaled <psi|H|psi>/<psi|psi>. Raw = E * norm.
+    E_resc  = d["E"]
+    E_raw   = d["E"] * d["norm"]
+    E_resc0 = E_resc[0]
+    E_raw0  = E_raw[0]
+    dE_resc = E_resc - E_resc0
+    dE_raw  = E_raw  - E_raw0
+
+    snap_norm = np.interp(snap["t"], t, d["norm"])
+    snap_E_resc = snap["E"]                 # snap CSV stores rescaled E
+    snap_E_raw  = snap["E"] * snap_norm
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), sharex=True)
 
     ax = axes[0, 0]
-    ax.plot(t, d["E"], "-", color="C3", lw=1.2, label=r"$\langle\psi|H|\psi\rangle$ (raw)")
-    ax.plot(snap["t"], snap["E"], "o", color="k", ms=5, label="snapshots")
-    ax.axhline(E0, color="k", lw=0.4, alpha=0.4,
-               label=fr"$E_0={E0:.6f}$")
-    ax.set_ylabel(r"$E(t)$ raw")
-    ax.set_title("Raw energy  $\\langle\\psi|H|\\psi\\rangle$  (un-normalised)")
+    ax.plot(t, E_resc, "-", color="C0", lw=1.2,
+            label=r"$\langle\psi|H|\psi\rangle/\langle\psi|\psi\rangle$")
+    ax.plot(snap["t"], snap_E_resc, "o", color="k", ms=5, label="snapshots")
+    ax.axhline(E_resc0, color="k", lw=0.4, alpha=0.4,
+               label=fr"$E_0={E_resc0:.6f}$")
+    ax.set_ylabel(r"$E_{\rm resc}(t)$")
+    ax.set_title("Norm-rescaled energy  (= log's E= field)")
     ax.legend(fontsize=9, loc="best")
     ax.grid(alpha=0.3)
 
     ax = axes[0, 1]
-    ax.plot(t, Enorm, "-", color="C0", lw=1.2,
-            label=r"$\langle\psi|H|\psi\rangle/\langle\psi|\psi\rangle$")
-    ax.plot(snap["t"], snap["E"] / np.interp(snap["t"], t, d["norm"]),
-            "o", color="k", ms=5, label="snapshots (rescaled)")
-    ax.axhline(Enorm0, color="k", lw=0.4, alpha=0.4,
-               label=fr"$E_0/\langle\psi|\psi\rangle_0={Enorm0:.6f}$")
-    ax.set_ylabel(r"$E(t)/\langle\psi|\psi\rangle$")
-    ax.set_title("Norm-rescaled energy")
+    ax.plot(t, E_raw, "-", color="C3", lw=1.2,
+            label=r"$\langle\psi|H|\psi\rangle$")
+    ax.plot(snap["t"], snap_E_raw, "o", color="k", ms=5, label="snapshots")
+    ax.axhline(E_raw0, color="k", lw=0.4, alpha=0.4,
+               label=fr"$\langle\psi|H|\psi\rangle_0={E_raw0:.4f}$")
+    ax.set_ylabel(r"$\langle\psi|H|\psi\rangle$ raw")
+    ax.set_title("Raw matrix element  $\\langle\\psi|H|\\psi\\rangle = E_{\\rm resc}\\cdot\\langle\\psi|\\psi\\rangle$")
     ax.legend(fontsize=9, loc="best")
     ax.grid(alpha=0.3)
 
     ax = axes[1, 0]
-    ax.plot(t, dE_raw, "-", color="C3", lw=1.0)
-    ax.axhline(0.0, color="k", lw=0.4, alpha=0.4)
-    ax.set_xlabel(r"$t$")
-    ax.set_ylabel(r"$E(t)-E_0$")
-    ax.set_title(fr"Raw drift  (max$|dE|=${np.max(np.abs(dE_raw)):.3e})")
-    ax.grid(alpha=0.3)
-
-    ax = axes[1, 1]
     ax.plot(t, dE_resc, "-", color="C0", lw=1.0)
     ax.axhline(0.0, color="k", lw=0.4, alpha=0.4)
     ax.set_xlabel(r"$t$")
-    ax.set_ylabel(r"$E/\langle\psi|\psi\rangle - $ initial")
-    ax.set_title(fr"Rescaled drift  (max$|dE|=${np.max(np.abs(dE_resc)):.3e})")
+    ax.set_ylabel(r"$E_{\rm resc}(t)-E_{\rm resc,0}$")
+    ax.set_title(fr"Rescaled drift  (max$|dE|=${np.max(np.abs(dE_resc)):.3e},  rel={np.max(np.abs(dE_resc))/abs(E_resc0):.3e})")
     ax.grid(alpha=0.3)
 
-    fig.suptitle("Step 4 — energy trajectory  N=2, K=6, wiener=on  (log [WARN] on rel|dE|)",
-                 fontsize=12)
+    ax = axes[1, 1]
+    ax.plot(t, dE_raw, "-", color="C3", lw=1.0)
+    ax.axhline(0.0, color="k", lw=0.4, alpha=0.4)
+    ax.set_xlabel(r"$t$")
+    ax.set_ylabel(r"$\langle\psi|H|\psi\rangle - \langle\psi|H|\psi\rangle_0$")
+    ax.set_title(fr"Raw drift  (max$|dE|=${np.max(np.abs(dE_raw)):.3e},  rel={np.max(np.abs(dE_raw))/abs(E_raw0):.3e})")
+    ax.grid(alpha=0.3)
+
+    fig.suptitle("Step 4 — energy trajectory  N=2, K=6, wiener=on  "
+                 "(log line: rel|dE_resc|=1.03e-2 [WARN], rel|dE_raw|=1.01e+4 [drift])",
+                 fontsize=11)
     fig.tight_layout()
     out = os.path.join(OUT, "fig_step4_energy_N2_K6.png")
     fig.savefig(out, dpi=130)

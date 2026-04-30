@@ -126,24 +126,29 @@ def main():
     print(f"wrote {out}")
 
     # ------ observables traced straight from the log ------
+    # Convention reminder: the log's E= field IS the rescaled energy
+    # E_resc = <psi|H|psi> / <psi|psi> (see realtime_tdvp.cpp:489).
+    # Raw matrix element: E_raw = E_resc * norm.
+    E_resc = d["E"]
+    E_raw  = d["E"] * d["norm"]
+
     fig, axes = plt.subplots(3, 2, figsize=(13, 10), sharex=True)
 
     ax = axes[0, 0]
-    ax.plot(t, d["E"], "-", color="C3", lw=1.0)
-    ax.axhline(d["E"][0], color="k", lw=0.4, alpha=0.4,
-               label=fr"$E_0={d['E'][0]:.6f}$")
-    ax.set_ylabel(r"$E(t)$")
-    ax.set_title("Energy (raw, un-normalised)")
+    ax.plot(t, E_resc, "-", color="C0", lw=1.0)
+    ax.axhline(E_resc[0], color="k", lw=0.4, alpha=0.4,
+               label=fr"$E_0={E_resc[0]:.6f}$")
+    ax.set_ylabel(r"$\langle\psi|H|\psi\rangle/\langle\psi|\psi\rangle$")
+    ax.set_title("Energy (norm-rescaled)  — log's E= field")
     ax.legend(fontsize=9)
     ax.grid(alpha=0.3)
 
     ax = axes[0, 1]
-    Enorm = d["E"] / d["norm"]
-    ax.plot(t, Enorm, "-", color="C0", lw=1.0)
-    ax.axhline(Enorm[0], color="k", lw=0.4, alpha=0.4,
-               label=fr"$E/\langle\psi|\psi\rangle\,_0={Enorm[0]:.6f}$")
-    ax.set_ylabel(r"$E(t)/\langle\psi|\psi\rangle$")
-    ax.set_title("Energy (norm-rescaled)")
+    ax.plot(t, E_raw, "-", color="C3", lw=1.0)
+    ax.axhline(E_raw[0], color="k", lw=0.4, alpha=0.4,
+               label=fr"$\langle\psi|H|\psi\rangle_0={E_raw[0]:.4f}$")
+    ax.set_ylabel(r"$\langle\psi|H|\psi\rangle$")
+    ax.set_title("Energy (raw matrix element = E·norm)")
     ax.legend(fontsize=9)
     ax.grid(alpha=0.3)
 
