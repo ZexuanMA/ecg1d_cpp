@@ -9,6 +9,7 @@ Writes:
   out/verify/fig_step4_log_diagnostics_N2_K6.png
   out/verify/fig_step4_return_probability_N2_K6.png
   out/verify/fig_step4_log_observables_N2_K6.png
+  out/verify/fig_step4_energy_N2_K6.png
 """
 import os
 import re
@@ -181,6 +182,61 @@ def main():
                  fontsize=12)
     fig.tight_layout()
     out = os.path.join(OUT, "fig_step4_log_observables_N2_K6.png")
+    fig.savefig(out, dpi=130)
+    plt.close(fig)
+    print(f"wrote {out}")
+
+    # ------ dedicated energy figure: raw, rescaled, drift ------
+    Enorm = d["E"] / d["norm"]
+    E0 = d["E"][0]
+    Enorm0 = Enorm[0]
+    dE_raw  = d["E"] - E0
+    dE_resc = Enorm - Enorm0
+
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8), sharex=True)
+
+    ax = axes[0, 0]
+    ax.plot(t, d["E"], "-", color="C3", lw=1.2, label=r"$\langle\psi|H|\psi\rangle$ (raw)")
+    ax.plot(snap["t"], snap["E"], "o", color="k", ms=5, label="snapshots")
+    ax.axhline(E0, color="k", lw=0.4, alpha=0.4,
+               label=fr"$E_0={E0:.6f}$")
+    ax.set_ylabel(r"$E(t)$ raw")
+    ax.set_title("Raw energy  $\\langle\\psi|H|\\psi\\rangle$  (un-normalised)")
+    ax.legend(fontsize=9, loc="best")
+    ax.grid(alpha=0.3)
+
+    ax = axes[0, 1]
+    ax.plot(t, Enorm, "-", color="C0", lw=1.2,
+            label=r"$\langle\psi|H|\psi\rangle/\langle\psi|\psi\rangle$")
+    ax.plot(snap["t"], snap["E"] / np.interp(snap["t"], t, d["norm"]),
+            "o", color="k", ms=5, label="snapshots (rescaled)")
+    ax.axhline(Enorm0, color="k", lw=0.4, alpha=0.4,
+               label=fr"$E_0/\langle\psi|\psi\rangle_0={Enorm0:.6f}$")
+    ax.set_ylabel(r"$E(t)/\langle\psi|\psi\rangle$")
+    ax.set_title("Norm-rescaled energy")
+    ax.legend(fontsize=9, loc="best")
+    ax.grid(alpha=0.3)
+
+    ax = axes[1, 0]
+    ax.plot(t, dE_raw, "-", color="C3", lw=1.0)
+    ax.axhline(0.0, color="k", lw=0.4, alpha=0.4)
+    ax.set_xlabel(r"$t$")
+    ax.set_ylabel(r"$E(t)-E_0$")
+    ax.set_title(fr"Raw drift  (max$|dE|=${np.max(np.abs(dE_raw)):.3e})")
+    ax.grid(alpha=0.3)
+
+    ax = axes[1, 1]
+    ax.plot(t, dE_resc, "-", color="C0", lw=1.0)
+    ax.axhline(0.0, color="k", lw=0.4, alpha=0.4)
+    ax.set_xlabel(r"$t$")
+    ax.set_ylabel(r"$E/\langle\psi|\psi\rangle - $ initial")
+    ax.set_title(fr"Rescaled drift  (max$|dE|=${np.max(np.abs(dE_resc)):.3e})")
+    ax.grid(alpha=0.3)
+
+    fig.suptitle("Step 4 — energy trajectory  N=2, K=6, wiener=on  (log [WARN] on rel|dE|)",
+                 fontsize=12)
+    fig.tight_layout()
+    out = os.path.join(OUT, "fig_step4_energy_N2_K6.png")
     fig.savefig(out, dpi=130)
     plt.close(fig)
     print(f"wrote {out}")
