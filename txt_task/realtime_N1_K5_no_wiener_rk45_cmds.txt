@@ -1,0 +1,115 @@
+Task: Step-4 realtime TDVP, N=1 K=5, --no-wiener + RK45 adaptive integrator
+
+Purpose
+- Pair with the existing --no-wiener / RK4 sandbox (runs/no_wiener_N1K5/) so we
+  can see whether replacing the fixed-step RK4 with adaptive Dormand-Prince 5(4)
+  changes the rescaled-energy [WARN] / norm-leak picture seen in that run.
+- Same H_evolve and Step-1 ground state — only knobs changed are integrator
+  (RK4 -> RK45) and Wiener regulariser (off, matching the existing baseline).
+- --dt 1e-3 is the *initial* RK45 step; the adaptive loop will resize it to
+  satisfy rk45_abs_tol = rk45_rel_tol = 1e-6 (built-in defaults) within
+  rk45_dt_min = 1e-8 .. rk45_dt_max = 1.0.
+
+Pre-flight: pick a free core (filtered to your allowed set)
+
+# 1. Your allowed cores (cgroup / affinity)
+ALLOWED=$(taskset -pc $$ | awk -F'list: ' '{print $2}')
+echo "your allowed cores: $ALLOWED"
+
+# 2. Per-allowed-core usage; cores not listed are 100% idle.
+top -bn2 -d 1 -p 1 2>/dev/null | awk -v allowed="$ALLOWED" '
+  BEGIN {
+    n=split(allowed, parts, ",")
+    for (i=1;i<=n;i++) {
+      if (split(parts[i], r, "-") == 2) for (c=r[1]+0;c<=r[2]+0;c++) ok[c]=1
+      else ok[parts[i]+0]=1
+    }
+    snap=0
+  }
+  /^top - / { snap++ }
+  snap==2 && /^%Cpu[0-9]/ {
+    c=$1; gsub(/^%Cpu/,"",c); gsub(/[^0-9]/,"",c)
+    if ((c+0) in ok) {
+      for (i=1;i<=NF;i++) if ($i=="id,") { idle=$(i-1); break }
+      printf "cpu %3d  used=%5.1f%%  idle=%5.1f%%\n", c, 100-idle, idle
+    }
+  }
+' | sort -k3 -t= -nr
+
+# Currently busy: 112, 117, 240 (other ecg1d_verify jobs).
+# Picked: 113 (idle, in allowed range).
+
+How to run
+
+cd /home/gyqyan/zexuan/ecg1d_cpp
+
+mkdir -p runs/no_wiener_rk45_N1K5/out/verify logs
+ln -sf /home/gyqyan/zexuan/ecg1d_cpp/out/verify/step1_ecg_basis_N1_K5.csv \
+       runs/no_wiener_rk45_N1K5/out/verify/step1_ecg_basis_N1_K5.csv
+
+env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+nohup taskset -c 113 bash -c '
+  cd /home/gyqyan/zexuan/ecg1d_cpp/runs/no_wiener_rk45_N1K5
+  /home/gyqyan/zexuan/ecg1d_cpp/build/ecg1d_verify \
+    --N 1 --K 5 --run-step4 \
+    --T 6.283185307 --dt 1e-3 --dt-trace 1e-3 \
+    --n-snap 11 --moment-form both --rt-verbose \
+    --no-wiener \
+    --rt-integrator rk45
+' > logs/realtime_N1_K5_no_wiener_rk45.log 2>&1 &
+echo "PID=$!"
+
+Monitor
+
+# live progress
+tail -f logs/realtime_N1_K5_no_wiener_rk45.log
+
+# is it still alive?
+ps -o pid,etime,pcpu,cmd -p $(pgrep -f "ecg1d_verify --N 1 --K 5.*--rt-integrator rk45") 2>/dev/null
+
+# any blowups, warnings, or rejected RK45 steps?
+grep -E "BLOWUP|WARN|FATAL|drift|rej=|RK45" logs/realtime_N1_K5_no_wiener_rk45.log
+
+Estimated runtime
+- Prior --no-wiener / RK4 N=1 K=5 baseline (logs/realtime_N1_K5_no_wiener.log)
+  finished a single 2π pass in ~6 minutes wall-clock at dt=1e-3.
+- RK45 typically takes 6 stage evaluations per accepted step vs RK4's 4, so
+  per-accepted-step cost is ~1.5x. Whether total wall-clock goes up or down
+  depends on how aggressively the adaptive stepper resizes:
+  * if dt grows above 1e-3 most of the time -> faster than RK4
+  * if many rejections at tight tolerance -> slower
+- Range estimate: 5-20 minutes.
+
+Outputs
+- runs/no_wiener_rk45_N1K5/out/verify/step4_ecg_trace_N1_K5.csv
+- runs/no_wiener_rk45_N1K5/out/verify/step4_ecg_density_N1_K5.csv
+- runs/no_wiener_rk45_N1K5/out/verify/step4_ecg_nk_N1_K5.csv
+- runs/no_wiener_rk45_N1K5/out/verify/step4_ecg_snap_N1_K5.csv
+- runs/no_wiener_rk45_N1K5/out/verify/step4_grid_*_N1.csv (FD-grid reference)
+- runs/no_wiener_rk45_N1K5/out/verify/step4_dvr_*_N1.csv  (sinc-DVR reference)
+- runs/no_wiener_rk45_N1K5/out/verify/step4_crosscheck_N1.csv
+- logs/realtime_N1_K5_no_wiener_rk45.log
+
+When the task finishes, follow up with
+
+# 1. Copy the runs/no_wiener_N1K5/plot_log_diagnostics.py template into the
+#    new sandbox and edit LOG / OUT / SNAP paths to point at the rk45 dir.
+cp /home/gyqyan/zexuan/ecg1d_cpp/runs/no_wiener_N1K5/plot_log_diagnostics.py \
+   /home/gyqyan/zexuan/ecg1d_cpp/runs/no_wiener_rk45_N1K5/
+
+# Then in that file change three constants:
+#   LOG  = ".../logs/realtime_N1_K5_no_wiener_rk45.log"
+#   OUT  = ".../runs/no_wiener_rk45_N1K5/out/verify"
+#   SNAP = OUT/step4_ecg_snap_N1_K5.csv
+# and change the figure suffix from "N1_K5" to "N1_K5_rk45" (or similar).
+
+# 2. Run it
+python /home/gyqyan/zexuan/ecg1d_cpp/runs/no_wiener_rk45_N1K5/plot_log_diagnostics.py
+
+# 3. To compare RK4 vs RK45 side-by-side using the existing main_verification
+#    plotter, swap CSVs into out/verify/ AFTER backing up the current set:
+#       (a) cp out/verify/step4_ecg_*_N1_K5.csv out/verify/_backup_no_wiener_rk4/
+#       (b) cp runs/no_wiener_rk45_N1K5/out/verify/step4_ecg_*_N1_K5.csv \
+#                out/verify/
+#       (c) python scripts/plot_step4_moments.py --N 1 --K 5  (etc.)
+#       (d) restore from backup when done.

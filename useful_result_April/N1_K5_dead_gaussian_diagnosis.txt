@@ -1,0 +1,177 @@
+==============================================================================
+N=1, K=3 vs K=5 real-time TDVP — dead-Gaussian diagnosis
+==============================================================================
+
+Companion to N1_realtime_K3_vs_K5_explanation.txt.  The earlier file frames
+the failure as "SVD truncation drops tangent directions the dynamics
+needs".  This file looks one layer underneath: the K=5 Step-1 basis
+itself is structurally redundant, which is *why* the Gram matrix is rank
+deficient and the truncated tangent projector loses real flow.
+
+Source: out/verify/step1_ecg_basis_N1_K{3,5}.csv  (CSV columns:
+u_re,u_im / A_re,A_im / B_re,B_im / R_re,R_im / index).
+
+==============================================================================
+1. Direct inspection of the saved Step-1 ECG basis
+==============================================================================
+
+K=3 basis (3 Gaussians, |u| amplitudes):
+
+    idx 0   |u| = 1.0       <- carries the wavefunction
+    idx 1   |u| = 1.4e-6    <- ghost
+    idx 2   |u| = 1.0e-6    <- ghost
+
+  --> 1 active Gaussian + 2 dead Gaussians.
+
+K=5 basis (5 Gaussians, |u| amplitudes):
+
+    idx 0   |u| = 1.00      A_re = 0.36
+    idx 1   |u| = 1.3e-7    A_re = 0.066    <- ghost, near-twin of idx 3
+    idx 2   |u| = 2.4e-8    A_re = 4.31     <- ghost
+    idx 3   |u| = 9.6e-9    A_re = 0.066    <- ghost, same A_re,B_re as idx 1
+    idx 4   |u| = 0.81      A_re = 0.38
+
+  --> 2 active Gaussians + 3 dead Gaussians.
+
+Note the structural redundancy in K=5: idx 1 and idx 3 share Re A = 0.066
+and Re B = 0.034 exactly; they are near-duplicate basis functions with
+different complex parts and different centers (R = (-0.63, -0.60) vs
+(-0.60, 1.58)).  They are essentially the same Gaussian shape twice
+over, which makes their tangent vectors collinear up to numerical noise.
+
+The static optimizer (Step 1) converged to a wavefunction that uses 1
+Gaussian at K=3 and 2 Gaussians at K=5; in both cases the remaining
+basis slots were left with O(1e-6 .. 1e-8) amplitudes, i.e. they are
+present in the tangent space but carry no wavefunction weight.
+
+==============================================================================
+2. Why this kills real-time TDVP at K=5 but not K=3
+==============================================================================
+
+TDVP solves   C(z) dz = g(z)   with C the tangent-space Gram matrix.
+The runtime log reports cond(C) and the three smallest singular values
+each step (sv_min3).  Running with default rcond = 1e-4, lambda_C = 1e-8,
+Wiener smoothing on:
+
+    Run                cond(C)         sv_min3              norm trajectory       result
+    ---------------    -----------     -------------------  ---------------       ------------
+    K=3 default        1.6e10          (1e-8,1e-8,1e-8)     2.31 -> 1.42 -> 2.16  bounded, breathes
+    K=5 default        3.5e11 -> 7.5e11(1e-8,1e-8,1e-8)     3.41 ... 4.70 -> 20.3 unphysical growth
+    K=5 rcond=1e-6     7e10            (1e-8,1e-8,1e-8)     reaches |dz|~30,
+                                                            norm ~ 21              catastrophic
+    K=5 rcond=1e-8     NaN at step 1   --                   NaN                    instant blowup
+    K=5 no_wiener+RK45 5.3e11          (1e-8,1e-8,1e-8)     dt collapses;
+                                                            284 step rejections
+                                                            in 202 accepted        adaptive solver
+                                                                                   fights stiffness
+
+Reading sv_min3:  the value 1e-8 is the Tikhonov floor (lambda_C).  When
+sv_min3 sits ON the floor it means the bare Gram matrix singular value
+was below 1e-8 and Tikhonov pushed it up.  K=5 has THREE singular values
+on the floor; K=3 has TWO.  That is exactly the "ghost direction" count
+from section 1.
+
+So the chain is:
+
+  3 dead Gaussians in the K=5 Step-1 basis
+    -> 3 directions of the Gram matrix have singular values below 1e-8
+    -> SVD pseudoinverse zeroes those 3 directions every step
+    -> dynamics in those directions is replaced by zero, but round-off
+       leaks tiny non-zero amplitudes into them
+    -> the leaked amplitude has no restoring flow (Gram entries are
+       essentially random in those directions) so it integrates over time
+    -> after thousands of steps the wavefunction sits mostly in the
+       ghost amplitudes; norm <psi|psi> = u^dagger S u inflates from 3.4
+       to 20+ within a single HO period
+
+K=3 has the same mechanism but with 2 ghosts instead of 3.  In practice
+the leakage stays bounded over T = 2*pi (the user can verify that the
+K=3 norm just oscillates between 1.4 and 2.3 instead of blowing up).
+
+==============================================================================
+3. Why tightening rcond makes things worse, not better
+==============================================================================
+
+Naive intuition: "the regularizer is throwing away real flow, so let
+more singular values through".  The data shows the opposite:
+
+    rcond = 1e-4 (default)   norm reaches 20 by t = 4.5
+    rcond = 1e-6             norm reaches 21 by t = 0.6 (much faster)
+    rcond = 1e-8             NaN at step 1
+
+Reason: the dead-Gaussian directions are not "small but real" flow.
+They are GENUINELY singular — products of basis functions whose u
+amplitudes are 1e-8.  Inverting numbers like 1e-8 / 1e-16 = 1e8 in
+the pseudoinverse produces gigantic dz components, which then propagate
+nonlinearly through the next assemble_C call and explode.
+
+Lowering rcond does not "recover lost dynamics" because there was no
+honest dynamics in those directions to begin with — they correspond to
+infinitesimal motion of unused basis Gaussians.
+
+==============================================================================
+4. Energy stays right while everything else goes wrong
+==============================================================================
+
+Why does max|dE| stay at ~3e-8 (PASS) for K=5 even as the norm hits 20?
+
+    E = <psi|H|psi> / <psi|psi>
+
+The numerator and denominator both pick up the ghost amplitudes
+proportionally.  As long as the ghost-Gaussian Hamiltonian matrix
+elements happen to scale similarly to the ghost-Gaussian overlap
+elements, the ratio is preserved.  For an over-parameterised harmonic
+problem with localized Gaussians this is approximately true.
+
+The unnormalised energy <psi|H|psi> tells the real story:
+
+    K=3   <psi|H|psi>_0 = 1.322,   max drift = 0.544    (rel = 41 %)
+    K=5   <psi|H|psi>_0 = 1.989,   max drift = 1.059    (rel = 53 %)
+
+Both runs pass the normalised-E test, neither passes the raw-E test.
+
+==============================================================================
+5. Two different fixes
+==============================================================================
+
+(a) Live with K=3 for dynamics (current working solution).  Accept that
+    the variational ground-state energy is slightly less converged in
+    exchange for a tangent space that has only 2 ghost directions,
+    which the regularizer can absorb over T = 2*pi.
+
+(b) Make K=5 work by getting rid of the ghosts before Step 4:
+
+    - Prune.  After Step 1, drop any Gaussian with |u| < 1e-6 from the
+      basis, then rebuild the tangent-space data structures and start
+      Step 4 in the reduced basis.  At N=1 this turns K=5 into K=2 and
+      should evolve cleanly.
+
+    - Re-optimise with a nondegeneracy penalty.  Add a barrier
+      lambda_basis * sum_{i<j} exp(-||A_i - A_j||^2 / sigma^2) to the
+      Step-1 cost so duplicate Gaussians (idx 1 and idx 3 in K=5) are
+      pushed apart.  Costs little in ground-state energy but spreads
+      the basis out across the parameter space.
+
+    - Riemannian-style integrator.  Project to the actual range of C
+      (rank ~ 2 for K=5) at every step instead of inverting through a
+      full-rank pseudoinverse.  This is the principled fix but requires
+      changes to realtime_tdvp.cpp.
+
+Option (a) is what the codebase currently does.  Option (b) prune is
+the cheapest path to a working K=5 run.
+
+==============================================================================
+6. Files referenced
+==============================================================================
+
+  out/verify/step1_ecg_basis_N1_K3.csv      basis dump, K=3
+  out/verify/step1_ecg_basis_N1_K5.csv      basis dump, K=5
+  logs/realtime_N1_K3.log                   K=3 default solver log
+  logs/realtime_N1_K5.log                   K=5 default solver log (norm -> 20)
+  logs/realtime_N1_K5_rcond1e-6.log         K=5, looser rcond -> faster blowup
+  logs/realtime_N1_K5_rcond1e-8.log         K=5, no truncation -> NaN
+  logs/realtime_N1_K5_no_wiener.log         K=5 with hard pinv
+  logs/realtime_N1_K5_no_wiener_rk45.log    K=5 RK45 with adaptive dt
+  src/realtime_tdvp.cpp:18-73               compute_rhs_dz: SVD pseudoinverse
+                                            with Tikhonov + Wiener
+==============================================================================

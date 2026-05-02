@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>N=2 ECG/TDVP Simulation Problem Analysis</title>
+  <script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [['\\(', '\\)']],
+      displayMath: [['\\[', '\\]']]
+    },
+    svg: { fontCache: 'global' }
+  };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  <style>
+    :root {
+      --ink: #15202b;
+      --muted: #5e6a75;
+      --line: #d9e0e6;
+      --soft: #f6f8fa;
+      --teal: #187b7b;
+      --red: #b42318;
+      --amber: #9a6700;
+      --green: #136f3a;
+      --blue: #225ea8;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #ffffff;
+      font-family: var(--sans);
+      line-height: 1.55;
+    }
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 34px 22px 58px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 5vw, 3.25rem);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 34px 0 12px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      font-size: 1.45rem;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 22px 0 8px;
+      font-size: 1.08rem;
+      letter-spacing: 0;
+    }
+    p { margin: 8px 0 13px; }
+    code {
+      font-family: var(--mono);
+      font-size: 0.93em;
+      background: #f2f4f7;
+      border: 1px solid #e5e9ee;
+      border-radius: 4px;
+      padding: 0.08rem 0.28rem;
+    }
+    pre {
+      margin: 12px 0 18px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #101820;
+      color: #f7fbff;
+      font-family: var(--mono);
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+    table {
+      width: 100%;
+      margin: 14px 0 20px;
+      border-collapse: collapse;
+      font-size: 0.94rem;
+    }
+    th, td {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+    th { background: #eef3f6; }
+    .lede {
+      max-width: 920px;
+      color: var(--muted);
+      font-size: 1.06rem;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 24px 0;
+    }
+    .tile {
+      padding: 14px 15px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+    }
+    .tile strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 0.83rem;
+      color: var(--muted);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    .tile span {
+      display: block;
+      font-size: 1.22rem;
+      font-weight: 720;
+    }
+    .finding {
+      margin: 16px 0;
+      padding: 15px 18px;
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--teal);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+    .finding.high { border-left-color: var(--red); }
+    .finding.medium { border-left-color: var(--amber); }
+    .finding.low { border-left-color: var(--blue); }
+    .tag {
+      display: inline-block;
+      margin-right: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #fff;
+      vertical-align: 1px;
+    }
+    .tag.high { background: var(--red); }
+    .tag.medium { background: var(--amber); }
+    .tag.low { background: var(--blue); }
+    .tag.ok { background: var(--green); }
+    .muted { color: var(--muted); }
+    .equation {
+      margin: 13px 0 18px;
+      padding: 16px 20px;
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--teal);
+      border-radius: 8px;
+      background: #fbfcfd;
+      font-size: 1.02rem;
+      overflow-x: auto;
+      white-space: normal;
+      line-height: 1.45;
+    }
+    .equation mjx-container[jax="SVG"][display="true"] { margin: 0.3em 0; }
+    .equation .note {
+      margin-top: 8px;
+      color: var(--muted);
+      font-family: var(--sans);
+      font-size: 0.92rem;
+    }
+    ul { padding-left: 1.25rem; }
+    li { margin: 6px 0; }
+    .next {
+      background: #f7fbfb;
+      border: 1px solid #cfe2e2;
+      border-radius: 8px;
+      padding: 16px 18px;
+    }
+    @media (max-width: 800px) {
+      main { padding: 24px 16px 44px; }
+      .summary { grid-template-columns: 1fr 1fr; }
+      table { font-size: 0.86rem; }
+      th, td { padding: 8px 9px; }
+    }
+    @media (max-width: 520px) {
+      .summary { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>N=2 ECG/TDVP Simulation Problem Analysis</h1>
+  <p class="lede">
+    This report analyzes why the current code behaves well for <code>N=1,K=3</code> but becomes suspicious for
+    <code>N=2</code>. The strongest evidence points to real-time TDVP instability in a very rank-deficient
+    N=2 tangent space, plus several verification and observable issues that can hide or mislabel the failure.
+  </p>
+
+  <div class="summary">
+    <div class="tile">
+      <strong>Main failure</strong>
+      <span>norm drift</span>
+    </div>
+    <div class="tile">
+      <strong>N=2 rank</strong>
+      <span>about 7 active modes</span>
+    </div>
+    <div class="tile">
+      <strong>Validation gap</strong>
+      <span>no Step-4 N=2 reference</span>
+    </div>
+    <div class="tile">
+      <strong>Likely status</strong>
+      <span>not one bug only</span>
+    </div>
+  </div>
+
+  <h2>Executive Diagnosis</h2>
+  <p>
+    The static N=2 ground-state part is probably mostly correct for the smooth noninteracting
+    <code>T + V_ho + V_kick</code> benchmark: <code>out/verify/step3_crosscheck_N2.csv</code> shows ECG energy
+    agreement with grid/DVR at about <code>1e-5</code> to <code>8e-5</code>. The real-time N=2 part is not in the
+    same condition. Existing logs show a large violation of structural conservation after real-time TDVP starts.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Run</th>
+        <th>Evidence</th>
+        <th>Interpretation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>logs/realtime_N2_K7_no_wiener.log</code></td>
+        <td><code>E0=1.166370658</code>, <code>max|dE|=6.3e-2</code>, <code>max|d(E*norm)|/|E0 norm0|=3.7e3</code></td>
+        <td>Real-time propagation is not preserving the projected Hamiltonian flow.</td>
+      </tr>
+      <tr>
+        <td><code>logs/realtime_N2_K6.log</code></td>
+        <td><code>max|d(E*norm)|/|E0 norm0|=1.0e4</code></td>
+        <td>The problem is not unique to <code>K=7</code>.</td>
+      </tr>
+      <tr>
+        <td><code>logs/realtime_N2_K7_dt5e-4-test.log</code></td>
+        <td>For only <code>T=0.001</code>, <code>max|d(E*norm)|=2.7e-17</code></td>
+        <td>The formulas can look correct infinitesimally; instability appears over longer integration.</td>
+      </tr>
+      <tr>
+        <td><code>out/verify/step3_crosscheck_N2.csv</code></td>
+        <td><code>ECG_vs_dvr dE_abs=1.05e-5</code>, density overlap about <code>0.9999976</code></td>
+        <td>Static smooth N=2 is not the main failure.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>TDVP Equations</h2>
+  <p>The intended real-time projected equation is:</p>
+  <div class="equation">
+    \[
+      |\dot\psi\rangle
+      =
+      \sum_{\beta}\dot z_\beta|\partial_\beta\psi\rangle,
+      \qquad
+      |R\rangle=i|\dot\psi\rangle-H|\psi\rangle .
+    \]
+    \[
+      \langle\partial_\alpha\psi|R\rangle=0
+      \quad\Longrightarrow\quad
+      i\,C_{\alpha\beta}\dot z_\beta=g_\alpha,
+      \qquad
+      C_{\alpha\beta}=\langle\partial_\alpha\psi|\partial_\beta\psi\rangle,
+      \qquad
+      g_\alpha=\langle\partial_\alpha\psi|H|\psi\rangle .
+    \]
+    <div class="note">
+      The implementation uses a normalized/covariance form of \(C\), which is fine if the same projection is
+      used consistently and the solved system stays Hermitian positive semidefinite on the tangent space.
+    </div>
+  </div>
+
+  <h2>Ranked Problems</h2>
+
+  <div class="finding high">
+    <h3><span class="tag high">High</span>The N=2 real-time tangent metric is extremely rank deficient.</h3>
+    <p>
+      In Step 1 for <code>N=2,K=7</code>, the imaginary-time log reports <code>cond(C)</code> around
+      <code>2.3e9</code> to <code>3.1e9</code> and effective rank <code>7</code>. The realtime parameter count is
+      \(K(1+N+N+N(N+1)/2)=56\), so most directions are gauge-like or numerically redundant.
+    </p>
+    <p>
+      The real-time RHS is solved with an SVD pseudoinverse in <code>src/realtime_tdvp.cpp:26-73</code>. In this
+      situation tiny singular-mode changes can cause large motion in parameters without corresponding physical
+      motion. This matches the log pattern: <code>|dz|</code> grows while norm and raw energy drift.
+    </p>
+    <p>
+      Probable fix direction: remove redundant coordinates first. For a harmonic free-evolution check, freeze
+      <code>A,B,R</code> and evolve only <code>u</code> with the fixed-basis generalized Schrodinger equation, or use
+      <code>--u-split-trotter</code> plus a much smaller geometry step. For full TDVP, explicitly project out
+      normalization, phase, and near-null gauge directions before solving.
+    </p>
+  </div>
+
+  <div class="finding high">
+    <h3><span class="tag high">High</span>Regularized real-time TDVP may be breaking the Hamiltonian projection structure.</h3>
+    <p>
+      The code assembles \(C\), then solves with <code>C_bar = C_mat.conjugate().transpose()</code> and adds
+      <code>lambda_C I</code> directly before SVD. See <code>src/realtime_tdvp.cpp:26-32</code>.
+    </p>
+    <p>
+      For real-time TDVP, conservation depends on solving a Hermitian projected equation. If the analytic
+      derivatives make \(C\) slightly non-Hermitian, or if regularization/truncation is not applied in a
+      structure-preserving way, norm and \(E_{\mathrm{raw}}=\langle\psi|H|\psi\rangle\) can drift even when
+      normalized energy looks nearly flat.
+    </p>
+    <p>
+      Quick check: print \(\|C-C^\dagger\|/\|C\|\), eigenvalues of \((C+C^\dagger)/2\), and
+      \(\mathrm{Im}(g^\dagger C^+g)\) at every step for N=2. If \(C\) is not Hermitian positive semidefinite,
+      solve the symmetrized metric only after validating the derivative formulas.
+    </p>
+  </div>
+
+  <div class="finding high">
+    <h3><span class="tag high">High</span>Step 4 has no N=2 reference dynamics, so failures are not localized.</h3>
+    <p>
+      <code>main_verification.cpp:269-287</code> explicitly skips grid and DVR reference dynamics when
+      <code>N>=2</code>. For the current no-interaction N=2 verification, the many-body state should factor into
+      two identical one-body evolutions, so an N=2 reference is cheap and should exist.
+    </p>
+    <p>
+      Without this reference, the code can only report internal conservation diagnostics. It cannot tell whether
+      density, \(n(k)\), fidelity, or energy are physically correct after the N=2 TDVP path starts drifting.
+    </p>
+    <p>
+      Fix direction: reuse the N=1 grid/DVR propagator and map observables as
+      \(E_{N=2}=2E_{1p}\), \(\langle x^2\rangle_{1p}\), \(\langle p^2\rangle_{1p}\), and density per particle.
+      Then add <code>step4_cross_check</code> support for N=2 noninteracting product states.
+    </p>
+  </div>
+
+  <div class="finding medium">
+    <h3><span class="tag medium">Medium</span>Step 4 evolves only \(T+V_{\mathrm{ho}}\), not the full kicked Hamiltonian.</h3>
+    <p>
+      <code>src/verify/step4_realtime_tdvp.cpp:79</code> hardcodes
+      <code>HamiltonianTerms::kinetic_harmonic()</code>. Step 1 prepares the ground state of
+      \(T+V_{\mathrm{ho}}+V_{\mathrm{kick}}\), but Step 4 turns off the cosine potential. This is valid as a
+      harmonic free-evolution test, but it is not a kicked-rotor or interacting N=2 simulation.
+    </p>
+    <p>
+      If the expected N=2 behavior includes kicks or contact interaction, this setup is testing the wrong
+      Hamiltonian. The first check should state the exact pair \(H_{\mathrm{prepare}}\) and
+      \(H_{\mathrm{evolve}}\) in the log.
+    </p>
+  </div>
+
+  <div class="finding medium">
+    <h3><span class="tag medium">Medium</span>\(\langle x\rangle=\langle p\rangle=0\) in N=2 is expected, not necessarily a bug.</h3>
+    <p>
+      The N=2 SVM path initializes <code>B=0</code> and <code>R=0</code> in <code>src/svm.cpp:285-289</code> and
+      <code>src/svm.cpp:314-318</code>. Under the parity-even Step-4 Hamiltonian, the state remains parity even.
+      Therefore odd observables such as \(\langle x\rangle\) and \(\langle p\rangle\) should stay exactly zero.
+    </p>
+    <p>
+      This explains the zero traces, but it does not explain norm drift. To test visible center-of-mass motion,
+      start from a small parity-broken displacement such as \(R_0=R_1=d\), then verify harmonic oscillation.
+    </p>
+  </div>
+
+  <div class="finding medium">
+    <h3><span class="tag medium">Medium</span>N=2 momentum density is not generally implemented.</h3>
+    <p>
+      <code>src/observables.hpp:10-16</code> warns that <code>momentum_distribution</code> is a form factor, not the
+      true momentum probability density. In Step 4, <code>src/verify/step4_realtime_tdvp.cpp:120-127</code> uses
+      <code>momentum_density_from_density</code> for <code>N>=2</code>.
+    </p>
+    <p>
+      That reconstruction is only valid when the many-body state is a noninteracting product state with a real,
+      nonnegative one-body orbital. It is not valid for interacting N=2, for kicked states with phase structure,
+      or for correlated ECG states. Any N=2 \(n(k)\) plot after nontrivial dynamics is therefore a probable
+      observable artifact.
+    </p>
+    <p>
+      Fix direction: implement the one-body reduced density matrix
+      \(\rho_1(x,x')\) and compute
+      \(n(k)=(2\pi)^{-1}\int dx\,dx'\,e^{-ik(x-x')}\rho_1(x,x')\).
+    </p>
+  </div>
+
+  <div class="finding medium">
+    <h3><span class="tag medium">Medium</span>Observable sampling ignores the requested Hamiltonian terms.</h3>
+    <p>
+      <code>sample_observables</code> accepts <code>terms</code>, but <code>src/realtime_tdvp.cpp:293-299</code>
+      computes only kinetic plus harmonic energy. This is harmless for the current Step-4 free harmonic check,
+      but wrong for any realtime run with <code>delta</code>, <code>gaussian</code>, or <code>kicking</code> enabled.
+    </p>
+    <p>
+      Fix direction: use <code>compute_total_energy(basis, terms)</code> for reported energy, and separately write
+      components with <code>compute_energy_components</code>.
+    </p>
+  </div>
+
+  <div class="finding medium">
+    <h3><span class="tag medium">Medium</span>The ideal kick path is step-size dependent if used as a TDVP step.</h3>
+    <p>
+      <code>src/kicked_evolution.cpp:132-136</code> applies an ideal delta kick as one realtime TDVP step with
+      <code>dt_step</code>. An ideal kick should apply a finite unitary phase independent of an arbitrary numerical
+      step:
+    </p>
+    <div class="equation">
+      \[
+        U_{\mathrm{kick}}
+        =
+        \exp\left[-i\kappa\sum_{a=1}^{N}\cos(2k_Lx_a)\right].
+      \]
+    </div>
+    <p>
+      If your N=2 simulation uses the kicked-evolution path, this can be a major derivation/code mismatch.
+      Prefer the analytic kick projection, or a Rothe/target-fitting step that fits
+      \(U_{\mathrm{kick}}|\psi\rangle\) directly.
+    </p>
+  </div>
+
+  <div class="finding medium">
+    <h3><span class="tag medium">Medium</span>N=2 target-fitting/kick expansion is incomplete.</h3>
+    <p>
+      <code>src/target_fitting.cpp:46-50</code> throws for <code>N!=1</code>. This means the clean target-state
+      approach is not yet available for N=2. If current N=2 kicked dynamics relies on tangent TDVP instead, it is
+      using the more fragile route.
+    </p>
+  </div>
+
+  <div class="finding low">
+    <h3><span class="tag low">Lower</span>PairCache complex Gaussian branch and health checks may fail late in realtime.</h3>
+    <p>
+      <code>PairCache</code> evaluates \(M_G\) through a complex determinant square root. During real-time evolution,
+      complex widths can move near singular or branch-sensitive regions. The current verbose health check mainly
+      prints diagonal <code>Re(A+B)</code>, which does not guarantee that every pair/permutation \(K\) has a safe
+      positive real part.
+    </p>
+    <p>
+      Add monitors for the minimum eigenvalue of \(\mathrm{Re}\,K\), \(|\det K|\), and the phase of \(\det K\) over
+      all active pairs and permutations.
+    </p>
+  </div>
+
+  <div class="finding low">
+    <h3><span class="tag low">Lower</span>Contact interaction may be a basis limitation, not a local bug.</h3>
+    <p>
+      Prior notes in <code>past_md/N2_summary.md</code> report that the N=2 delta benchmark stalls near
+      <code>2e-3</code> and TDVP becomes unstable because a Gaussian basis converges poorly to the contact cusp.
+      If the problematic N=2 run includes \(g\delta(x_1-x_2)\), expect basis incompleteness and metric
+      conditioning to dominate even after code bugs are removed.
+    </p>
+  </div>
+
+  <h2>Recommended Debug Order</h2>
+  <div class="next">
+    <ol>
+      <li>
+        Build an N=2 noninteracting product-state reference for Step 4. Do this before changing TDVP internals,
+        so every later change has a physical target.
+      </li>
+      <li>
+        Run a short-time diagnostic with fixed geometry and exact \(u\)-evolution. This should conserve norm and
+        energy and match the product reference.
+      </li>
+      <li>
+        For full geometry TDVP, print \(C\) Hermiticity, \(C\) eigenvalues, effective rank, and local
+        \(d\langle\psi|\psi\rangle/dt\), \(d\langle H\rangle/dt\) predicted by the RHS before each step.
+      </li>
+      <li>
+        Reduce the coordinate set: first \(u\) only, then \(u+A\), then \(u+A+R\), then full \(u+A+B+R\).
+        The first coordinate set that breaks conservation is the likely derivation/code surface.
+      </li>
+      <li>
+        Replace N=2 \(n(k)\) plots with either the product-state reference momentum density or a real
+        one-body-density-matrix implementation.
+      </li>
+      <li>
+        If the final goal is kicks, implement N=2 analytic kick projection or Rothe fitting instead of treating
+        the ideal kick as one finite TDVP step.
+      </li>
+    </ol>
+  </div>
+
+  <h2>Files Most Likely To Need Changes</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Why it matters</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/realtime_tdvp.cpp</code></td>
+        <td>Real-time RHS solve, SVD regularization, integrators, observable sampling, conservation diagnostics.</td>
+      </tr>
+      <tr>
+        <td><code>src/verify/step4_realtime_tdvp.cpp</code></td>
+        <td>Hardcoded harmonic-only evolution and N=2 momentum-density reconstruction.</td>
+      </tr>
+      <tr>
+        <td><code>main_verification.cpp</code></td>
+        <td>Skips Step-4 reference solvers for N=2 even when the noninteracting product reference is available.</td>
+      </tr>
+      <tr>
+        <td><code>src/derivatives.cpp</code>, <code>src/observable_derivatives.cpp</code></td>
+        <td>Analytic \(C\) and \(g\) derivatives. These need finite-difference tests in the N=2 complex-parameter regime.</td>
+      </tr>
+      <tr>
+        <td><code>src/target_fitting.cpp</code>, <code>src/kicked_evolution.cpp</code></td>
+        <td>N=2 kick handling is incomplete or step-size dependent.</td>
+      </tr>
+      <tr>
+        <td><code>src/verify/ecg_wavefunction.cpp</code>, <code>src/observables.hpp</code></td>
+        <td>N=2 density is partially handled, but true N=2 momentum density is still missing.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Bottom Line</h2>
+  <p>
+    The most probable root cause is not the static N=2 Gaussian matrix elements. It is the real-time TDVP solve on
+    an overparameterized, nearly singular N=2 tangent space. The current verification pipeline then makes the
+    situation harder to diagnose because N=2 Step 4 lacks a reference solver and reports some observables that are
+    either symmetry-protected zeros or only approximate reconstructions.
+  </p>
+</main>
+</body>
+</html>
